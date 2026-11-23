@@ -1,0 +1,42 @@
+{
+  "format": "livingproof-verification-lock/0.2.0",
+  "definition": {
+    "path": "fixture-hallway.toml",
+    "sha256": "eaa183e5ef40087ff3bf75e5595ca20d06ba38301ef641eab471e866db971ba8"
+  },
+  "procedure": "walk-hallway",
+  "scenario": "walk-hallway@0.1.0",
+  "robot": {
+    "repository": "Living-Proof-Labs/verification-reports-action",
+    "ref": "v0.0.0",
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "configurations": [
+      "stock"
+    ]
+  },
+  "releases": {
+    "verifier": {
+      "repository": "Living-Proof-Labs/capability-verifier",
+      "tag": "v2.11.4",
+      "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "reporter": {
+      "repository": "Living-Proof-Labs/livingproof-capability-report",
+      "tag": "v3.15.4",
+      "commit": "cccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  "configurations": [
+    {
+      "name": "stock",
+      "version": "0",
+      "path": "configurations/stock.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "plan": {
+    "trials": {
+      "count": 1
+    }
+  }
+}

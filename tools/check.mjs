@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
 const requiredFiles = [
@@ -8,10 +8,17 @@ const requiredFiles = [
   'README.md',
   'Taskfile.yml',
   'action.yml',
+  'docs/decisions/0001-composite-vs-reusable-workflow.md',
+  '.github/workflows/report.yml',
   'package.json',
   'renovate.json',
   'src/run.mjs',
+  'src/plan.mjs',
+  'src/collect.mjs',
+  'src/fixture-run.mjs',
   'tests/action.test.mjs',
+  'tests/fixtures/robot/verifications/fixture-hallway.toml',
+  'tests/fixtures/robot/verifications/fixture-scenario.toml',
 ];
 
 for (const file of requiredFiles) {
@@ -27,8 +34,11 @@ for (const key of ['name:', 'description:', 'inputs:', 'outputs:', 'runs:', 'usi
   }
 }
 
-for (const script of ['src/run.mjs', 'tools/check.mjs', 'tests/action.test.mjs', 'tests/workflows.test.mjs']) {
-  execFileSync(process.execPath, ['--check', script], { stdio: 'inherit' });
+for (const directory of ['src', 'tests', 'tools']) {
+  for (const name of readdirSync(directory)) {
+    if (!name.endsWith('.mjs')) continue;
+    execFileSync(process.execPath, ['--check', `${directory}/${name}`], { stdio: 'inherit' });
+  }
 }
 
 console.log('Static checks passed: repository files, action.yml metadata, and JavaScript syntax are valid.');

@@ -1,0 +1,42 @@
+{
+  "format": "livingproof-verification-lock/0.2.0",
+  "definition": {
+    "path": "fixture-scenario.toml",
+    "sha256": "92269a68f05a286a857fabf42db8ebfa4bae34e6f64f4cdf7370aa02a0bb943f"
+  },
+  "procedure": "scenario",
+  "scenario": "walk-corner-left@0.2.0",
+  "robot": {
+    "repository": "Living-Proof-Labs/verification-reports-action",
+    "ref": "v0.0.0",
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "configurations": [
+      "stock"
+    ]
+  },
+  "releases": {
+    "verifier": {
+      "repository": "Living-Proof-Labs/capability-verifier",
+      "tag": "v2.11.4",
+      "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "reporter": {
+      "repository": "Living-Proof-Labs/livingproof-capability-report",
+      "tag": "v3.15.4",
+      "commit": "cccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  "configurations": [
+    {
+      "name": "stock",
+      "version": "0",
+      "path": "configurations/stock.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "plan": {
+    "trials": {
+      "count": 1
+    }
+  }
+}

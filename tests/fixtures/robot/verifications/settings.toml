@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: Apache-2.0
+# Not a verification definition. The definitions glob must skip it.
+title = "fixture settings"
