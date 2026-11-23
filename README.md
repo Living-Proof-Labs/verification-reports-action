@@ -20,7 +20,16 @@ Before any trial, the plan job resolves each input from its release tag and refu
 
 The tag in the lock is the pin. A Renovate bump changes that tag and leaves the lock's commit, file sha256, and image digest as they were. The plan resolves the new tag from the GitHub Release, the git tag, the published checksum or registry digest, and the attestation when one is published. Nothing in this repository rewrites the lock. The definition file's sha256 in the lock still has to match the definition bytes, so the tag Renovate edits is the lock tag, not a line inside the definition.
 
-`report.json` and `run.json` each record `inputs`: repository, tag, commit, digest, and check result for every pin. The check rules and the capability-verifier workflow pin are in [docs/provenance.md](docs/provenance.md).
+`report.json` and `run.json` each record `inputs`: repository, tag, commit, digest, and `status` for every pin. The same status line is written into `report.md`, `report.html`, and `report.txt` under "Pinned inputs", as `name: status (meaning)`.
+
+| Status | Meaning |
+| --- | --- |
+| `verified` | An attestation was published and its subject digest, source repository, and commit all matched. |
+| `not-published` | The attestations API returned HTTP 404. The commit was checked against the release instead. |
+| `resolved` | No attestation was published and the release named no commit. The peeled tag is what the report records. |
+| `fixture` | This repository's own fixture. The release was not checked. |
+
+`verified` is the status that means the attestation matched. The other three stay visible so a reader can tell a verified pin from one that was not. A published attestation that does not match the digest, the source repository, or the commit fails the run and writes no report. Any attestations response other than HTTP 200 or HTTP 404 fails the run. The check rules are in [docs/provenance.md](docs/provenance.md).
 
 ## Example
 

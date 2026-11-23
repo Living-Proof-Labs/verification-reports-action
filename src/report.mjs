@@ -111,12 +111,58 @@ export function buildRunRecord({ item, configuration, summary, env, version }) {
   };
 }
 
+const STATUS_PHRASE = {
+  verified: 'verified (attestation matched)',
+  'not-published': 'not-published (no attestation published; commit checked)',
+  resolved: 'resolved (no published commit; tag peeled)',
+  fixture: 'fixture (this repository\'s fixture; release not checked)',
+};
+
+/** One glanceable line. The status word is the provenance enum. */
+export function pinnedInputLine(input) {
+  const phrase = STATUS_PHRASE[input?.status] ?? String(input?.status ?? '');
+  return `${input?.name}: ${phrase}`;
+}
+
+export function pinnedInputsText(inputs) {
+  const lines = (inputs ?? []).map((input) => pinnedInputLine(input));
+  return ['## Pinned inputs', '', ...lines, ''].join('\n');
+}
+
+export function pinnedInputsHtml(inputs) {
+  const lines = (inputs ?? []).map((input) => `<p>${pinnedInputLine(input)}</p>`).join('\n');
+  return `<section id="pinned-inputs">\n<h2>Pinned inputs</h2>\n${lines}\n</section>\n`;
+}
+
+function spliceMarked(text, section) {
+  const start = '<!-- pinned-inputs -->';
+  const end = '<!-- /pinned-inputs -->';
+  const block = `${start}\n${section}${end}\n`;
+  const pattern = new RegExp(`${start}[\\s\\S]*?${end}\\n?`);
+  if (pattern.test(text)) return text.replace(pattern, block);
+  return `${text.replace(/\s*$/, '\n')}${block}`;
+}
+
+function spliceHtml(text, section) {
+  const pattern = /<section id="pinned-inputs">[\s\S]*?<\/section>\n?/;
+  if (pattern.test(text)) return text.replace(pattern, section);
+  if (text.includes('</body>')) return text.replace('</body>', `${section}</body>`);
+  return `${text.replace(/\s*$/, '\n')}${section}`;
+}
+
 export function stampReportInputs(directory, inputs) {
   if (!Array.isArray(inputs)) return;
   const reportPath = path.join(directory, 'report.json');
   const report = JSON.parse(readFileSync(reportPath, 'utf8'));
   report.inputs = inputs;
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+  const markdown = pinnedInputsText(inputs);
+  for (const name of ['report.md', 'report.txt']) {
+    const file = path.join(directory, name);
+    writeFileSync(file, spliceMarked(readFileSync(file, 'utf8'), markdown), 'utf8');
+  }
+  const htmlFile = path.join(directory, 'report.html');
+  writeFileSync(htmlFile, spliceHtml(readFileSync(htmlFile, 'utf8'), pinnedInputsHtml(inputs)), 'utf8');
 }
 
 function listFiles(directory) {

@@ -154,6 +154,7 @@ export function fixtureProvenance(item) {
       tag: raw?.tag || null,
       commit: commitHint(spec, lock),
       digest: digest || null,
+      status: 'fixture',
       result: 'fixture',
       attestation: 'fixture',
       checks: { release: 'fixture', commit: 'fixture', digest: 'fixture', attestation: 'fixture' },
@@ -194,12 +195,10 @@ function publishedCommitOf(evidence) {
   if (typeof evidence.publishedCommit === 'string' && SHA.test(evidence.publishedCommit)) {
     return evidence.publishedCommit;
   }
-  const gitCommit = evidence.attestation?.gitCommit;
-  if (evidence.attestation?.published && typeof gitCommit === 'string' && SHA.test(gitCommit)) {
-    return gitCommit;
-  }
   return null;
 }
+
+export const PROVENANCE_STATUSES = ['verified', 'not-published', 'resolved', 'fixture'];
 
 export function subjectDigest(pin, evidence) {
   if (pin.kind === 'image') return asDigest(evidence.imageDigest);
@@ -239,20 +238,31 @@ function checkFiles(pin, evidence) {
   return compared ? 'passed' : 'resolved';
 }
 
-function checkAttestation(pin, digest, attestation) {
-  if (!attestation || attestation.published !== true) return 'not-published';
-  const subject = asDigest(attestation.subjectDigest);
-  if (subject !== digest) {
-    throw new ReportError(
-      `${pin.name}: attestation mismatch. expected subject ${digest} from ${pin.repository}, found subject ${subject || 'none'} from ${attestation.repository || 'unknown'}.`
-    );
+function checkAttestation(pin, digest, tagCommit, attestation) {
+  if (attestation?.published === true) {
+    const subject = asDigest(attestation.subjectDigest);
+    if (subject !== digest) {
+      throw new ReportError(
+        `${pin.name}: attestation digest mismatch. expected subject ${digest}, found subject ${subject || 'none'}.`
+      );
+    }
+    if (attestation.repository !== pin.repository) {
+      throw new ReportError(
+        `${pin.name}: attestation source repository mismatch. expected ${pin.repository}, found ${attestation.repository || 'none'}.`
+      );
+    }
+    if (attestation.gitCommit !== tagCommit) {
+      throw new ReportError(
+        `${pin.name}: attestation commit mismatch. expected commit ${tagCommit}, found commit ${attestation.gitCommit || 'none'}.`
+      );
+    }
+    return 'verified';
   }
-  if (attestation.repository && attestation.repository !== pin.repository) {
-    throw new ReportError(
-      `${pin.name}: attestation mismatch. expected subject ${digest} from ${pin.repository}, found subject ${subject} from ${attestation.repository}.`
-    );
-  }
-  return 'passed';
+  if (attestation?.published === false && attestation.status === 404) return 'not-published';
+  const status = attestation?.status ?? 'none';
+  throw new ReportError(
+    `${pin.name}: attestation request failed. expected HTTP 200 or HTTP 404, found HTTP ${status}.`
+  );
 }
 
 export function checkPin(pin, evidence, options = {}) {
@@ -270,11 +280,6 @@ export function checkPin(pin, evidence, options = {}) {
     );
   }
   const publishedCommit = publishedCommitOf(evidence);
-  if (publishedCommit && publishedCommit !== tagCommit) {
-    throw new ReportError(
-      `${pin.name}: tag ${pin.tag} moved. expected commit ${publishedCommit}, found commit ${tagCommit}.`
-    );
-  }
   if (pin.workflow && tagCommit !== workflowSha) {
     throw new ReportError(
       `${pin.name}: workflow pin mismatch. expected commit ${workflowSha} (${workflowTag}), found commit ${tagCommit} for tag ${pin.tag}.`
@@ -308,20 +313,27 @@ export function checkPin(pin, evidence, options = {}) {
     }
     digestCheck = published ? 'passed' : 'resolved';
   }
-  const attestation = checkAttestation(pin, digest, evidence.attestation);
+  const attestation = checkAttestation(pin, digest, tagCommit, evidence.attestation);
+  if (publishedCommit && publishedCommit !== tagCommit) {
+    throw new ReportError(
+      `${pin.name}: tag ${pin.tag} moved. expected commit ${publishedCommit}, found commit ${tagCommit}.`
+    );
+  }
+  const status = attestation === 'verified' ? 'verified' : publishedCommit ? 'not-published' : 'resolved';
   return {
     name: pin.name,
     repository: pin.repository,
     tag: pin.tag,
     commit: tagCommit,
     digest,
-    result: 'passed',
-    attestation,
+    status,
+    result: status,
+    attestation: status === 'verified' ? 'verified' : 'not-published',
     checks: {
       release: 'passed',
       commit: publishedCommit ? 'passed' : 'resolved',
       digest: digestCheck,
-      attestation,
+      attestation: status === 'verified' ? 'verified' : 'not-published',
     },
   };
 }
@@ -355,9 +367,9 @@ export function assertRecordsPassed(item) {
     }
   }
   for (const record of records) {
-    if (record?.result !== 'passed') {
+    if (!['verified', 'not-published', 'resolved'].includes(record?.status)) {
       throw new ReportError(
-        `${where}: ${record?.name ?? 'input'} provenance result is ${JSON.stringify(record?.result)}, so no report can be written.`
+        `${where}: ${record?.name ?? 'input'} provenance status is ${JSON.stringify(record?.status)}, so no report can be written.`
       );
     }
   }

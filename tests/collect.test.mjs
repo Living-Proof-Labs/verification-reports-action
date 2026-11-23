@@ -149,9 +149,10 @@ test('verifier artifacts are assembled and a missing report fails', () => {
         tag: 'v2.11.4',
         commit: '0c00c388c693012392da0c1cd391046c752e9b3c',
         digest: `sha256:${'ab'.repeat(32)}`,
-        result: 'passed',
-        attestation: 'not-published',
-        checks: { release: 'passed', commit: 'passed', digest: 'passed', attestation: 'not-published' },
+        status: 'verified',
+        result: 'verified',
+        attestation: 'verified',
+        checks: { release: 'passed', commit: 'passed', digest: 'passed', attestation: 'verified' },
       })),
       lock: {
         robot: { commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
@@ -212,7 +213,7 @@ test('verifier artifacts are assembled and a missing report fails', () => {
     assert.equal(run.version, '4.5.6');
     assert.equal(run.inputs.length, REQUIRED_INPUTS.length);
     assert.deepEqual(report.inputs, run.inputs);
-    assert.equal(report.inputs[0].result, 'passed');
+    assert.equal(report.inputs[0].status, 'verified');
 
     rmSync(path.join(reportDir, 'report.html'));
     assert.throws(

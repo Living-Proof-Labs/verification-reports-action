@@ -6,10 +6,7 @@ import { subjectDigest } from './provenance.mjs';
 const SHA = /^[0-9a-f]{40}$/;
 const DOWNLOAD_LIMIT = 128 * 1024 * 1024;
 
-export function publishedCommitFromRelease(release, attestation) {
-  if (attestation?.published && typeof attestation.gitCommit === 'string' && SHA.test(attestation.gitCommit)) {
-    return attestation.gitCommit;
-  }
+export function publishedCommitFromRelease(release) {
   const target = typeof release?.target_commitish === 'string' ? release.target_commitish : '';
   if (SHA.test(target)) return target;
   const body = typeof release?.body === 'string' ? release.body : '';
@@ -215,13 +212,19 @@ async function hashTarball(pin, fetchImpl) {
 async function loadAttestation(pin, digest, api, token, fetchImpl) {
   const url = `${api}/repos/${pin.repository}/attestations/${digest}`;
   const { response, body } = await getJson(fetchImpl, url, token);
-  if (response.status === 404) return { published: false };
-  if (!response.ok) {
+  if (response.status === 404) return { published: false, status: 404 };
+  if (response.status !== 200) {
     throw new ReportError(
-      `${pin.name}: could not read attestations for ${digest}. expected a published attestation or confirmation that none is published, found HTTP ${response.status}.`
+      `${pin.name}: attestation request failed. expected HTTP 200 or HTTP 404, found HTTP ${response.status}.`
     );
   }
-  return readAttestation(body);
+  const attestation = readAttestation(body);
+  if (attestation.published !== true) {
+    throw new ReportError(
+      `${pin.name}: attestation request failed. expected HTTP 200 with an attestation or HTTP 404, found HTTP 200 with no attestation.`
+    );
+  }
+  return { ...attestation, status: 200 };
 }
 
 export async function resolvePin(pin, { token = '', api = 'https://api.github.com', fetch: fetchImpl }) {
@@ -236,7 +239,7 @@ export async function resolvePin(pin, { token = '', api = 'https://api.github.co
       imageDigest: null,
       publishedDigest: null,
       sourceDigest: null,
-      attestation: { published: false },
+      attestation: { published: false, status: 404 },
     };
   }
   if (!response.ok) {
@@ -271,7 +274,7 @@ export async function resolvePin(pin, { token = '', api = 'https://api.github.co
   return {
     releaseFound: true,
     tagCommit,
-    publishedCommit: publishedCommitFromRelease(release, attestation),
+    publishedCommit: publishedCommitFromRelease(release),
     files,
     imageDigest,
     publishedDigest,

@@ -20,8 +20,10 @@ import {
   REQUIRED_INPUTS,
   assertPinnedInputs,
   collectPins,
+  fixtureProvenance,
   runIfProvenancePasses,
 } from '../src/provenance.mjs';
+import { pinnedInputLine, renderReport, writeConfiguration } from '../src/report.mjs';
 import { runAction } from '../src/run.mjs';
 
 const COMMIT = VERIFIER_WORKFLOW_SHA;
@@ -95,7 +97,7 @@ function passingEvidence(pin) {
       imageDigest: IMAGE,
       publishedDigest: IMAGE,
       sourceDigest: null,
-      attestation: { published: false },
+      attestation: { published: false, status: 404 },
     };
   }
   if (pin.paths.length > 0) {
@@ -109,7 +111,7 @@ function passingEvidence(pin) {
       imageDigest: null,
       publishedDigest: null,
       sourceDigest: null,
-      attestation: { published: false },
+      attestation: { published: false, status: 404 },
     };
   }
   return {
@@ -120,7 +122,7 @@ function passingEvidence(pin) {
     imageDigest: null,
     publishedDigest: SOURCE,
     sourceDigest: SOURCE,
-    attestation: { published: false },
+    attestation: { published: false, status: 404 },
   };
 }
 
@@ -145,7 +147,7 @@ test('a passing resolution records repository, tag, commit, digest, and check re
     REQUIRED_INPUTS
   );
   for (const record of records) {
-    assert.equal(record.result, 'passed');
+    assert.equal(record.status, 'not-published');
     assert.match(record.repository, /^Living-Proof-Labs\//);
     assert.match(record.tag, /^v\d+\.\d+\.\d+$/);
     assert.equal(record.commit, COMMIT);
@@ -246,42 +248,157 @@ test('a missing release refuses and names the input and the tag', async () => {
   );
 });
 
-test('an attestation subject mismatch refuses, and a missing attestation does not', async () => {
-  const passed = await assertPinnedInputs(item(), client());
-  assert.equal(passed.every((record) => record.attestation === 'not-published'), true);
+function reporterAttestation(pin, overrides) {
+  return {
+    published: true,
+    status: 200,
+    subjectDigest: IMAGE,
+    repository: pin.repository,
+    gitCommit: COMMIT,
+    ...overrides,
+  };
+}
 
+async function refusesBeforeReport(mutate, pattern) {
+  const output = path.join(mkdtempSync(path.join(tmpdir(), 'vra-attest-')), 'report.json');
+  let trials = 0;
   await assert.rejects(
     () =>
-      assertPinnedInputs(
-        item(),
-        client((pin, evidence) => {
-          if (pin.name !== 'livingproof-capability-report') return;
-          evidence.attestation = {
-            published: true,
-            subjectDigest: `sha256:${'99'.repeat(32)}`,
-            repository: 'Other/report',
-            gitCommit: COMMIT,
-          };
-        })
-      ),
-    /livingproof-capability-report: attestation mismatch\. expected subject sha256:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef from Living-Proof-Labs\/livingproof-capability-report, found subject sha256:9999999999999999999999999999999999999999999999999999999999999999 from Other\/report/
+      runIfProvenancePasses(item(), client(mutate), {}, () => {
+        trials += 1;
+        writeFileSync(output, '{}\n');
+      }),
+    pattern
   );
+  assert.equal(trials, 0);
+  assert.equal(existsSync(output), false);
+}
 
-  const verified = await assertPinnedInputs(
+test('attestation digest mismatch fails the run', async () => {
+  const found = `sha256:${'99'.repeat(32)}`;
+  await refusesBeforeReport(
+    (pin, evidence) => {
+      if (pin.name !== 'livingproof-capability-report') return;
+      evidence.attestation = reporterAttestation(pin, { subjectDigest: found });
+    },
+    (error) => {
+      assert.match(error.message, /livingproof-capability-report: attestation digest mismatch/);
+      assert.match(error.message, new RegExp(`expected subject ${IMAGE}`));
+      assert.match(error.message, new RegExp(`found subject ${found}`));
+      return true;
+    }
+  );
+});
+
+test('attestation source repository mismatch fails the run', async () => {
+  await refusesBeforeReport(
+    (pin, evidence) => {
+      if (pin.name !== 'livingproof-capability-report') return;
+      evidence.attestation = reporterAttestation(pin, { repository: 'Other/report' });
+    },
+    /livingproof-capability-report: attestation source repository mismatch\. expected Living-Proof-Labs\/livingproof-capability-report, found Other\/report/
+  );
+});
+
+test('attestation commit mismatch fails the run', async () => {
+  await refusesBeforeReport(
+    (pin, evidence) => {
+      if (pin.name !== 'livingproof-capability-report') return;
+      evidence.publishedCommit = COMMIT;
+      evidence.attestation = reporterAttestation(pin, { gitCommit: OTHER });
+    },
+    new RegExp(
+      `livingproof-capability-report: attestation commit mismatch\\. expected commit ${COMMIT}, found commit ${OTHER}`
+    )
+  );
+});
+
+test('an attestation HTTP status other than 200 or 404 fails the run', async () => {
+  for (const status of [403, 500]) {
+    await refusesBeforeReport(
+      (pin, evidence) => {
+        evidence.attestation = { published: false, status };
+      },
+      new RegExp(`capability-verifier: attestation request failed\\. expected HTTP 200 or HTTP 404, found HTTP ${status}`)
+    );
+  }
+});
+
+function renderedReport(inputs) {
+  const directory = mkdtempSync(path.join(tmpdir(), 'vra-status-'));
+  writeConfiguration(directory, {
+    files: renderReport({ capability: 'walk', system: { id: 'robot' }, grade: 'PASS' }),
+    evidence: null,
+    runRecord: { inputs },
+  });
+  return {
+    report: JSON.parse(readFileSync(path.join(directory, 'report.json'), 'utf8')),
+    run: JSON.parse(readFileSync(path.join(directory, 'run.json'), 'utf8')),
+    markdown: readFileSync(path.join(directory, 'report.md'), 'utf8'),
+    html: readFileSync(path.join(directory, 'report.html'), 'utf8'),
+  };
+}
+
+function assertStatusRendered(record) {
+  const line = pinnedInputLine(record);
+  const view = renderedReport([record]);
+  assert.equal(view.report.inputs[0].status, record.status);
+  assert.equal(view.run.inputs[0].status, record.status);
+  assert.match(view.markdown, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(view.html, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(view.html, /<h2>Pinned inputs<\/h2>/);
+}
+
+test('verified status is stored on inputs and rendered in the report', async () => {
+  const records = await assertPinnedInputs(
     item(),
     client((pin, evidence) => {
       if (pin.name !== 'livingproof-capability-report') return;
-      evidence.attestation = {
-        published: true,
-        subjectDigest: IMAGE,
-        repository: pin.repository,
-        gitCommit: COMMIT,
-      };
+      evidence.attestation = reporterAttestation(pin);
     })
   );
-  const reporter = verified.find((record) => record.name === 'livingproof-capability-report');
-  assert.equal(reporter.attestation, 'passed');
-  assert.equal(reporter.checks.attestation, 'passed');
+  const reporter = records.find((record) => record.name === 'livingproof-capability-report');
+  assert.equal(reporter.status, 'verified');
+  assert.match(pinnedInputLine(reporter), /livingproof-capability-report: verified \(attestation matched\)/);
+  assertStatusRendered(reporter);
+});
+
+test('not-published status is stored on inputs and rendered in the report', async () => {
+  const records = await assertPinnedInputs(item(), client());
+  const reporter = records.find((record) => record.name === 'livingproof-capability-report');
+  assert.equal(reporter.status, 'not-published');
+  assert.match(
+    pinnedInputLine(reporter),
+    /livingproof-capability-report: not-published \(no attestation published; commit checked\)/
+  );
+  assertStatusRendered(reporter);
+});
+
+test('resolved status is stored on inputs and rendered in the report', async () => {
+  const records = await assertPinnedInputs(
+    item(),
+    client((pin, evidence) => {
+      if (pin.name !== 'livingproof-worlds') return;
+      evidence.publishedCommit = null;
+    })
+  );
+  const world = records.find((record) => record.name === 'livingproof-worlds');
+  assert.equal(world.status, 'resolved');
+  assert.equal(world.commit, COMMIT);
+  assert.match(pinnedInputLine(world), /livingproof-worlds: resolved \(no published commit; tag peeled\)/);
+  assertStatusRendered(world);
+});
+
+test('fixture status is stored on inputs and rendered in the report', () => {
+  const record = fixtureProvenance({
+    lock: sampleLock(),
+  }).find((entry) => entry.name === 'capability-verifier');
+  assert.equal(record.status, 'fixture');
+  assert.match(
+    pinnedInputLine(record),
+    /capability-verifier: fixture \(this repository's fixture; release not checked\)/
+  );
+  assertStatusRendered(record);
 });
 
 test('a verifier tag that peels to another commit refuses before the workflow runs', async () => {
@@ -359,7 +476,7 @@ test('bumping one lock tag resolves the new release and does not rewrite the loc
     assert.equal(reporter.tag, 'v3.16.0');
     assert.equal(reporter.commit, NEW);
     assert.equal(reporter.digest, newDigest);
-    assert.equal(reporter.result, 'passed');
+    assert.equal(reporter.status, 'not-published');
     await assert.rejects(
       () =>
         runIfProvenancePasses(
@@ -613,7 +730,7 @@ test('the GitHub client resolves a release, peels a tag, and does not send the t
   assert.equal(evidence.publishedCommit, COMMIT);
   assert.equal(evidence.files[pin.paths[0]].found, fileHash);
   assert.equal(evidence.files[pin.paths[0]].published, fileHash);
-  assert.deepEqual(evidence.attestation, { published: false });
+  assert.deepEqual(evidence.attestation, { published: false, status: 404 });
   assert.equal(seen.some((call) => call.url.includes('/releases/tags/') && call.authorization === 'Bearer ghs_testtoken'), true);
 
   const source = collectPins(item()).find((entry) => entry.name === 'livingproof-sim-mujoco');
@@ -646,6 +763,31 @@ test('the GitHub client resolves a release, peels a tag, and does not send the t
     fetch: async () => respond(404, { message: 'Not Found' }),
   });
   assert.equal(missing.releaseFound, false);
+
+  await assert.rejects(
+    () =>
+      resolvePin(source, {
+        token: '',
+        api: 'https://api.github.com',
+        fetch: async (url, options) => {
+          if (url.includes('/attestations/')) return respond(403, { message: 'Forbidden' });
+          return fetchSource(url, options);
+        },
+      }),
+    /livingproof-sim-mujoco: attestation request failed\. expected HTTP 200 or HTTP 404, found HTTP 403/
+  );
+  await assert.rejects(
+    () =>
+      resolvePin(source, {
+        token: '',
+        api: 'https://api.github.com',
+        fetch: async (url, options) => {
+          if (url.includes('/attestations/')) return respond(200, { attestations: [] });
+          return fetchSource(url, options);
+        },
+      }),
+    /HTTP 200 with no attestation/
+  );
 });
 
 test('README tells Renovate to bump a lock tag without a hand relock', () => {
@@ -654,4 +796,9 @@ test('README tells Renovate to bump a lock tag without a hand relock', () => {
   assert.match(readme, /No `report\.json` is written/);
   assert.match(readme, /livingproof-evaluator-run/);
   assert.match(readme, /docs\/provenance\.md/);
+  assert.match(readme, /`verified`/);
+  assert.match(readme, /`not-published`/);
+  assert.match(readme, /`resolved`/);
+  assert.match(readme, /`fixture`/);
+  assert.match(readme, /attestation matched/);
 });
