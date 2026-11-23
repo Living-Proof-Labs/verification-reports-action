@@ -96,6 +96,9 @@ test('the report workflow calls both verifier procedures and passes no secrets',
   assert.match(reportYml, /path: action/);
   assert.match(reportYml, /path: caller/);
   assert.match(reportYml, /node "\$\{\{ github\.workspace \}\}\/action\/src\/plan\.mjs"/);
+  const planStep = reportYml.slice(reportYml.indexOf('- id: plan\n'), reportYml.indexOf('name: verification-plan'));
+  assert.match(planStep, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
+  assert.doesNotMatch(planStep, /secrets\./);
   assert.match(reportYml, /refuses before any trial/);
   assert.match(reportYml, / {2}walk-hallway:\n {4}needs: plan\n/);
   assert.match(reportYml, / {2}scenario:\n {4}needs: plan\n/);

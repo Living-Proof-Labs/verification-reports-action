@@ -115,6 +115,8 @@ jobs:
       - id: plan
         working-directory: caller
         env:
+          # contents: read is enough. The client sends this only to api.github.com.
+          GITHUB_TOKEN: ${{ github.token }}
           INPUT_DEFINITIONS: ${{ inputs.definitions }}
           INPUT_REPOSITORY: ${{ inputs.repository }}
           INPUT_REF: ${{ inputs.ref }}

@@ -19,6 +19,7 @@ import { writePlan } from '../src/plan.mjs';
 import {
   REQUIRED_INPUTS,
   assertPinnedInputs,
+  checkPin,
   collectPins,
   fixtureProvenance,
   runIfProvenancePasses,
@@ -232,6 +233,27 @@ test('an image digest that differs from the release notes refuses', async () => 
       assert.match(error.message, new RegExp(`found ${found}`));
       return true;
     }
+  );
+});
+
+test('a missing release or a missing tag fails and is not recorded as not-published', () => {
+  const pin = collectPins(item()).find((entry) => entry.name === 'livingproof-sim-mujoco');
+  const attestation = { published: false, status: 404 };
+  assert.throws(
+    () => checkPin(pin, { releaseFound: false, tagCommit: null, attestation }),
+    /livingproof-sim-mujoco: release Living-Proof-Labs\/livingproof-sim-mujoco@v3\.7\.4 is missing/
+  );
+  assert.throws(
+    () =>
+      checkPin(pin, {
+        releaseFound: true,
+        tagCommit: null,
+        publishedCommit: null,
+        files: {},
+        sourceDigest: SOURCE,
+        attestation,
+      }),
+    /livingproof-sim-mujoco: tag v3\.7\.4 did not resolve/
   );
 });
 
@@ -586,6 +608,7 @@ test('fixture reports record every input without calling the release client', as
   const planned = await writePlan(
     {
       GITHUB_REPOSITORY: 'Living-Proof-Labs/verification-reports-action',
+      WORKFLOW_REPOSITORY: 'Living-Proof-Labs/verification-reports-action',
       GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567',
       GITHUB_RUN_ID: '1',
       INPUT_DEFINITIONS: 'tests/fixtures/robot/verifications/*.toml',
@@ -612,6 +635,7 @@ test('fixture reports record every input without calling the release client', as
   runAction(
     {
       GITHUB_REPOSITORY: 'Living-Proof-Labs/verification-reports-action',
+      WORKFLOW_REPOSITORY: 'Living-Proof-Labs/verification-reports-action',
       GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567',
       GITHUB_RUN_ID: '1',
       GITHUB_SERVER_URL: 'https://github.com',
@@ -801,4 +825,9 @@ test('README tells Renovate to bump a lock tag without a hand relock', () => {
   assert.match(readme, /`resolved`/);
   assert.match(readme, /`fixture`/);
   assert.match(readme, /attestation matched/);
+  assert.match(readme, /codeload tag archive/);
+  assert.match(readme, /synthetic sha256 of those file hashes/);
+  assert.match(readme, /`status: resolved` can sit beside `attestation: not-published`/);
+  assert.match(readme, /GITHUB_TOKEN` from `github\.token`/);
+  assert.match(readme, /That 404 is not recorded as `not-published`/);
 });

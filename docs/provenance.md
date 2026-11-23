@@ -50,4 +50,12 @@ Each input's `status` is one of:
 
 ## Records
 
-`report.json` and `run.json` both gain `inputs`. Each entry has `name`, `repository`, `tag`, `commit`, `digest`, and `status`. `report.md`, `report.html`, and `report.txt` include a Pinned inputs section. Each line is `name: status (meaning)`, so a verified pin reads differently from one that was not. A failed check does not produce that file.
+`report.json` and `run.json` both gain `inputs`. Each entry has `name`, `repository`, `tag`, `commit`, `digest`, `status`, and `attestation`. `report.md`, `report.html`, and `report.txt` include a Pinned inputs section. Each line is `name: status (meaning)`, so a verified pin reads differently from one that was not. A failed check does not produce that file.
+
+`status: resolved` can appear on the same input as `attestation: not-published`. The attestation field records the HTTP 404. `resolved` means the release named no commit, so the peeled tag is what was recorded. `status: not-published` with that same attestation field means the 404 happened and the commit was checked against the release.
+
+A missing Release and a tag that does not peel are failures. They are not stored as `not-published`.
+
+Source pins hash the codeload tag archive. A pin with more than one file hashes a synthetic digest of those file hashes. Those subjects are not what a published attestation names, so the lookup returns HTTP 404 and the pin stays `not-published` until a later change uses a subject the release actually publishes. Image digests and a single file's sha256 can match.
+
+The plan step sets `GITHUB_TOKEN` from `github.token`. `contents: read` covers the release, tag, and attestation reads. That token is sent only to `api.github.com`. The codeload archive and the registry token request do not receive it.

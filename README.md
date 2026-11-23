@@ -31,7 +31,13 @@ The tag in the lock is the pin. A Renovate bump changes that tag and leaves the 
 | `resolved` | No attestation was published and the release named no commit. The peeled tag is what the report records. |
 | `fixture` | This repository's own fixture. The release was not checked. |
 
-`verified` is the status that means the attestation matched. The other three stay visible so a reader can tell a verified pin from one that was not. A published attestation that does not match the digest, the source repository, or the commit fails the run and writes no report. Any attestations response other than HTTP 200 or HTTP 404 fails the run. The check rules are in [docs/provenance.md](docs/provenance.md).
+`verified` is the status that means the attestation matched. The other three stay visible so a reader can tell a verified pin from one that was not. A published attestation that does not match the digest, the source repository, or the commit fails the run and writes no report. Any attestations response other than HTTP 200 or HTTP 404 fails the run. A missing GitHub Release, or a tag that does not peel to a commit, fails the run as well. That 404 is not recorded as `not-published`.
+
+`status: resolved` can sit beside `attestation: not-published` on the same input. The attestation field means the attestations API returned HTTP 404. `resolved` means the release also named no commit, so the report records the peeled tag. That pin is not verified. `status: not-published` with the same attestation field means HTTP 404 as well, and the commit was checked against the release.
+
+Source pins (livingproof-sim-mujoco and both evaluators) use the sha256 of the codeload tag archive as the digest they ask GitHub to attest. A specs pin with more than one file uses a synthetic sha256 of those file hashes. Neither value is a subject a real attestation names, so those pins stay `not-published` until a later change asks for a subject the release actually publishes. An image pin uses the registry digest, and a single-file pin uses that file's sha256. Those can match.
+
+The plan step passes `GITHUB_TOKEN` from `github.token` so the release, tag, and attestation reads are authenticated. `contents: read` is enough. The token is sent only to `api.github.com`. The check rules are in [docs/provenance.md](docs/provenance.md).
 
 ## Example
 
