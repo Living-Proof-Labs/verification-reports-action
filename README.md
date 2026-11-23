@@ -104,7 +104,6 @@ Use `Living-Proof-Labs/verification-reports-action/site` after downloading the `
 | `evidence-retention-days` | No | `7` | Days to retain copied MCAP, video, and media files before pruning. |
 | `restore-history` | No | `auto` | Restore earlier runs from the last deployed Pages artifact (`auto`, `true`, or `false`). |
 | `site-url` | No | empty | Optional live documentation URL checked when no Pages artifact is listed. |
-| `repository` | No | `github.repository` | Repository `owner/name` whose deployed Pages artifact holds earlier runs. |
 | `branch` | No | `main` | Branch whose deployed Pages artifacts hold earlier runs. |
 | `pages-artifact` | No | empty | Exact Pages artifact name (matches `github-pages` and `github-pages-*` when empty). |
 | `pages-job` | No | empty | Pages deploy job name (matches `pages`, `deploy`, and `deploy-pages` when empty). |

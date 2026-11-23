@@ -23,8 +23,9 @@ inputs:
     default: '7'
   restore-history:
     description: >-
-      Whether to restore earlier runs from the calling repository's last
-      successfully deployed GitHub Pages artifact (auto, true, or false).
+      Whether to restore earlier runs from this repository's (github.repository)
+      last successfully deployed, non-pull-request GitHub Pages artifact (auto,
+      true, or false).
       auto restores on non-PR runs and skips restore on pull requests.
     required: false
     default: auto
@@ -32,12 +33,6 @@ inputs:
     description: >-
       Optional live documentation URL checked when no earlier Pages artifact is
       listed so existing live report history is never silently dropped.
-    required: false
-    default: ''
-  repository:
-    description: >-
-      Repository owner/name whose deployed Pages artifact holds earlier runs.
-      Defaults to github.repository.
     required: false
     default: ''
   branch:
@@ -113,7 +108,6 @@ runs:
         INPUT_EVIDENCE_RETENTION_DAYS: ${{ inputs.evidence-retention-days }}
         INPUT_RESTORE_HISTORY: ${{ inputs.restore-history }}
         INPUT_SITE_URL: ${{ inputs.site-url }}
-        INPUT_REPOSITORY: ${{ inputs.repository }}
         INPUT_BRANCH: ${{ inputs.branch }}
         INPUT_PAGES_ARTIFACT: ${{ inputs.pages-artifact }}
         INPUT_PAGES_JOB: ${{ inputs.pages-job }}
@@ -121,7 +115,8 @@ runs:
         INPUT_UPLOAD_ARTIFACT: ${{ inputs.upload-artifact }}
         INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
-      run: python3 "${{ github.action_path }}/../src/site_action.py"
+        SITE_ACTION_PATH: ${{ github.action_path }}
+      run: python3 "$SITE_ACTION_PATH/../src/site_action.py"
     - name: Upload reports section artifact
       if: steps.build.outputs.should-upload-artifact == 'true'
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

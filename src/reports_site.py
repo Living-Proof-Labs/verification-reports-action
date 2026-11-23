@@ -39,7 +39,6 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -55,6 +54,9 @@ ALLOWED_DEPLOY_EVENTS = frozenset(
 )
 DEFAULT_PAGES_JOBS = frozenset({"pages", "deploy", "deploy-pages"})
 MAX_ARTIFACT_PAGES = 10
+# GitHub Pages sites are limited to 1 GB; refuse restored archives far beyond that.
+MAX_RESTORED_BYTES = 2 * 1024**3
+MAX_RESTORED_FILES = 200_000
 
 SEGMENT = re.compile(r"[a-z0-9][a-z0-9.-]*")
 RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -100,7 +102,6 @@ MEDIA_SUFFIXES = {
 VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
 
 SITE_PATH = re.compile(r"[A-Za-z0-9._~!$&'()*+,;=@%/-]{1,240}")
-HISTORY_LABEL = "Run history"
 SEED_LABEL = re.compile(r"^seed (?=\d)")
 RELEASE_TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
@@ -366,14 +367,40 @@ def extract_pages_reports(archive: bytes, destination: Path) -> int:
             elif has_standalone_runs:
                 selected.append((member, destination / Path(*parts)))
 
+        if len(selected) > MAX_RESTORED_FILES:
+            raise SiteError(f"The Pages artifact has too many files ({len(selected)}).")
+        total = sum(member.size for member, _ in selected)
+        if total > MAX_RESTORED_BYTES:
+            raise SiteError(f"The Pages artifact reports/ subtree is too large ({total} bytes).")
+        targets = [out for _, out in selected]
+        if len(set(targets)) != len(targets):
+            raise SiteError("The Pages artifact lists the same reports/ file more than once.")
+
         destination.mkdir(parents=True, exist_ok=True)
+        root = destination.resolve()
         for member, out_path in selected:
+            _require_contained(root, out_path)
             extracted = tar.extractfile(member)
             if extracted is None:
                 continue
             out_path.parent.mkdir(parents=True, exist_ok=True)
+            _require_contained(root, out_path)
             out_path.write_bytes(extracted.read())
         return len(selected)
+
+
+def _require_contained(root: Path, path: Path) -> None:
+    """Refuse to write through a symlink or outside the restore destination."""
+    current = path
+    while True:
+        if current.is_symlink():
+            raise SiteError(f"Refusing to restore through a symlink: {current}")
+        if current.resolve() == root or current.parent == current:
+            break
+        current = current.parent
+    resolved = path.resolve()
+    if resolved != root and not resolved.is_relative_to(root):
+        raise SiteError(f"Unsafe path outside the reports directory: {path}")
 
 
 def _unpack_pages_archive(archive: bytes, destination: Path) -> int:
@@ -1567,10 +1594,18 @@ def runs(reports_dir: Path) -> dict[tuple[str, str], list[dict]]:
     for path in sorted(reports_dir.glob("*/*/runs/*/run.json")):
         if path.is_symlink() or not path.is_file():
             continue
-        record = read_json_object(path)
-        record["folder"] = path.parent.name
         robot = path.parts[-5]
         variant = path.parts[-4]
+        folder = path.parent.name
+        if (
+            not SEGMENT.fullmatch(robot)
+            or not SEGMENT.fullmatch(variant)
+            or not RUN_ID.fullmatch(folder)
+            or any(p.is_symlink() for p in list(path.parents)[:4])
+        ):
+            raise SiteError(f"{path}: unsafe run path in the reports directory")
+        record = read_json_object(path)
+        record["folder"] = folder
         found.setdefault((robot, variant), []).append(record)
     for records in found.values():
         records.sort(key=lambda r: (r["run"]["created"], r["folder"]), reverse=True)
@@ -2015,65 +2050,6 @@ def scrub_reporter_html(text: str, record: dict, *, trial: bool, expired: bool, 
     return text
 
 
-def report_is_renderable(report: object) -> bool:
-    if not isinstance(report, dict):
-        return False
-    return (
-        report.get("report_version") == "1.0.0"
-        and isinstance(report.get("source_bundle"), dict)
-        and isinstance(report.get("source_bundle_sha256"), str)
-        and isinstance(report.get("decisions"), list)
-        and isinstance(report.get("summaries"), list)
-        and bool(report["summaries"])
-    )
-
-
-def render_with_reporter(
-    reporter_exe: str,
-    report: dict,
-    links: dict,
-    *,
-    history_href: str,
-    history_label: str,
-    retention: int | None,
-) -> str:
-    if set(links) - {"links"} or any(
-        set(entry) - {"label", "kind", "seed", "status", "path", "expired", "poster", "why"}
-        for entry in links.get("links", [])
-    ):
-        raise SiteError("refusing to pass a non-site evidence link to the reporter")
-    with tempfile.TemporaryDirectory() as tmp:
-        folder = Path(tmp)
-        source = folder / "report.json"
-        public = dict(report)
-        public["evidence_links"] = links
-        source.write_text(json.dumps(public), encoding="utf-8")
-        destination = folder / "index.html"
-        command = [
-            reporter_exe,
-            "render",
-            str(source),
-            "--format",
-            "html",
-            "-o",
-            str(destination),
-            "--history-href",
-            history_href,
-            "--history-label",
-            history_label,
-        ]
-        if links.get("links"):
-            if retention is None:
-                raise SiteError("evidence retention is required to render evidence")
-            command.extend(["--evidence-retention", str(retention)])
-        try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as error:
-            detail = (error.stderr or error.stdout or "").strip()
-            raise SiteError(f"reporter render failed: {detail}") from error
-        return destination.read_text(encoding="utf-8")
-
-
 # ---------------------------------------------------------------- provenance & nav injection
 
 _REPO_PATH = re.compile(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+")
@@ -2317,18 +2293,10 @@ def publish_run_page(folder: Path, record: dict, *, now: str, days: int, trial: 
         strip_actions_links(report) | publish_evidence_links(report, links)
     ):
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    reporter_exe = shutil.which("livingproof-capability-report")
-    if reporter_exe and report_is_renderable(report) and isinstance(report, dict):
-        public = render_with_reporter(
-            reporter_exe,
-            report,
-            links,
-            history_href="../../index.html",
-            history_label=HISTORY_LABEL,
-            retention=days if links["links"] else None,
-        )
-    else:
-        public = scrub_reporter_html(html_text, record, trial=trial, expired=expired, days=days)
+    # The run's report.html was rendered by report.yml's reporter; republish it scrubbed.
+    # The old multi-robot site re-rendered with whatever reporter binary was on PATH,
+    # which made output depend on the runner; that path is intentionally gone.
+    public = scrub_reporter_html(html_text, record, trial=trial, expired=expired, days=days)
     public = with_site_nav(
         public,
         overview_href="../../../../../index.html",

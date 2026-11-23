@@ -1097,3 +1097,122 @@ def test_multi_configuration_definition_folders_do_not_collide(tmp_path: Path):
     assert (reports_dir / "unitree-g1/walk-hallway-stock/runs/42/run.json").is_file()
     index = (reports_dir / "index.html").read_text(encoding="utf-8")
     assert index.index("walk-hallway-modified/latest/") < index.index("walk-hallway-stock/latest/")
+
+
+# ---------------------------------------------------------------- takeover hardening (Rivet)
+
+
+def _zip_of_tar(entries: list[tuple[tarfile.TarInfo, bytes | None]]) -> bytes:
+    tar_buf = io.BytesIO()
+    with tarfile.open(fileobj=tar_buf, mode="w") as tar:
+        for info, data in entries:
+            if data is not None:
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+            else:
+                tar.addfile(info)
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        zf.writestr("artifact.tar", tar_buf.getvalue())
+    return zip_buf.getvalue()
+
+
+def test_restore_refuses_hardlinks_duplicates_and_symlinks_already_in_the_destination(
+    tmp_path: Path,
+):
+    hard = tarfile.TarInfo("reports/a/b/runs/1/run.json")
+    hard.type = tarfile.LNKTYPE
+    hard.linkname = "etc/passwd"
+    with pytest.raises(site_tool.SiteError, match="Unexpected entry"):
+        site_tool.extract_pages_reports(_zip_of_tar([(hard, None)]), tmp_path / "hard")
+
+    dup = [
+        (tarfile.TarInfo("reports/index.html"), b"one"),
+        (tarfile.TarInfo("reports/index.html"), b"two"),
+    ]
+    with pytest.raises(site_tool.SiteError, match="more than once"):
+        site_tool.extract_pages_reports(_zip_of_tar(dup), tmp_path / "dup")
+
+    # A symlink that already sits in the output directory (for example committed in the
+    # caller's checkout) must not let a restored file land outside it.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "unitree-g1").symlink_to(outside, target_is_directory=True)
+    archive = _zip_of_tar([(tarfile.TarInfo("reports/unitree-g1/x/runs/1/run.json"), b"{}")])
+    with pytest.raises(site_tool.SiteError, match="symlink"):
+        site_tool.extract_pages_reports(archive, dest)
+    assert list(outside.rglob("*")) == []
+
+
+def test_restore_refuses_an_oversized_reports_subtree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(site_tool, "MAX_RESTORED_BYTES", 4)
+    archive = _zip_of_tar([(tarfile.TarInfo("reports/index.html"), b"12345")])
+    with pytest.raises(site_tool.SiteError, match="too large"):
+        site_tool.extract_pages_reports(archive, tmp_path / "big")
+    assert not (tmp_path / "big" / "index.html").exists()
+
+
+@pytest.mark.parametrize(
+    "parts",
+    [("Unitree G1", "stock", "1"), ("unitree-g1", "Stock", "1"), ("unitree-g1", "stock", "-1")],
+)
+def test_restored_run_paths_must_be_safe_segments(tmp_path: Path, parts: tuple[str, str, str]):
+    reports = tmp_path / "reports"
+    robot, variant, run_id = parts
+    run = reports / robot / variant / "runs" / run_id
+    run.mkdir(parents=True)
+    (run / "run.json").write_text(json.dumps({"run": {"created": "2026-11-20T00:00:00Z"}}))
+    with pytest.raises(site_tool.SiteError, match="unsafe run path"):
+        site_tool.runs(reports)
+
+
+def test_restored_symlinked_run_folder_is_refused(tmp_path: Path):
+    real = tmp_path / "elsewhere"
+    real.mkdir()
+    (real / "run.json").write_text(json.dumps({"run": {"created": "2026-11-20T00:00:00Z"}}))
+    runs_dir = tmp_path / "reports/unitree-g1/stock/runs"
+    runs_dir.mkdir(parents=True)
+    (runs_dir / "100").symlink_to(real, target_is_directory=True)
+    with pytest.raises(site_tool.SiteError, match="unsafe run path"):
+        site_tool.runs(tmp_path / "reports")
+
+
+def test_site_action_restores_only_from_the_calling_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    seen: list[str] = []
+    monkeypatch.setattr(site_tool, "restore", lambda dest, repo, **kw: seen.append(repo))
+    runs_in = tmp_path / "runs"
+    site_fixture.write(runs_in, run_id="501", created="2026-11-23T02:00:00Z")
+    site_action.run_site_action(
+        {
+            "INPUT_RUNS_DIR": str(runs_in),
+            "INPUT_OUTPUT_DIR": str(tmp_path / "reports"),
+            "INPUT_REPOSITORY": "Other-Org/attacker-site",
+            "GITHUB_EVENT_NAME": "push",
+            "GITHUB_REPOSITORY": REPO,
+            "GITHUB_RUN_ID": "501",
+        }
+    )
+    assert seen == [REPO]
+
+
+def test_build_never_runs_a_reporter_binary_found_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "ran"
+    fake = bin_dir / "livingproof-capability-report"
+    fake.write_text(f"#!/bin/sh\ntouch {marker}\nexit 1\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    runs_in = tmp_path / "runs"
+    site_fixture.write(runs_in, run_id="77", created="2026-11-23T03:00:00Z")
+    site_tool.build(tmp_path / "reports", runs_in)
+    assert not marker.exists()
+    assert site_fixture.check_reports_tree(tmp_path / "reports") == []

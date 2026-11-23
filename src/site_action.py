@@ -79,9 +79,8 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
     reports_dir = Path(output_dir_raw)
 
     if should_restore:
-        repository = (
-            env_map.get("INPUT_REPOSITORY") or env_map.get("GITHUB_REPOSITORY") or ""
-        ).strip()
+        # History is only ever restored from the calling repository's own Pages deploys.
+        repository = (env_map.get("GITHUB_REPOSITORY") or "").strip()
         branch = (env_map.get("INPUT_BRANCH") or "main").strip()
         run_id_str = (env_map.get("GITHUB_RUN_ID") or "").strip()
         current_run = int(run_id_str) if run_id_str.isdigit() else None
