@@ -56,4 +56,7 @@ test('verify forecasts a candidate version and smokes it without sealing a relea
   assert.match(verifyYml, /name: smoke-report-\$\{\{ needs\.version\.outputs\.semver-version \}\}/);
   assert.doesNotMatch(verifyYml, /expected-version/);
   assert.doesNotMatch(verifyYml, /uses: \.\/\.github\/workflows\/release\.yml/);
+  assert.doesNotMatch(verifyYml, /actions: write/);
+  assert.match(verifyYml, / {2}verify:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {6}checks: write\n/);
+  assert.match(verifyYml, / {2}action-smoke:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {4}steps:\n/);
 });
