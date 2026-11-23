@@ -99,12 +99,27 @@ test('src/site_action.py consumes collectReports output from .github/workflows/r
       INPUT_VERSION: '2.1.0',
       INPUT_REPOSITORY: '',
       INPUT_REF: '',
+      // report.yml sets this from job.workflow_repository. The fixture definitions only
+      // run as fixtures when this repository calls its own workflow (va#8).
+      WORKFLOW_REPOSITORY: 'Living-Proof-Labs/verification-reports-action',
     };
+    const spoofed = writePlan(
+      {
+        ...baseEnv,
+        WORKFLOW_REPOSITORY: 'Other-Org/verification-reports-action',
+        INPUT_PLAN_PATH: path.join(tempRoot, 'spoofed-plan.json'),
+        GITHUB_OUTPUT: path.join(tempRoot, 'spoofed-plan.out'),
+      },
+      repoRoot
+    );
+    assert.ok(spoofed.plan.definitions.every((item) => item.execution !== 'fixture'));
     const planPath = path.join(tempRoot, 'plan.json');
     const planned = writePlan(
       { ...baseEnv, INPUT_PLAN_PATH: planPath, GITHUB_OUTPUT: path.join(tempRoot, 'plan.out') },
       repoRoot
     );
+    assert.equal(planned.plan.definitions.length, 2);
+    assert.ok(planned.plan.definitions.every((item) => item.execution === 'fixture'));
     const stage = path.join(tempRoot, 'stage');
     for (const item of planned.plan.definitions) {
       runFixtureCli(
