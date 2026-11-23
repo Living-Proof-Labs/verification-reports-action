@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # This repository has no published development image yet. Until one exists, CI
-# uses the documented GitHub-hosted ubuntu-24.04 fallback with pinned Node.js
-# and Task 3.54.0, running the same `task setup` and `task verify` commands.
+# uses the documented GitHub-hosted ubuntu-24.04 fallback with pinned Node.js,
+# uv/Python 3.12, and Task 3.54.0, running the same `task setup` and `task verify` commands.
 name: Verify
 on:
   pull_request:
@@ -32,6 +32,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.22.3'
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          python-version: '3.12'
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
           version: '3.54.0'
@@ -44,7 +47,7 @@ jobs:
         uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0
         with:
           name: Action tests
-          path: artifacts/tests.xml
+          path: artifacts/*-tests.xml
           reporter: java-junit
           use-actions-summary: 'true'
           fail-on-error: 'true'
@@ -54,7 +57,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: junit-report-${{ github.event.pull_request.head.sha || github.sha }}
-          path: artifacts/tests.xml
+          path: artifacts/*-tests.xml
           retention-days: 30
           if-no-files-found: error
       - name: actionlint
@@ -116,3 +119,42 @@ jobs:
           path: artifacts/smoke-report/report.json
           retention-days: 30
           if-no-files-found: error
+  site-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Generate fixture run folders
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 tools/site_fixture.py write "$RUNNER_TEMP/fixture-runs" --run-id "$RUN_ID"
+      - name: Build reports section via ./site
+        id: site
+        uses: ./site
+        with:
+          runs-dir: ${{ runner.temp }}/fixture-runs
+          output-dir: artifacts/site-smoke/reports
+          restore-history: ${{ github.event_name == 'pull_request' && 'auto' || 'false' }}
+      - name: Verify built reports section
+        env:
+          REPORTS_DIR: ${{ steps.site.outputs.reports-dir }}
+          INDEX_PATH: ${{ steps.site.outputs.index-path }}
+          RUNS_COUNT: ${{ steps.site.outputs.runs-count }}
+          ARTIFACT_ONLY: ${{ steps.site.outputs.artifact-only }}
+        run: |
+          set -euo pipefail
+          test "$REPORTS_DIR" = "artifacts/site-smoke/reports"
+          test -f "$INDEX_PATH"
+          test "$RUNS_COUNT" = "3"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ] || [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
+            test "$ARTIFACT_ONLY" = "true"
+          else
+            test "$ARTIFACT_ONLY" = "false"
+          fi
+          grep -Fq "https://docs.livingprooflabs.com/livingproof-verification/reports/index.html" "$INDEX_PATH"
+          python3 tools/site_fixture.py check "$REPORTS_DIR"
