@@ -15,6 +15,7 @@ test('action.yml defines the composite action contract', () => {
   assert.match(actionYml, /^\s+robot-manifest:/m);
   assert.match(actionYml, /^\s+runner-config:/m);
   assert.match(actionYml, /^\s+output-dir:/m);
+  assert.match(actionYml, /^\s+version:/m);
   assert.match(actionYml, /^\s+report-path:/m);
   assert.match(actionYml, /^\s+status:/m);
 });
@@ -38,6 +39,7 @@ test('runAction writes a placeholder report and GitHub Action outputs', () => {
 
     const writtenReport = JSON.parse(readFileSync(result.reportPath, 'utf8'));
     assert.equal(writtenReport.status, 'placeholder');
+    assert.equal(writtenReport.version, '');
     assert.deepEqual(writtenReport.inputs, {
       pins_path: 'custom/pins.json',
       robot_manifest: 'custom/robot.json',
@@ -67,6 +69,22 @@ test('src/run.mjs executes as a standalone process', () => {
       encoding: 'utf8',
     });
     assert.match(stdout, /Living Proof Verification Reports \(placeholder\): wrote /);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('runAction records a supplied version in the report', () => {
+  const tempRoot = mkdtempSync(path.join(tmpdir(), 'vra-version-'));
+  try {
+    const outputDir = path.join(tempRoot, 'report-out');
+    const result = runAction({
+      INPUT_OUTPUT_DIR: outputDir,
+      INPUT_VERSION: '  1.2.3-rc.4  ',
+    });
+    const writtenReport = JSON.parse(readFileSync(result.reportPath, 'utf8'));
+    assert.equal(writtenReport.version, '1.2.3-rc.4');
+    assert.equal(writtenReport.status, 'placeholder');
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }

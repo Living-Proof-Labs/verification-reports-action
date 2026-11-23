@@ -20,6 +20,12 @@ inputs:
     description: Directory where the verification report artifacts will be written.
     required: false
     default: artifacts/verification-report
+  version:
+    description: >-
+      Optional version recorded in the verification report. Empty when the
+      caller does not supply one.
+    required: false
+    default: ''
 outputs:
   report-path:
     description: Path to the generated verification report file.
@@ -37,4 +43,5 @@ runs:
         INPUT_ROBOT_MANIFEST: ${{ inputs.robot-manifest }}
         INPUT_RUNNER_CONFIG: ${{ inputs.runner-config }}
         INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
+        INPUT_VERSION: ${{ inputs.version }}
       run: node "${{ github.action_path }}/src/run.mjs"

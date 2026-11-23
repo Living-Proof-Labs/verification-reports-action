@@ -16,6 +16,7 @@ This repository currently provides a runnable placeholder template (`action.yml`
 | `robot-manifest` | No | `robot.json` | Path to the robot manifest. |
 | `runner-config` | No | `runner.json` | Path to the runner configuration. |
 | `output-dir` | No | `artifacts/verification-report` | Directory where report artifacts are written. |
+| `version` | No | empty | Optional version recorded in the report. |
 
 ## Intended outputs
 
@@ -23,6 +24,12 @@ This repository currently provides a runnable placeholder template (`action.yml`
 | --- | --- |
 | `report-path` | Path to the generated verification report file. |
 | `status` | Execution status of the verification report action (`placeholder` in this template). |
+
+## Release
+
+`Verify` runs on pull requests, merge groups, and pushes to `main`. Pull requests into `main` get a unique candidate version from `semantic-release-candidate.yml`: the smoke job records `semver-version` and uploads `smoke-report-<version>`.
+
+After `Verify` succeeds for a push to `main`, `Release` runs. The `release` job tags that commit and publishes the GitHub release. `post-release` runs only when `release` publishes (`published == 'true'`), checks out `git-tag`, and runs this action with the published `version`.
 
 ## Example usage
 

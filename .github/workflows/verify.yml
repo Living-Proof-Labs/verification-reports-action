@@ -5,6 +5,8 @@
 name: Verify
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
 permissions:
@@ -18,6 +20,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      actions: write
       checks: write
     env:
       ACTIONLINT_VERSION: 1.7.12
@@ -64,11 +67,23 @@ jobs:
           echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" -color
+  version:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.base_ref == 'main')
+    permissions:
+      contents: read
+    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release-candidate.yml@v9.9.10
   action-smoke:
+    needs: version
+    if: >-
+      !cancelled() &&
+      (needs.version.result == 'success' || needs.version.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -80,33 +95,26 @@ jobs:
         uses: ./
         with:
           output-dir: artifacts/smoke-report
+          version: ${{ needs.version.outputs.semver-version }}
       - name: Verify action outputs
         env:
           STATUS: ${{ steps.smoke.outputs.status }}
           REPORT_PATH: ${{ steps.smoke.outputs.report-path }}
+          VERSION: ${{ needs.version.outputs.semver-version }}
         run: |
+          set -euo pipefail
           test "$STATUS" = "placeholder"
           test -f "$REPORT_PATH"
-  version:
-    if: github.event_name == 'push' || github.base_ref == 'main'
-    permissions:
-      contents: read
-    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release-candidate.yml@d0d9ae8e684f8a828b774eda01622b7c66e5252e # v9.9.10
-  release:
-    needs: [verify, action-smoke, version]
-    if: >-
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
-      needs.verify.result == 'success' &&
-      needs.action-smoke.result == 'success' &&
-      needs.version.result == 'success' &&
-      needs.version.outputs.version != '' &&
-      needs.version.outputs.version == needs.version.outputs.semver-version &&
-      needs.version.outputs.git-tag == format('v{0}', needs.version.outputs.version) &&
-      needs.version.outputs.commit == github.sha
-    permissions:
-      contents: write
-    uses: ./.github/workflows/release.yml
-    with:
-      version: ${{ needs.version.outputs.version }}
-      commit: ${{ needs.version.outputs.commit }}
+          test "$(jq -r .status "$REPORT_PATH")" = "placeholder"
+          test "$(jq -r .version "$REPORT_PATH")" = "$VERSION"
+          if { [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ "$GITHUB_BASE_REF" = "main" ]; } || \
+             { [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; }; then
+            test -n "$VERSION"
+          fi
+      - name: Upload the smoke report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smoke-report-${{ needs.version.outputs.semver-version }}
+          path: artifacts/smoke-report/report.json
+          retention-days: 30
+          if-no-files-found: error

@@ -27,7 +27,7 @@ for (const key of ['name:', 'description:', 'inputs:', 'outputs:', 'runs:', 'usi
   }
 }
 
-for (const script of ['src/run.mjs', 'tools/check.mjs', 'tests/action.test.mjs']) {
+for (const script of ['src/run.mjs', 'tools/check.mjs', 'tests/action.test.mjs', 'tests/workflows.test.mjs']) {
   execFileSync(process.execPath, ['--check', script], { stdio: 'inherit' });
 }
 

@@ -7,6 +7,7 @@ export function runAction(env = process.env) {
   const robotManifest = (env.INPUT_ROBOT_MANIFEST ?? 'robot.json').trim();
   const runnerConfig = (env.INPUT_RUNNER_CONFIG ?? 'runner.json').trim();
   const outputDir = (env.INPUT_OUTPUT_DIR ?? '').trim();
+  const version = (env.INPUT_VERSION ?? '').trim();
 
   if (!outputDir) {
     throw new Error(
@@ -19,6 +20,7 @@ export function runAction(env = process.env) {
   const payload = {
     schema_version: '0.0.0-placeholder',
     status: 'placeholder',
+    version,
     note: 'Template implementation. Provenance checks and report generation are tracked in Living-Proof-Labs/.github#164.',
     inputs: {
       pins_path: pinsPath,
