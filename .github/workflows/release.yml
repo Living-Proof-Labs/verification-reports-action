@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Release
+on:
+  workflow_run:
+    workflows: [Verify]
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_sha == github.sha
+    permissions:
+      contents: write
+    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@v9.9.10
+  post-release:
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.release.outputs.git-tag }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.3'
+      - id: released
+        uses: ./
+        with:
+          output-dir: artifacts/released-report
+          version: ${{ needs.release.outputs.version }}
+      - name: Verify the published action report
+        env:
+          STATUS: ${{ steps.released.outputs.status }}
+          REPORT_PATH: ${{ steps.released.outputs.report-path }}
+          VERSION: ${{ needs.release.outputs.version }}
+          GIT_TAG: ${{ needs.release.outputs.git-tag }}
+          COMMIT: ${{ needs.release.outputs.commit }}
+        run: |
+          set -euo pipefail
+          test "$STATUS" = "placeholder"
+          test -n "$VERSION"
+          test -n "$GIT_TAG"
+          test -n "$COMMIT"
+          test -f "$REPORT_PATH"
+          test "$(jq -r .status "$REPORT_PATH")" = "placeholder"
+          test "$(jq -r .version "$REPORT_PATH")" = "$VERSION"
+          test "$(git rev-parse HEAD)" = "$COMMIT"
