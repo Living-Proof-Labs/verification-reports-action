@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { ReportError } from './definitions.mjs';
+import { ReportError, assertConfigurationSlug } from './definitions.mjs';
 import {
   assertChecksums,
   buildRunRecord,
@@ -27,6 +27,9 @@ function copyOptional(source, destination) {
 }
 
 export function assembleVerifierDefinition(item, downloadRoot, outputDir, env, version) {
+  for (const configuration of item.configurations ?? []) {
+    assertConfigurationSlug(configuration, item.path ?? 'collect');
+  }
   const destination = path.join(outputDir, item.id);
   rmSync(destination, { recursive: true, force: true });
   mkdirSync(destination, { recursive: true });

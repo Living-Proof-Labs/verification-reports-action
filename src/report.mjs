@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { sha256 } from './definitions.mjs';
+import { assertConfigurationSlug, sha256 } from './definitions.mjs';
 import { fixtureProvenance } from './provenance.mjs';
 
 const REPORT_FILES = ['report.html', 'report.md', 'report.json', 'report.txt'];
@@ -71,6 +71,7 @@ export function buildRunRecord({ item, configuration, summary, env, version }) {
     withUrls[name] = entry;
   }
   return {
+    fixture: item.execution === 'fixture',
     robot: {
       repository: tested.repository,
       commit: tested.ref,
@@ -238,6 +239,7 @@ export function gradeMap(outputDir, plan) {
   const grades = {};
   for (const item of plan.definitions) {
     for (const configuration of item.configurations) {
+      assertConfigurationSlug(configuration, item.path ?? 'collect');
       const directory = path.join(outputDir, item.id, configuration);
       const reportPath = path.join(directory, 'report.json');
       const report = JSON.parse(readFileSync(reportPath, 'utf8'));

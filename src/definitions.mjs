@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 export class ReportError extends Error {
@@ -14,6 +14,14 @@ export class ReportError extends Error {
 export const VERIFIER_WORKFLOW_SHA = '0c00c388c693012392da0c1cd391046c752e9b3c';
 export const VERIFIER_WORKFLOW_TAG = 'v2.11.4';
 export const VERIFIER_OWNER = 'Living-Proof-Labs/capability-verifier';
+
+/** This repository. Fixture reports are produced only when it calls its own workflow. */
+export const THIS_REPOSITORY = 'Living-Proof-Labs/verification-reports-action';
+
+/** One path segment: a lowercase slug, no slash, and no "..". */
+export const CONFIGURATION_SLUG = /^[a-z0-9][a-z0-9._-]*$/;
+
+const BLOCKED_TOML_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 export const PROCEDURES = {
   'walk-hallway': '.github/workflows/walk-hallway.yml',
@@ -32,20 +40,39 @@ export function verifierWorkflow(procedure) {
   return `${VERIFIER_OWNER}/${file}@${VERIFIER_WORKFLOW_SHA}`;
 }
 
-export function isFixtureCaller(repository) {
-  return (
-    repository === 'Living-Proof-Labs/verification-reports-action' ||
-    repository.endsWith('/verification-reports-action')
-  );
+/**
+ * True only when `job.workflow_repository == github.repository` and that caller
+ * is this repository. A different repository whose name ends in
+ * `/verification-reports-action` is not a fixture.
+ */
+export function isFixtureCaller(callerRepository, workflowRepository) {
+  if (typeof callerRepository !== 'string' || typeof workflowRepository !== 'string') return false;
+  const caller = callerRepository.trim();
+  const workflow = workflowRepository.trim();
+  return caller.length > 0 && caller === workflow && caller === THIS_REPOSITORY;
 }
 
-export function isFixtureDefinition(definitionPath, repository) {
+export function isFixtureDefinition(definitionPath, callerRepository, workflowRepository) {
   const normalized = definitionPath.split(path.sep).join('/');
   return (
-    isFixtureCaller(repository) &&
+    isFixtureCaller(callerRepository, workflowRepository) &&
     normalized.includes('tests/fixtures/robot/verifications/') &&
     normalized.endsWith('.toml')
   );
+}
+
+export function assertConfigurationSlug(name, where) {
+  if (
+    typeof name !== 'string' ||
+    name.includes('..') ||
+    name.includes('/') ||
+    name.includes('\\') ||
+    !CONFIGURATION_SLUG.test(name)
+  ) {
+    throw new ReportError(
+      `${where}: configuration ${JSON.stringify(name)} must match ${CONFIGURATION_SLUG} and must not contain "/", "\\", or "..". Example: stock.`
+    );
+  }
 }
 
 export function sha256(bytes) {
@@ -77,9 +104,21 @@ function parseValue(raw) {
   return value;
 }
 
+function createTable() {
+  return Object.create(null);
+}
+
+function assertTomlKey(key, file) {
+  if (BLOCKED_TOML_KEYS.has(key)) {
+    throw new ReportError(
+      `${file}: key ${JSON.stringify(key)} is not allowed. Use a table or key name other than __proto__, constructor, or prototype.`
+    );
+  }
+}
+
 /** Subset of TOML used by livingproof-verification-definition/0.1.0. */
 export function parseToml(text, file) {
-  const root = {};
+  const root = createTable();
   let table = root;
   for (const rawLine of text.split(/\r?\n/)) {
     const line = stripComment(rawLine).trim();
@@ -88,8 +127,10 @@ export function parseToml(text, file) {
     if (tableMatch) {
       table = root;
       for (const part of tableMatch[1].split('.')) {
-        if (!table[part] || typeof table[part] !== 'object' || Array.isArray(table[part])) {
-          table[part] = {};
+        assertTomlKey(part, file);
+        const existing = table[part];
+        if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+          table[part] = createTable();
         }
         table = table[part];
       }
@@ -98,14 +139,67 @@ export function parseToml(text, file) {
     const separator = line.indexOf('=');
     if (separator === -1) throw new ReportError(`${file}: cannot parse ${rawLine}`);
     const key = line.slice(0, separator).trim();
+    assertTomlKey(key, file);
     table[key] = parseValue(line.slice(separator + 1));
   }
   return root;
 }
 
+function checkoutRoot(root) {
+  const resolved = path.resolve(root);
+  try {
+    return realpathSync(resolved);
+  } catch (error) {
+    throw new ReportError(`checkout ${resolved} is not a directory: ${error.message}`);
+  }
+}
+
+function containedPath(rootReal, relativePath, label) {
+  const normalized = String(relativePath).split(path.sep).join('/');
+  if (normalized.startsWith('/') || normalized.split('/').includes('..')) {
+    throw new ReportError(
+      `${label} escapes the checkout. Stay inside the caller checkout; ".." is rejected.`
+    );
+  }
+  const segments = normalized.split('/').filter((segment) => segment.length > 0 && segment !== '.');
+  let current = rootReal;
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    let stat;
+    try {
+      stat = lstatSync(current);
+    } catch (error) {
+      const wrapped = new ReportError(`${label} is not inside the checkout (${current}): ${error.message}`);
+      wrapped.code = error.code;
+      throw wrapped;
+    }
+    if (stat.isSymbolicLink()) {
+      throw new ReportError(`${label} is a symlink, which is rejected (${current})`);
+    }
+  }
+  let real;
+  try {
+    real = realpathSync(current);
+  } catch (error) {
+    const wrapped = new ReportError(`${label} is not inside the checkout (${current}): ${error.message}`);
+    wrapped.code = error.code;
+    throw wrapped;
+  }
+  const relative = path.relative(rootReal, real);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new ReportError(`${label} resolves outside the checkout (${real})`);
+  }
+  return real;
+}
+
 export function expandDefinitions(pattern, root) {
-  const normalized = pattern.trim();
+  const normalized = pattern.trim().split(path.sep).join('/');
   if (!normalized) throw new ReportError('definitions must be a non-empty glob');
+  if (normalized.startsWith('/') || normalized.includes('\\') || normalized.split('/').includes('..')) {
+    throw new ReportError(
+      `definitions glob ${pattern} escapes the checkout. Use one directory inside the caller checkout, for example verifications/*.toml.`
+    );
+  }
   const slash = normalized.lastIndexOf('/');
   const directory = slash === -1 ? '.' : normalized.slice(0, slash);
   const base = slash === -1 ? normalized : normalized.slice(slash + 1);
@@ -114,13 +208,24 @@ export function expandDefinitions(pattern, root) {
       `definitions glob ${pattern} is not supported. Use one directory and a single * in the file name, for example verifications/*.toml.`
     );
   }
-  const absolute = path.resolve(root, directory);
+  const rootReal = checkoutRoot(root);
+  let directoryReal;
+  try {
+    directoryReal = containedPath(rootReal, directory, `definitions glob ${pattern}`);
+  } catch (error) {
+    if (error instanceof ReportError && error.code === 'ENOENT') {
+      throw new ReportError(
+        `definitions glob ${pattern} did not match a directory (${directory}): ${error.message}`
+      );
+    }
+    throw error;
+  }
   let names;
   try {
-    names = readdirSync(absolute);
+    names = readdirSync(directoryReal);
   } catch (error) {
     throw new ReportError(
-      `definitions glob ${pattern} did not match a directory (${absolute}): ${error.message}`
+      `definitions glob ${pattern} did not match a directory (${directoryReal}): ${error.message}`
     );
   }
   const expression = new RegExp(
@@ -129,7 +234,11 @@ export function expandDefinitions(pattern, root) {
   return names
     .filter((name) => expression.test(name) && name.endsWith('.toml'))
     .sort()
-    .map((name) => path.join(directory, name).split(path.sep).join('/'));
+    .map((name) => {
+      const relative = (directory === '.' ? name : `${directory}/${name}`).split(path.sep).join('/');
+      containedPath(rootReal, relative, `definitions glob ${pattern}`);
+      return relative;
+    });
 }
 
 function configurationNames(toml, lock, file) {
@@ -137,6 +246,7 @@ function configurationNames(toml, lock, file) {
   if (!Array.isArray(fromToml) || fromToml.length === 0 || fromToml.some((name) => typeof name !== 'string')) {
     throw new ReportError(`${file}: [robot].configurations must be a non-empty list of names`);
   }
+  for (const name of fromToml) assertConfigurationSlug(name, file);
   const locked = Array.isArray(lock.configurations)
     ? lock.configurations.map((entry) => entry?.name).filter((name) => typeof name === 'string')
     : fromToml;
@@ -151,7 +261,8 @@ function configurationNames(toml, lock, file) {
 
 export function loadDefinition(relativePath, root) {
   const file = relativePath.split(path.sep).join('/');
-  const absolute = path.resolve(root, file);
+  const rootReal = checkoutRoot(root);
+  const absolute = containedPath(rootReal, file, file);
   const bytes = readFileSync(absolute);
   const text = bytes.toString('utf8');
   if (!text.includes('livingproof-verification-definition/')) return null;
@@ -169,7 +280,15 @@ export function loadDefinition(relativePath, root) {
     );
   }
   const lockRelative = file.replace(/\.toml$/, '.lock.json');
-  const lockAbsolute = path.resolve(root, lockRelative);
+  let lockAbsolute;
+  try {
+    lockAbsolute = containedPath(rootReal, lockRelative, lockRelative);
+  } catch (error) {
+    if (error instanceof ReportError && error.code === 'ENOENT') {
+      throw new ReportError(`${lockRelative} is missing or is not JSON: ${error.message}`);
+    }
+    throw error;
+  }
   let lock;
   try {
     lock = JSON.parse(readFileSync(lockAbsolute, 'utf8'));
@@ -238,12 +357,13 @@ export function resolveRobot(inputs, env) {
 
 export function planDefinitions(inputs, env, root = process.cwd()) {
   const robot = resolveRobot(inputs, env);
+  const workflowRepository = typeof env.WORKFLOW_REPOSITORY === 'string' ? env.WORKFLOW_REPOSITORY : '';
   const matches = expandDefinitions(inputs.definitions ?? 'verifications/*.toml', root);
   const definitions = [];
   for (const match of matches) {
     const loaded = loadDefinition(match, root);
     if (!loaded) continue;
-    const execution = isFixtureDefinition(loaded.path, robot.callerRepository)
+    const execution = isFixtureDefinition(loaded.path, robot.callerRepository, workflowRepository)
       ? 'fixture'
       : 'capability-verifier';
     definitions.push({

@@ -26,6 +26,7 @@ function callerEnv(overrides = {}) {
     INPUT_VERSION: '1.2.3',
     INPUT_REPOSITORY: '',
     INPUT_REF: '',
+    WORKFLOW_REPOSITORY: CALLER,
     ...overrides,
   };
 }
@@ -84,6 +85,7 @@ test('runAction writes both fixture procedures and keeps a FAIL grade successful
       assert.equal(run.declared_robot.commit, DECLARED);
       assert.notEqual(run.robot.commit, run.declared_robot.commit);
       assert.equal(run.version, '1.2.3');
+      assert.equal(run.fixture, true);
       assert.equal(readFileSync(path.join(directory, 'evidence', 'observation.json'), 'utf8').includes(procedure), true);
     }
     assert.equal(
