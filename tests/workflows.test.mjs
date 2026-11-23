@@ -63,6 +63,12 @@ test('verify forecasts a candidate version and smokes it without sealing a relea
     verifyYml,
     / {2}action-smoke:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {6}pull-requests: write\n {4}uses: \.\/\.github\/workflows\/report\.yml\n/
   );
+  assert.match(
+    verifyYml,
+    / {2}site-smoke:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {4}steps:\n/
+  );
+  assert.match(verifyYml, /uses: \.\/site/);
+  assert.doesNotMatch(verifyYml, /pages: write/);
   assert.match(verifyYml, /^permissions:\n {2}contents: read\nconcurrency:/m);
   assert.match(verifyYml, /definitions: tests\/fixtures\/robot\/verifications\/\*\.toml/);
 });
