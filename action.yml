@@ -69,4 +69,5 @@ runs:
         INPUT_REF: ${{ inputs.ref }}
         INPUT_MEDIA: ${{ inputs.media }}
         INPUT_COMMENT: ${{ inputs.comment }}
+        WORKFLOW_REPOSITORY: ${{ github.action_repository }}
       run: node "${{ github.action_path }}/src/run.mjs"
