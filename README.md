@@ -10,7 +10,7 @@ This is a reusable workflow, `.github/workflows/report.yml`, because the runs go
 
 `action.yml` remains for this repository's fixture tests. Any other caller that uses the composite action is told to call the workflow.
 
-Robot repositories pin a semantic-release tag, or a full commit SHA with a `# vX.Y.Z` comment. The workflow asks for `contents: read` and passes no secrets. `GITHUB_TOKEN` is the credential. `merge_group` works when the caller workflow listens for it; the robot commit is that event's SHA.
+Robot repositories pin a semantic-release tag, or a full commit SHA with a `# vX.Y.Z` comment. The workflow passes no secrets. `GITHUB_TOKEN` is the credential. Every job has `contents: read`. The two jobs that call capability-verifier also have `pull-requests: write`, because `walk-hallway.yml`'s `scenario` job and `scenario.yml`'s `comment` job declare it. With `comment: false` that job never writes. Callers of this workflow grant the same pair on the calling job. `merge_group` works when the caller workflow listens for it; the robot commit is that event's SHA.
 
 A robot `FAIL` or `INSUFFICIENT_EVIDENCE` is a successful run. `status` is `ok` when the report was written. `grade` is the robot grade for a single result, and `grades` is a JSON map of `definition/configuration` to grade. The files are uploaded as the `verification-report` artifact. Callers download that artifact; the files are not left in the caller job's workspace.
 
@@ -28,8 +28,11 @@ permissions:
   contents: read
 jobs:
   report:
+    # capability-verifier's comment job declares pull-requests: write.
+    # With comment: false it never writes.
     permissions:
       contents: read
+      pull-requests: write
     uses: Living-Proof-Labs/verification-reports-action/.github/workflows/report.yml@<commit> # vX.Y.Z
     with:
       definitions: verifications/*.toml
@@ -47,7 +50,7 @@ Replace `<commit>` and `vX.Y.Z` with the published release. The definition files
 | `repository` | No | caller | Another robot repository. `ref` must then be that repository's full commit SHA. |
 | `ref` | No | caller SHA | Robot commit. A release tag is rejected. |
 | `media` | No | `true` | Record MCAP and video when capability-verifier records them. |
-| `comment` | No | `false` | Ask capability-verifier to comment on a same-repository pull request. The workflow token is `contents: read`, so leave this false. |
+| `comment` | No | `false` | Ask capability-verifier to comment on a same-repository pull request. The comment job declares `pull-requests: write`. With this false it never writes. |
 
 ## Outputs
 

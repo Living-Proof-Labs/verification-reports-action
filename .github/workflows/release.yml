@@ -22,8 +22,11 @@ jobs:
   post-release:
     needs: release
     if: needs.release.outputs.published == 'true'
+    # capability-verifier's comment job declares pull-requests: write.
+    # With comment: false it never writes.
     permissions:
       contents: read
+      pull-requests: write
     uses: ./.github/workflows/report.yml
     with:
       definitions: tests/fixtures/robot/verifications/*.toml

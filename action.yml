@@ -40,7 +40,7 @@ inputs:
   comment:
     description: >-
       Ask capability-verifier to comment on a same-repository pull request.
-      The workflow token is contents:read, so leave this false.
+      The comment job declares pull-requests: write. With comment false it never writes.
     required: false
     default: 'false'
 outputs:

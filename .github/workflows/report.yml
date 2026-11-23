@@ -39,7 +39,7 @@ on:
       comment:
         description: >-
           Ask capability-verifier to comment on a same-repository pull request.
-          This workflow's token is contents:read, so leave this false.
+          The comment job declares pull-requests: write. With comment false it never writes.
         type: boolean
         default: false
         required: false
@@ -124,8 +124,11 @@ jobs:
   walk-hallway:
     needs: plan
     if: needs.plan.outputs.hallway_count != '0'
+    # capability-verifier walk-hallway.yml job scenario declares pull-requests: write.
+    # With comment: false that job never writes.
     permissions:
       contents: read
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
@@ -143,8 +146,11 @@ jobs:
   scenario:
     needs: plan
     if: needs.plan.outputs.scenario_count != '0'
+    # capability-verifier scenario.yml job comment declares pull-requests: write.
+    # With comment: false that job never writes.
     permissions:
       contents: read
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:

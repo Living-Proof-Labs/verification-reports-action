@@ -4,7 +4,7 @@
 
 ## Summary
 
-The caller-facing interface is the reusable workflow `.github/workflows/report.yml`. A robot repository calls it at a semantic-release tag, or with a full commit SHA and a `# vX.Y.Z` comment. `walk-hallway` and `scenario` stay capability-verifier reusable workflows, which use matrices, containers and separate runners. A composite action is a single step and cannot call them. The default `GITHUB_TOKEN` is enough, `merge_group` works from the caller workflow, and a robot `FAIL` is a green run whose grade is an output. Report files come back as the `verification-report` artifact.
+The caller-facing interface is the reusable workflow `.github/workflows/report.yml`. A robot repository calls it at a semantic-release tag, or with a full commit SHA and a `# vX.Y.Z` comment. `walk-hallway` and `scenario` stay capability-verifier reusable workflows, which use matrices, containers and separate runners. A composite action is a single step and cannot call them. The default `GITHUB_TOKEN` is enough. The calling job grants `contents: read` and `pull-requests: write`, because capability-verifier's comment job declares the second and, with `comment: false`, never writes. `merge_group` works from the caller workflow, and a robot `FAIL` is a green run whose grade is an output. Report files come back as the `verification-report` artifact.
 
 ## Context
 
@@ -37,8 +37,11 @@ Robot repositories call a job:
 ```yaml
 jobs:
   report:
+    # capability-verifier's comment job declares pull-requests: write.
+    # With comment: false it never writes.
     permissions:
       contents: read
+      pull-requests: write
     uses: Living-Proof-Labs/verification-reports-action/.github/workflows/report.yml@<sha> # vX.Y.Z
     with:
       definitions: verifications/*.toml
@@ -46,7 +49,7 @@ jobs:
 
 The pin is the same semantic-release tag or commit SHA. GitHub does not allow an expression in `uses`, so this workflow's calls to capability-verifier are pinned to a commit in the workflow file. The lock still records the verifier commit the definition asked for. va#4 is the place that refuses a mismatch and replaces the static call; this workflow leaves that as a later job in front of the matrix, which is the seam va#4 needs.
 
-The workflow can call `walk-hallway.yml` and `scenario.yml`, give them matrices, and pass `contents: read`. No `secrets:` block is declared, so the called workflows receive `GITHUB_TOKEN` and nothing else. `merge_group` is a property of the robot repository's caller workflow; `github.event_name` and `github.sha` inside the called workflow are that caller's event and the checked-out commit.
+The workflow calls `walk-hallway.yml` and `scenario.yml` and gives them matrices. Workflow-level permission stays `contents: read`. The two `uses` jobs also grant `pull-requests: write`, which those pinned workflows request on a job. GitHub checks that grant at startup, including when the job's `if` later skips it. No `secrets:` block is declared, so the called workflows receive `GITHUB_TOKEN` and nothing else. `merge_group` is a property of the robot repository's caller workflow; `github.event_name` and `github.sha` inside the called workflow are that caller's event and the checked-out commit.
 
 Outputs are workflow outputs (`status`, `grade`, `grades`, `report-path`). Files cross the job boundary as the `verification-report` artifact. Callers download it. va#5 can do that from a later job, or from a sibling workflow, without a fifth wrapper around `walk-hallway.yml`. Nesting allows ten reusable workflows; a robot workflow, this workflow, `walk-hallway.yml` and `scenario.yml` are four.
 
@@ -58,11 +61,11 @@ Ship `.github/workflows/report.yml` as the interface robot repositories call. Ke
 
 The robot under test is the caller at `github.sha`. A request to verify the caller at some other ref is rejected. Passing another repository requires that repository's full commit SHA, so a release tag cannot move under the run.
 
-`comment` defaults to false and `media` defaults to true. The workflow asks only for `contents: read`. Turning comments on needs `pull-requests: write`, which this workflow does not grant.
+`comment` defaults to false and `media` defaults to true. Workflow permissions stay `contents: read`. The jobs that call capability-verifier also grant `pull-requests: write`, because the pinned `walk-hallway.yml` job `scenario` and `scenario.yml` job `comment` declare it. With `comment: false` that job never writes. Callers grant the same pair on the job that calls this workflow.
 
 ## Consequences
 
-- Robot repositories call the workflow. va#6's snippet is a job-level `uses` with a SHA pin and a version comment. Checkout of the caller happens inside the workflow.
+- Robot repositories call the workflow. va#6's snippet is a job-level `uses` with a SHA pin and a version comment, and that job grants `contents: read` plus `pull-requests: write`.
 - `status` is `ok` when the report files exist. `grade` is the robot grade for a single result, and `grades` is the map for every definition and configuration. `FAIL` and `INSUFFICIENT_EVIDENCE` keep `status` at `ok`.
 - The report directory is the `verification-report` artifact. va#5 should download that artifact. `run.json` sits beside each configuration's report and records the tested commit, which is the caller SHA, plus the lock's declared robot and releases.
 - The capability-verifier `uses` lines are pinned to `0c00c388c693012392da0c1cd391046c752e9b3c` (`v2.11.4`), the commit livingproof-verification ran. va#4 can insert a provenance job before `walk-hallway` and `scenario` and can replace that static pin. This workflow records the lock's verifier commit and does not compare it yet.
