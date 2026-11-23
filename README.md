@@ -14,6 +14,14 @@ Robot repositories pin a semantic-release tag, or a full commit SHA with a `# vX
 
 A robot `FAIL` or `INSUFFICIENT_EVIDENCE` is a successful run. `status` is `ok` when the report was written. `grade` is the robot grade for a single result, and `grades` is a JSON map of `definition/configuration` to grade. The files are uploaded as the `verification-report` artifact. Callers download that artifact; the files are not left in the caller job's workspace.
 
+## Pinned inputs
+
+Before any trial, the plan job resolves each input from its release tag and refuses the run when the check fails. The message names the input and the expected and found values. No `report.json` is written, and `walk-hallway` and `scenario` do not start, because both need the plan job. The inputs are capability-verifier, livingproof-sim-mujoco, robot-capability-specs, the livingproof-worlds world, livingproof-evaluator-scenario, livingproof-evaluator-run, and livingproof-capability-report together with its image.
+
+The tag in the lock is the pin. A Renovate bump changes that tag and leaves the lock's commit, file sha256, and image digest as they were. The plan resolves the new tag from the GitHub Release, the git tag, the published checksum or registry digest, and the attestation when one is published. Nothing in this repository rewrites the lock. The definition file's sha256 in the lock still has to match the definition bytes, so the tag Renovate edits is the lock tag, not a line inside the definition.
+
+`report.json` and `run.json` each record `inputs`: repository, tag, commit, digest, and check result for every pin. The check rules and the capability-verifier workflow pin are in [docs/provenance.md](docs/provenance.md).
+
 ## Example
 
 ```yaml
@@ -61,7 +69,7 @@ Replace `<commit>` and `vX.Y.Z` with the published release. The definition files
 | `grade` | The robot grade when there is one result, otherwise the `grades` JSON map. |
 | `grades` | JSON map of `definition/configuration` to robot grade. |
 
-For each definition and configuration the artifact contains `report.html`, `report.md`, `report.json`, `report.txt`, `SHA256SUMS` and `run.json`, plus `evidence/` with the trial observations and any MCAP or video the run recorded. `run.json` records the tested commit, which is the caller SHA, and the lock's declared robot under `declared_robot`.
+For each definition and configuration the artifact contains `report.html`, `report.md`, `report.json`, `report.txt`, `SHA256SUMS` and `run.json`, plus `evidence/` with the trial observations and any MCAP or video the run recorded. `run.json` records the tested commit, which is the caller SHA, the lock's declared robot under `declared_robot`, and each pinned input under `inputs`. `report.json` records the same `inputs`.
 
 ## Release
 

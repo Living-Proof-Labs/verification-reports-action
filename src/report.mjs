@@ -2,6 +2,7 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { sha256 } from './definitions.mjs';
+import { fixtureProvenance } from './provenance.mjs';
 
 const REPORT_FILES = ['report.html', 'report.md', 'report.json', 'report.txt'];
 
@@ -102,7 +103,20 @@ export function buildRunRecord({ item, configuration, summary, env, version }) {
     definition: item.path,
     version: version ?? '',
     declared_robot: item.lock?.robot ?? {},
+    inputs: Array.isArray(item.provenance)
+      ? item.provenance
+      : item.execution === 'fixture'
+        ? fixtureProvenance(item)
+        : [],
   };
+}
+
+export function stampReportInputs(directory, inputs) {
+  if (!Array.isArray(inputs)) return;
+  const reportPath = path.join(directory, 'report.json');
+  const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+  report.inputs = inputs;
+  writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 }
 
 function listFiles(directory) {
@@ -148,6 +162,7 @@ export function writeConfiguration(directory, { files, evidence, runRecord }) {
   for (const [name, contents] of Object.entries(files)) {
     writeFileSync(path.join(directory, name), contents, 'utf8');
   }
+  stampReportInputs(directory, runRecord.inputs);
   if (evidence) copyTree(evidence, path.join(directory, 'evidence'));
   writeFileSync(path.join(directory, 'run.json'), `${JSON.stringify(runRecord, null, 2)}\n`, 'utf8');
   writeChecksums(directory);

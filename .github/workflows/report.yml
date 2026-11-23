@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Caller-facing verification run. See docs/decisions/0001-composite-vs-reusable-workflow.md.
 # The capability-verifier refs are static because GitHub rejects an expression in `uses`.
-# va#4 can add a provenance job ahead of walk-hallway and scenario and replace that pin.
+# Plan resolves every pinned release from its tag and refuses before any trial
+# when the tag, commit, digest, or attestation does not match. A tag that peels
+# to a commit other than the capability-verifier SHA above is refused there too.
 name: Verification report
 on:
   workflow_call:

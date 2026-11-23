@@ -1,0 +1,657 @@
+// SPDX-License-Identifier: Apache-2.0
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { VERIFIER_WORKFLOW_SHA } from '../src/definitions.mjs';
+import {
+  imageDigestFromBody,
+  parseSha256Sums,
+  publishedCommitFromRelease,
+  readAttestation,
+  resolvePin,
+} from '../src/github-provenance.mjs';
+import { collectReports } from '../src/collect.mjs';
+import { writePlan } from '../src/plan.mjs';
+import {
+  REQUIRED_INPUTS,
+  assertPinnedInputs,
+  collectPins,
+  runIfProvenancePasses,
+} from '../src/provenance.mjs';
+import { runAction } from '../src/run.mjs';
+
+const COMMIT = VERIFIER_WORKFLOW_SHA;
+const OTHER = '1111111111111111111111111111111111111111';
+const NEW = '2222222222222222222222222222222222222222';
+const FILE_HASH = 'ab'.repeat(32);
+const OTHER_HASH = 'cd'.repeat(32);
+const IMAGE = `sha256:${'ef'.repeat(32)}`;
+const SOURCE = `sha256:${'12'.repeat(32)}`;
+const STALE_COMMIT = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const STALE_DIGEST = `sha256:${'00'.repeat(32)}`;
+
+function sampleLock() {
+  return {
+    releases: {
+      verifier: {
+        repository: 'Living-Proof-Labs/capability-verifier',
+        tag: 'v2.11.4',
+        commit: STALE_COMMIT,
+        image: 'ghcr.io/living-proof-labs/capability-verifier-hallway',
+        digest: STALE_DIGEST,
+      },
+      runner: {
+        repository: 'Living-Proof-Labs/livingproof-sim-mujoco',
+        tag: 'v3.7.4',
+        commit: STALE_COMMIT,
+      },
+      specs: {
+        repository: 'Living-Proof-Labs/robot-capability-specs',
+        tag: 'v3.1.0',
+        commit: STALE_COMMIT,
+        files: { 'specs/scenarios/walk-corner-left/description.json': '00'.repeat(64) },
+      },
+      reporter: {
+        repository: 'Living-Proof-Labs/livingproof-capability-report',
+        tag: 'v3.15.4',
+        commit: STALE_COMMIT,
+        image: 'ghcr.io/living-proof-labs/livingproof-capability-report',
+        digest: STALE_DIGEST,
+      },
+    },
+    world: {
+      id: 'hallway-corner',
+      version: '0.2.0',
+      repository: 'Living-Proof-Labs/livingproof-worlds',
+      tag: 'v1.4.0',
+      commit: STALE_COMMIT,
+      sha256: '00'.repeat(64),
+    },
+    evaluators: {
+      'livingproof-evaluator-scenario': {
+        repository: 'Living-Proof-Labs/livingproof-evaluator-scenario',
+        tag: 'v1.5.3',
+        commit: STALE_COMMIT,
+      },
+      'livingproof-evaluator-run': {
+        repository: 'Living-Proof-Labs/livingproof-evaluator-run',
+        tag: 'v1.8.6',
+      },
+    },
+  };
+}
+
+function passingEvidence(pin) {
+  if (pin.kind === 'image') {
+    return {
+      releaseFound: true,
+      tagCommit: COMMIT,
+      publishedCommit: COMMIT,
+      files: {},
+      imageDigest: IMAGE,
+      publishedDigest: IMAGE,
+      sourceDigest: null,
+      attestation: { published: false },
+    };
+  }
+  if (pin.paths.length > 0) {
+    const files = {};
+    for (const file of pin.paths) files[file] = { published: FILE_HASH, found: FILE_HASH };
+    return {
+      releaseFound: true,
+      tagCommit: COMMIT,
+      publishedCommit: COMMIT,
+      files,
+      imageDigest: null,
+      publishedDigest: null,
+      sourceDigest: null,
+      attestation: { published: false },
+    };
+  }
+  return {
+    releaseFound: true,
+    tagCommit: COMMIT,
+    publishedCommit: COMMIT,
+    files: {},
+    imageDigest: null,
+    publishedDigest: SOURCE,
+    sourceDigest: SOURCE,
+    attestation: { published: false },
+  };
+}
+
+function client(mutate = () => {}) {
+  return {
+    async resolve(pin) {
+      const evidence = passingEvidence(pin);
+      mutate(pin, evidence);
+      return evidence;
+    },
+  };
+}
+
+function item(lock = sampleLock(), sources = {}) {
+  return { path: 'verifications/corner.toml', id: 'corner', lock, sources };
+}
+
+test('a passing resolution records repository, tag, commit, digest, and check result', async () => {
+  const records = await assertPinnedInputs(item(), client());
+  assert.deepEqual(
+    records.map((record) => record.name),
+    REQUIRED_INPUTS
+  );
+  for (const record of records) {
+    assert.equal(record.result, 'passed');
+    assert.match(record.repository, /^Living-Proof-Labs\//);
+    assert.match(record.tag, /^v\d+\.\d+\.\d+$/);
+    assert.equal(record.commit, COMMIT);
+    assert.match(record.digest, /^sha256:[0-9a-f]{64}$/);
+    assert.equal(record.checks.release, 'passed');
+    assert.equal(record.checks.commit, 'passed');
+    assert.equal(record.checks.digest, 'passed');
+    assert.equal(record.attestation, 'not-published');
+    assert.notEqual(record.commit, STALE_COMMIT);
+    assert.notEqual(record.digest, STALE_DIGEST);
+  }
+  const specs = records.find((record) => record.name === 'robot-capability-specs');
+  assert.equal(specs.digest, `sha256:${FILE_HASH}`);
+});
+
+test('a tag moved to another commit refuses before a report is written', async () => {
+  const output = path.join(mkdtempSync(path.join(tmpdir(), 'vra-moved-')), 'report.json');
+  let trials = 0;
+  await assert.rejects(
+    () =>
+      runIfProvenancePasses(
+        item(),
+        client((pin, evidence) => {
+          if (pin.name !== 'livingproof-sim-mujoco') return;
+          evidence.publishedCommit = COMMIT;
+          evidence.tagCommit = OTHER;
+        }),
+        {},
+        () => {
+          trials += 1;
+          writeFileSync(output, '{}\n');
+        }
+      ),
+    (error) => {
+      assert.match(error.message, /livingproof-sim-mujoco/);
+      assert.match(error.message, /tag v3\.7\.4 moved/);
+      assert.match(error.message, new RegExp(`expected commit ${COMMIT}`));
+      assert.match(error.message, new RegExp(`found commit ${OTHER}`));
+      return true;
+    }
+  );
+  assert.equal(trials, 0);
+  assert.equal(existsSync(output), false);
+});
+
+test('a wrong sha256 refuses and names the expected and found values', async () => {
+  await assert.rejects(
+    () =>
+      assertPinnedInputs(
+        item(),
+        client((pin, evidence) => {
+          if (pin.name !== 'livingproof-worlds') return;
+          const file = 'worlds/hallway-corner/0.2.0/world.json';
+          evidence.files[file] = { published: FILE_HASH, found: OTHER_HASH };
+        })
+      ),
+    (error) => {
+      assert.match(error.message, /livingproof-worlds/);
+      assert.match(error.message, /worlds\/hallway-corner\/0\.2\.0\/world\.json/);
+      assert.match(error.message, new RegExp(`expected ${FILE_HASH}`));
+      assert.match(error.message, new RegExp(`found ${OTHER_HASH}`));
+      return true;
+    }
+  );
+});
+
+test('an image digest that differs from the release notes refuses', async () => {
+  const found = `sha256:${'44'.repeat(32)}`;
+  await assert.rejects(
+    () =>
+      assertPinnedInputs(
+        item(),
+        client((pin, evidence) => {
+          if (pin.name !== 'livingproof-capability-report') return;
+          evidence.imageDigest = found;
+        })
+      ),
+    (error) => {
+      assert.match(error.message, /livingproof-capability-report/);
+      assert.match(error.message, /image digest mismatch/);
+      assert.match(error.message, new RegExp(`expected ${IMAGE}`));
+      assert.match(error.message, new RegExp(`found ${found}`));
+      return true;
+    }
+  );
+});
+
+test('a missing release refuses and names the input and the tag', async () => {
+  await assert.rejects(
+    () =>
+      assertPinnedInputs(
+        item(),
+        client((pin, evidence) => {
+          if (pin.name === 'robot-capability-specs') evidence.releaseFound = false;
+        })
+      ),
+    /robot-capability-specs: release Living-Proof-Labs\/robot-capability-specs@v3\.1\.0 is missing\. expected a GitHub Release for v3\.1\.0, found no release/
+  );
+});
+
+test('an attestation subject mismatch refuses, and a missing attestation does not', async () => {
+  const passed = await assertPinnedInputs(item(), client());
+  assert.equal(passed.every((record) => record.attestation === 'not-published'), true);
+
+  await assert.rejects(
+    () =>
+      assertPinnedInputs(
+        item(),
+        client((pin, evidence) => {
+          if (pin.name !== 'livingproof-capability-report') return;
+          evidence.attestation = {
+            published: true,
+            subjectDigest: `sha256:${'99'.repeat(32)}`,
+            repository: 'Other/report',
+            gitCommit: COMMIT,
+          };
+        })
+      ),
+    /livingproof-capability-report: attestation mismatch\. expected subject sha256:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef from Living-Proof-Labs\/livingproof-capability-report, found subject sha256:9999999999999999999999999999999999999999999999999999999999999999 from Other\/report/
+  );
+
+  const verified = await assertPinnedInputs(
+    item(),
+    client((pin, evidence) => {
+      if (pin.name !== 'livingproof-capability-report') return;
+      evidence.attestation = {
+        published: true,
+        subjectDigest: IMAGE,
+        repository: pin.repository,
+        gitCommit: COMMIT,
+      };
+    })
+  );
+  const reporter = verified.find((record) => record.name === 'livingproof-capability-report');
+  assert.equal(reporter.attestation, 'passed');
+  assert.equal(reporter.checks.attestation, 'passed');
+});
+
+test('a verifier tag that peels to another commit refuses before the workflow runs', async () => {
+  await assert.rejects(
+    () =>
+      assertPinnedInputs(
+        item(),
+        client((pin, evidence) => {
+          if (pin.name !== 'capability-verifier') return;
+          evidence.tagCommit = OTHER;
+          evidence.publishedCommit = OTHER;
+        })
+      ),
+    new RegExp(
+      `capability-verifier: workflow pin mismatch\\. expected commit ${COMMIT} \\(v2\\.11\\.4\\), found commit ${OTHER} for tag v2\\.11\\.4`
+    )
+  );
+});
+
+test('bumping one lock tag resolves the new release and does not rewrite the lock', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'vra-bump-'));
+  const reportDir = path.join(root, 'report');
+  try {
+    const lock = sampleLock();
+    lock.releases.reporter.tag = 'v3.16.0';
+    const toml = [
+      'format = "livingproof-verification-definition/0.1.0"',
+      'id = "corner"',
+      'procedure = "scenario"',
+      'scenario = "walk-corner-left@0.2.0"',
+      '',
+      '[robot]',
+      'configurations = ["stock"]',
+      '',
+    ].join('\n');
+    mkdirSync(path.join(root, 'verifications'));
+    writeFileSync(path.join(root, 'verifications/corner.toml'), toml);
+    const digest = createHash('sha256').update(toml).digest('hex');
+    const onDisk = {
+      format: 'livingproof-verification-lock/0.2.0',
+      definition: { sha256: digest },
+      procedure: 'scenario',
+      configurations: [{ name: 'stock' }],
+      ...lock,
+    };
+    const lockPath = path.join(root, 'verifications/corner.lock.json');
+    const before = `${JSON.stringify(onDisk, null, 2)}\n`;
+    writeFileSync(lockPath, before);
+    const planPath = path.join(root, 'plan.json');
+    const newDigest = `sha256:${'34'.repeat(32)}`;
+    let trials = 0;
+    const planned = await writePlan(
+      {
+        GITHUB_REPOSITORY: 'Example/robot',
+        GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567',
+        GITHUB_RUN_ID: '7',
+        INPUT_DEFINITIONS: 'verifications/*.toml',
+        INPUT_PLAN_PATH: planPath,
+      },
+      root,
+      client((pin, evidence) => {
+        if (pin.name !== 'livingproof-capability-report') return;
+        assert.equal(pin.tag, 'v3.16.0');
+        evidence.tagCommit = NEW;
+        evidence.publishedCommit = NEW;
+        evidence.imageDigest = newDigest;
+        evidence.publishedDigest = newDigest;
+      })
+    );
+    assert.equal(readFileSync(lockPath, 'utf8'), before);
+    assert.equal(JSON.parse(readFileSync(lockPath, 'utf8')).releases.reporter.commit, STALE_COMMIT);
+    const reporter = planned.plan.definitions[0].provenance.find(
+      (record) => record.name === 'livingproof-capability-report'
+    );
+    assert.equal(reporter.tag, 'v3.16.0');
+    assert.equal(reporter.commit, NEW);
+    assert.equal(reporter.digest, newDigest);
+    assert.equal(reporter.result, 'passed');
+    await assert.rejects(
+      () =>
+        runIfProvenancePasses(
+          item(),
+          client((pin, evidence) => {
+            if (pin.name === 'capability-verifier') evidence.releaseFound = false;
+          }),
+          {},
+          () => {
+            trials += 1;
+            mkdirSync(reportDir);
+            writeFileSync(path.join(reportDir, 'report.json'), '{}\n');
+          }
+        ),
+      /found no release/
+    );
+    assert.equal(trials, 0);
+    assert.equal(existsSync(reportDir), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a failed plan writes no plan file and collect writes no report', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'vra-refuse-'));
+  try {
+    const toml = [
+      'format = "livingproof-verification-definition/0.1.0"',
+      'id = "corner"',
+      'procedure = "scenario"',
+      '',
+      '[robot]',
+      'configurations = ["stock"]',
+      '',
+    ].join('\n');
+    mkdirSync(path.join(root, 'verifications'));
+    writeFileSync(path.join(root, 'verifications/corner.toml'), toml);
+    const digest = createHash('sha256').update(toml).digest('hex');
+    writeFileSync(
+      path.join(root, 'verifications/corner.lock.json'),
+      `${JSON.stringify({
+        format: 'livingproof-verification-lock/0.2.0',
+        definition: { sha256: digest },
+        procedure: 'scenario',
+        configurations: [{ name: 'stock' }],
+        ...sampleLock(),
+      })}\n`
+    );
+    const planPath = path.join(root, 'plan.json');
+    const outputDir = path.join(root, 'out');
+    await assert.rejects(
+      () =>
+        writePlan(
+          {
+            GITHUB_REPOSITORY: 'Example/robot',
+            GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567',
+            INPUT_DEFINITIONS: 'verifications/*.toml',
+            INPUT_PLAN_PATH: planPath,
+          },
+          root,
+          client((pin, evidence) => {
+            if (pin.name === 'capability-verifier') evidence.releaseFound = false;
+          })
+        ),
+      /found no release/
+    );
+    assert.equal(existsSync(planPath), false);
+    assert.equal(existsSync(outputDir), false);
+
+    const failedPlan = path.join(root, 'failed-plan.json');
+    writeFileSync(
+      failedPlan,
+      `${JSON.stringify({
+        definitions: [
+          {
+            id: 'corner',
+            path: 'verifications/corner.toml',
+            execution: 'capability-verifier',
+            configurations: ['stock'],
+            provenance: REQUIRED_INPUTS.map((name) => ({ name, result: 'fixture' })),
+          },
+        ],
+      })}\n`
+    );
+    assert.throws(
+      () =>
+        collectReports(
+          {
+            INPUT_PLAN_PATH: failedPlan,
+            INPUT_OUTPUT_DIR: outputDir,
+            GITHUB_REPOSITORY: 'Example/robot',
+            GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567',
+          },
+          root
+        ),
+      /so no report can be written/
+    );
+    assert.equal(existsSync(outputDir), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('fixture reports record every input without calling the release client', async () => {
+  const repo = fileURLToPath(new URL('..', import.meta.url));
+  const calls = [];
+  const planned = await writePlan(
+    {
+      GITHUB_REPOSITORY: 'Living-Proof-Labs/verification-reports-action',
+      GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567',
+      GITHUB_RUN_ID: '1',
+      INPUT_DEFINITIONS: 'tests/fixtures/robot/verifications/*.toml',
+      INPUT_PLAN_PATH: path.join(mkdtempSync(path.join(tmpdir(), 'vra-fix-plan-')), 'plan.json'),
+    },
+    repo,
+    {
+      async resolve(pin) {
+        calls.push(pin.name);
+        throw new Error('fixture plan must not resolve releases');
+      },
+    }
+  );
+  assert.equal(calls.length, 0);
+  for (const definition of planned.plan.definitions) {
+    assert.deepEqual(
+      definition.provenance.map((record) => record.name),
+      REQUIRED_INPUTS
+    );
+    assert.equal(definition.provenance.every((record) => record.result === 'fixture'), true);
+  }
+
+  const outputDir = path.join(mkdtempSync(path.join(tmpdir(), 'vra-fix-out-')), 'out');
+  runAction(
+    {
+      GITHUB_REPOSITORY: 'Living-Proof-Labs/verification-reports-action',
+      GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567',
+      GITHUB_RUN_ID: '1',
+      GITHUB_SERVER_URL: 'https://github.com',
+      VERIFICATION_CREATED: '2026-11-23T00:00:00Z',
+      INPUT_DEFINITIONS: 'tests/fixtures/robot/verifications/*.toml',
+      INPUT_OUTPUT_DIR: outputDir,
+      INPUT_VERSION: '1.2.3',
+    },
+    repo
+  );
+  for (const id of ['fixture-hallway', 'fixture-scenario']) {
+    const directory = path.join(outputDir, id, 'stock');
+    const report = JSON.parse(readFileSync(path.join(directory, 'report.json'), 'utf8'));
+    const run = JSON.parse(readFileSync(path.join(directory, 'run.json'), 'utf8'));
+    assert.deepEqual(report.inputs, run.inputs);
+    assert.equal(run.inputs.length, REQUIRED_INPUTS.length);
+    const verifier = run.inputs.find((record) => record.name === 'capability-verifier');
+    assert.equal(verifier.repository, 'Living-Proof-Labs/capability-verifier');
+    assert.equal(verifier.tag, 'v2.11.4');
+    assert.equal(verifier.commit, STALE_COMMIT);
+    assert.equal(verifier.result, 'fixture');
+  }
+});
+
+test('release notes yield the tag commit and not the image digest', () => {
+  const body = [
+    '## [2.11.4]',
+    '([9481a541157eed6598fcfd7c65c38823c0473b57](https://github.com/Living-Proof-Labs/capability-verifier/commit/9481a541157eed6598fcfd7c65c38823c0473b57))',
+    '([0c00c388c693012392da0c1cd391046c752e9b3c](https://github.com/Living-Proof-Labs/capability-verifier/commit/0c00c388c693012392da0c1cd391046c752e9b3c))',
+    '`ghcr.io/living-proof-labs/capability-verifier-hallway:2.11.4@sha256:c76f1d53914b6ba4f364ccb906d9580153e300f6160c6c7ed169e3d7e4456209`',
+  ].join('\n');
+  assert.equal(publishedCommitFromRelease({ target_commitish: 'main', body }, { published: false }), COMMIT);
+  assert.equal(
+    imageDigestFromBody(body, 'ghcr.io/living-proof-labs/capability-verifier-hallway'),
+    'sha256:c76f1d53914b6ba4f364ccb906d9580153e300f6160c6c7ed169e3d7e4456209'
+  );
+  assert.equal(
+    publishedCommitFromRelease({ target_commitish: OTHER, body: '' }, { published: false }),
+    OTHER
+  );
+  const statement = {
+    subject: [{ digest: { sha256: 'ef'.repeat(32) } }],
+    predicate: {
+      buildDefinition: {
+        externalParameters: { workflow: { repository: 'Living-Proof-Labs/capability-verifier' } },
+        resolvedDependencies: [{ digest: { gitCommit: COMMIT } }],
+      },
+    },
+  };
+  const payload = {
+    attestations: [
+      { bundle: { dsseEnvelope: { payload: Buffer.from(JSON.stringify(statement)).toString('base64') } } },
+    ],
+  };
+  const attestation = readAttestation(payload);
+  assert.equal(attestation.published, true);
+  assert.equal(attestation.gitCommit, COMMIT);
+  assert.equal(attestation.subjectDigest, IMAGE);
+  assert.equal(attestation.repository, 'Living-Proof-Labs/capability-verifier');
+  assert.equal(publishedCommitFromRelease({ target_commitish: 'main', body }, attestation), COMMIT);
+  assert.deepEqual(parseSha256Sums(`${FILE_HASH}  worlds/hallway-corner/0.2.0/world.json\n`), {
+    'worlds/hallway-corner/0.2.0/world.json': FILE_HASH,
+  });
+  assert.deepEqual(readAttestation({ attestations: [] }), { published: false });
+});
+
+test('the GitHub client resolves a release, peels a tag, and does not send the token to codeload', async () => {
+  const seen = [];
+  const fileBytes = Buffer.from('description');
+  const fileHash = createHash('sha256').update(fileBytes).digest('hex');
+  function respond(status, body, headers = {}, raw = null) {
+    return {
+      status,
+      ok: status >= 200 && status < 300,
+      headers: { get: (name) => headers[name.toLowerCase()] ?? null },
+      json: async () => body,
+      text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
+      arrayBuffer: async () => raw ?? new Uint8Array(),
+      body: null,
+    };
+  }
+  const fetchImpl = async (url, options = {}) => {
+    seen.push({ url, authorization: options.headers?.Authorization ?? null });
+    if (url.endsWith('/releases/tags/v3.1.0')) {
+      return respond(200, {
+        tag_name: 'v3.1.0',
+        target_commitish: 'main',
+        body: `commit ${COMMIT}`,
+        assets: [{ name: 'SHA256SUMS', browser_download_url: 'https://example.test/SHA256SUMS' }],
+      });
+    }
+    if (url.endsWith('/git/ref/tags/v3.1.0')) {
+      return respond(200, { object: { type: 'tag', sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } });
+    }
+    if (url.endsWith('/git/tags/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')) {
+      return respond(200, { object: { type: 'commit', sha: COMMIT } });
+    }
+    if (url === 'https://example.test/SHA256SUMS') {
+      return respond(200, `${fileHash}  specs/scenarios/walk-corner-left/description.json\n`);
+    }
+    if (url.includes('/contents/specs/')) {
+      return respond(200, { encoding: 'base64', content: fileBytes.toString('base64') });
+    }
+    if (url.includes('/attestations/')) return respond(404, { message: 'Not Found' });
+    if (url.startsWith('https://codeload.github.com/')) return respond(200, '', {}, Buffer.from('archive'));
+    return respond(500, { message: url });
+  };
+  const pin = collectPins(item()).find((entry) => entry.name === 'robot-capability-specs');
+  const evidence = await resolvePin(pin, {
+    token: 'ghs_testtoken',
+    api: 'https://api.github.com',
+    fetch: fetchImpl,
+  });
+  assert.equal(evidence.releaseFound, true);
+  assert.equal(evidence.tagCommit, COMMIT);
+  assert.equal(evidence.publishedCommit, COMMIT);
+  assert.equal(evidence.files[pin.paths[0]].found, fileHash);
+  assert.equal(evidence.files[pin.paths[0]].published, fileHash);
+  assert.deepEqual(evidence.attestation, { published: false });
+  assert.equal(seen.some((call) => call.url.includes('/releases/tags/') && call.authorization === 'Bearer ghs_testtoken'), true);
+
+  const source = collectPins(item()).find((entry) => entry.name === 'livingproof-sim-mujoco');
+  seen.length = 0;
+  const fetchSource = async (url, options = {}) => {
+    seen.push({ url, authorization: options.headers?.Authorization ?? null });
+    if (url.includes('/releases/tags/')) {
+      return respond(200, { tag_name: 'v3.7.4', target_commitish: COMMIT, body: '', assets: [] });
+    }
+    if (url.includes('/git/ref/tags/')) return respond(200, { object: { type: 'commit', sha: COMMIT } });
+    if (url.startsWith('https://codeload.github.com/')) return respond(200, '', {}, Buffer.from('archive'));
+    if (url.includes('/attestations/')) return respond(404, {});
+    return respond(500, {});
+  };
+  const sourceEvidence = await resolvePin(source, {
+    token: 'ghs_testtoken',
+    api: 'https://api.github.com',
+    fetch: fetchSource,
+  });
+  assert.equal(sourceEvidence.tagCommit, COMMIT);
+  assert.equal(sourceEvidence.publishedCommit, COMMIT);
+  assert.equal(sourceEvidence.sourceDigest, `sha256:${createHash('sha256').update('archive').digest('hex')}`);
+  const codeload = seen.find((call) => call.url.startsWith('https://codeload.github.com/'));
+  assert.ok(codeload);
+  assert.equal(codeload.authorization, null);
+
+  const missing = await resolvePin(pin, {
+    token: '',
+    api: 'https://api.github.com',
+    fetch: async () => respond(404, { message: 'Not Found' }),
+  });
+  assert.equal(missing.releaseFound, false);
+});
+
+test('README tells Renovate to bump a lock tag without a hand relock', () => {
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  assert.match(readme, /Renovate bump changes that tag/);
+  assert.match(readme, /No `report\.json` is written/);
+  assert.match(readme, /livingproof-evaluator-run/);
+  assert.match(readme, /docs\/provenance\.md/);
+});

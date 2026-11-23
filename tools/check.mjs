@@ -9,6 +9,7 @@ const requiredFiles = [
   'Taskfile.yml',
   'action.yml',
   'docs/decisions/0001-composite-vs-reusable-workflow.md',
+  'docs/provenance.md',
   '.github/workflows/report.yml',
   'package.json',
   'renovate.json',

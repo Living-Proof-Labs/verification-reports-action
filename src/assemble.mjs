@@ -7,6 +7,7 @@ import {
   buildRunRecord,
   copyTreeContents,
   readSummaries,
+  stampReportInputs,
   writeChecksums,
 } from './report.mjs';
 
@@ -75,6 +76,7 @@ export function assembleVerifierDefinition(item, downloadRoot, outputDir, env, v
       env,
       version,
     });
+    stampReportInputs(directory, record.inputs);
     writeFileSync(path.join(directory, 'run.json'), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
     writeChecksums(directory);
     assertChecksums(directory);

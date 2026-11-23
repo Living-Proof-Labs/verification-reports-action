@@ -10,7 +10,7 @@ export class ReportError extends Error {
   }
 }
 
-/** capability-verifier release livingproof-verification called. va#4 replaces this static pin. */
+/** capability-verifier release the report workflow calls. Plan refuses a tag that peels elsewhere. */
 export const VERIFIER_WORKFLOW_SHA = '0c00c388c693012392da0c1cd391046c752e9b3c';
 export const VERIFIER_WORKFLOW_TAG = 'v2.11.4';
 export const VERIFIER_OWNER = 'Living-Proof-Labs/capability-verifier';
@@ -199,6 +199,11 @@ export function loadDefinition(relativePath, root) {
     configurations: configurationNames(toml, lock, file),
     lock,
     digest,
+    sources: {
+      world: toml.world && typeof toml.world === 'object' ? toml.world : null,
+      releases: toml.releases && typeof toml.releases === 'object' ? toml.releases : null,
+      evaluators: toml.evaluators && typeof toml.evaluators === 'object' ? toml.evaluators : null,
+    },
   };
 }
 

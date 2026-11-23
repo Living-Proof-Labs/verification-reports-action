@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { collectReports } from '../src/collect.mjs';
 import { writePlan } from '../src/plan.mjs';
 import { runFixtureCli } from '../src/fixture-run.mjs';
+import { REQUIRED_INPUTS } from '../src/provenance.mjs';
 import { renderReport, writeChecksums } from '../src/report.mjs';
 
 const CALLER = 'Living-Proof-Labs/verification-reports-action';
@@ -29,12 +30,15 @@ function env(overrides) {
   };
 }
 
-test('plan, fixture-run and collect reproduce the full fixture report', () => {
+test('plan, fixture-run and collect reproduce the full fixture report', async () => {
   const tempRoot = mkdtempSync(path.join(tmpdir(), 'vra-collect-'));
   const repo = fileURLToPath(new URL('..', import.meta.url));
   try {
     const planPath = path.join(tempRoot, 'plan.json');
-    const planned = writePlan(env({ INPUT_PLAN_PATH: planPath, GITHUB_OUTPUT: path.join(tempRoot, 'plan-out.txt') }), repo);
+    const planned = await writePlan(
+      env({ INPUT_PLAN_PATH: planPath, GITHUB_OUTPUT: path.join(tempRoot, 'plan-out.txt') }),
+      repo
+    );
     assert.equal(planned.outputs.fixture_count, '2');
     assert.equal(planned.outputs.hallway_count, '0');
     assert.equal(planned.outputs.scenario_count, '0');
@@ -139,6 +143,16 @@ test('verifier artifacts are assembled and a missing report fails', () => {
       robot: { repository: 'Example/robot', ref: SHA },
       callerRepository: CALLER,
       artifactPrefix: 'vra-corner-',
+      provenance: REQUIRED_INPUTS.map((name) => ({
+        name,
+        repository: 'Living-Proof-Labs/capability-verifier',
+        tag: 'v2.11.4',
+        commit: '0c00c388c693012392da0c1cd391046c752e9b3c',
+        digest: `sha256:${'ab'.repeat(32)}`,
+        result: 'passed',
+        attestation: 'not-published',
+        checks: { release: 'passed', commit: 'passed', digest: 'passed', attestation: 'not-published' },
+      })),
       lock: {
         robot: { commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
         releases: {
@@ -192,9 +206,13 @@ test('verifier artifacts are assembled and a missing report fails', () => {
     assert.equal(readFileSync(path.join(directory, 'evidence', 'observation.json'), 'utf8'), '{"trial":0}\n');
     assert.equal(readFileSync(path.join(directory, 'evidence', 'mcap', 'trial.mcap'), 'utf8'), 'mcap');
     const run = JSON.parse(readFileSync(path.join(directory, 'run.json'), 'utf8'));
+    const report = JSON.parse(readFileSync(path.join(directory, 'report.json'), 'utf8'));
     assert.equal(run.outcome[0].grade, 'INSUFFICIENT_EVIDENCE');
     assert.equal(run.robot.commit, SHA);
     assert.equal(run.version, '4.5.6');
+    assert.equal(run.inputs.length, REQUIRED_INPUTS.length);
+    assert.deepEqual(report.inputs, run.inputs);
+    assert.equal(report.inputs[0].result, 'passed');
 
     rmSync(path.join(reportDir, 'report.html'));
     assert.throws(
