@@ -1,46 +1,57 @@
 // SPDX-License-Identifier: Apache-2.0
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
+import { ReportError, planDefinitions } from './definitions.mjs';
+import { runFixtureDefinition } from './fixture.mjs';
+import { writeGithubOutput } from './github-output.mjs';
+import { gradeMap, outputsFromGrades } from './report.mjs';
 
-export function runAction(env = process.env) {
-  const pinsPath = (env.INPUT_PINS_PATH ?? 'pins.json').trim();
-  const robotManifest = (env.INPUT_ROBOT_MANIFEST ?? 'robot.json').trim();
-  const runnerConfig = (env.INPUT_RUNNER_CONFIG ?? 'runner.json').trim();
+const WORKFLOW_GUIDANCE =
+  'This composite action cannot call capability-verifier walk-hallway.yml or scenario.yml. Those workflows use matrices, containers and separate runners. Call .github/workflows/report.yml instead.';
+
+export function runAction(env = process.env, root = process.cwd()) {
   const outputDir = (env.INPUT_OUTPUT_DIR ?? '').trim();
-  const version = (env.INPUT_VERSION ?? '').trim();
-
   if (!outputDir) {
-    throw new Error(
+    throw new ReportError(
       'output-dir must be a non-empty directory path. Pass inputs.output-dir or use the default (artifacts/verification-report).'
     );
   }
-
-  mkdirSync(outputDir, { recursive: true });
-  const reportPath = path.join(outputDir, 'report.json');
-  const payload = {
-    schema_version: '0.0.0-placeholder',
-    status: 'placeholder',
-    version,
-    note: 'Template implementation. Provenance checks and report generation are tracked in Living-Proof-Labs/.github#164.',
-    inputs: {
-      pins_path: pinsPath,
-      robot_manifest: robotManifest,
-      runner_config: runnerConfig,
+  const version = (env.INPUT_VERSION ?? '').trim();
+  const plan = planDefinitions(
+    {
+      definitions: env.INPUT_DEFINITIONS,
+      repository: env.INPUT_REPOSITORY,
+      ref: env.INPUT_REF,
     },
-  };
-  writeFileSync(reportPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-
-  if (env.GITHUB_OUTPUT) {
-    appendFileSync(env.GITHUB_OUTPUT, `report-path=${reportPath}\nstatus=placeholder\n`, 'utf8');
+    env,
+    root
+  );
+  const verifier = plan.definitions.filter((item) => item.execution === 'capability-verifier');
+  if (verifier.length > 0) {
+    const names = verifier.map((item) => item.path).join(', ');
+    throw new ReportError(`${WORKFLOW_GUIDANCE} Definitions that need the verifier: ${names}.`);
   }
-
-  return { reportPath, status: 'placeholder', payload };
+  rmSync(outputDir, { recursive: true, force: true });
+  mkdirSync(outputDir, { recursive: true });
+  for (const item of plan.definitions) {
+    try {
+      runFixtureDefinition(item, { root, outputDir, env, version });
+    } catch (error) {
+      rmSync(path.join(outputDir, item.id), { recursive: true, force: true });
+      rmSync(path.join(outputDir, `.partial-${item.id}`), { recursive: true, force: true });
+      throw error;
+    }
+  }
+  const grades = gradeMap(outputDir, plan);
+  const outputs = outputsFromGrades(grades, outputDir);
+  writeGithubOutput(env, outputs);
+  return { reportPath: outputDir, status: outputs.status, grade: outputs.grade, grades, outputs };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   try {
     const result = runAction();
-    console.log(`Living Proof Verification Reports (placeholder): wrote ${result.reportPath}`);
+    console.log(`Living Proof Verification Reports: wrote ${result.reportPath} (${result.status})`);
   } catch (error) {
     console.error(error.message);
     process.exit(1);

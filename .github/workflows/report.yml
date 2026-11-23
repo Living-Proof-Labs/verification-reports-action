@@ -1,0 +1,324 @@
+# SPDX-License-Identifier: Apache-2.0
+# Caller-facing verification run. See docs/decisions/0001-composite-vs-reusable-workflow.md.
+# The capability-verifier refs are static because GitHub rejects an expression in `uses`.
+# va#4 can add a provenance job ahead of walk-hallway and scenario and replace that pin.
+name: Verification report
+on:
+  workflow_call:
+    inputs:
+      definitions:
+        description: Glob of livingproof-verification-definition files in the caller repository.
+        type: string
+        default: verifications/*.toml
+        required: false
+      output-dir:
+        description: Directory collected into the verification-report artifact.
+        type: string
+        default: artifacts/verification-report
+        required: false
+      version:
+        description: Optional version recorded in each run.json. Empty when the caller does not supply one.
+        type: string
+        default: ''
+        required: false
+      repository:
+        description: Robot repository. Empty means the caller. Another repository requires ref to be its full commit SHA.
+        type: string
+        default: ''
+        required: false
+      ref:
+        description: Robot commit. Empty means the caller's checked-out commit. A release tag is rejected.
+        type: string
+        default: ''
+        required: false
+      media:
+        description: Record MCAP and video when capability-verifier records them.
+        type: boolean
+        default: true
+        required: false
+      comment:
+        description: >-
+          Ask capability-verifier to comment on a same-repository pull request.
+          The comment job declares pull-requests: write. With comment false it never writes.
+        type: boolean
+        default: false
+        required: false
+    outputs:
+      report-path:
+        description: Directory of the written reports, also uploaded as the verification-report artifact.
+        value: ${{ jobs.collect.outputs.report-path }}
+      status:
+        description: ok when a report was written for every definition. A robot grade does not change this.
+        value: ${{ jobs.collect.outputs.status }}
+      grade:
+        description: The robot grade when there is one result, otherwise the grades JSON map.
+        value: ${{ jobs.collect.outputs.grade }}
+      grades:
+        description: JSON map of definition/configuration to robot grade.
+        value: ${{ jobs.collect.outputs.grades }}
+permissions:
+  contents: read
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      fixture: ${{ steps.plan.outputs.fixture }}
+      fixture_count: ${{ steps.plan.outputs.fixture_count }}
+      hallway: ${{ steps.plan.outputs.hallway }}
+      hallway_count: ${{ steps.plan.outputs.hallway_count }}
+      scenario: ${{ steps.plan.outputs.scenario }}
+      scenario_count: ${{ steps.plan.outputs.scenario_count }}
+    steps:
+      - name: Caller repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
+          persist-credentials: false
+      - id: workflow-source
+        env:
+          # actionlint 1.7.12's job type omits workflow_repository and workflow_sha.
+          # toJson keeps those fields, which name this workflow's own commit.
+          JOB_JSON: ${{ toJson(job) }}
+        run: |
+          set -euo pipefail
+          repository="$(jq -r .workflow_repository <<<"$JOB_JSON")"
+          sha="$(jq -r .workflow_sha <<<"$JOB_JSON")"
+          test -n "$repository"
+          test "$repository" != null
+          test -n "$sha"
+          test "$sha" != null
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ steps.workflow-source.outputs.repository }}
+          ref: ${{ steps.workflow-source.outputs.sha }}
+          path: action
+          persist-credentials: false
+      - name: Scripts come from this workflow, not the caller root
+        run: |
+          set -euo pipefail
+          test -f action/src/plan.mjs
+          test -f action/src/fixture-run.mjs
+          test -f action/src/collect.mjs
+          test ! -e src/plan.mjs
+          test -d caller
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.3'
+      - id: plan
+        working-directory: caller
+        env:
+          INPUT_DEFINITIONS: ${{ inputs.definitions }}
+          INPUT_REPOSITORY: ${{ inputs.repository }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/verification-plan/plan.json
+        run: node "${{ github.workspace }}/action/src/plan.mjs"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verification-plan
+          path: artifacts/verification-plan/plan.json
+          retention-days: 14
+          if-no-files-found: error
+  fixture:
+    needs: plan
+    if: needs.plan.outputs.fixture_count != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.fixture) }}
+    steps:
+      - name: Caller repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
+          persist-credentials: false
+      - id: workflow-source
+        env:
+          JOB_JSON: ${{ toJson(job) }}
+        run: |
+          set -euo pipefail
+          repository="$(jq -r .workflow_repository <<<"$JOB_JSON")"
+          sha="$(jq -r .workflow_sha <<<"$JOB_JSON")"
+          test -n "$repository"
+          test "$repository" != null
+          test -n "$sha"
+          test "$sha" != null
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ steps.workflow-source.outputs.repository }}
+          ref: ${{ steps.workflow-source.outputs.sha }}
+          path: action
+          persist-credentials: false
+      - name: Scripts come from this workflow, not the caller root
+        run: |
+          set -euo pipefail
+          test -f action/src/fixture-run.mjs
+          test ! -e src/fixture-run.mjs
+          test -d caller
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.3'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verification-plan
+          path: artifacts/verification-plan
+      - working-directory: caller
+        env:
+          INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/verification-plan/plan.json
+          INPUT_DEFINITION: ${{ matrix.definition }}
+          INPUT_OUTPUT_DIR: ${{ github.workspace }}/artifacts/fixture-out
+          INPUT_VERSION: ${{ inputs.version }}
+        run: node "${{ github.workspace }}/action/src/fixture-run.mjs"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vra-fixture-${{ matrix.id }}
+          path: artifacts/fixture-out
+          retention-days: 14
+          if-no-files-found: error
+  walk-hallway:
+    needs: plan
+    if: needs.plan.outputs.hallway_count != '0'
+    # capability-verifier walk-hallway.yml job scenario declares pull-requests: write.
+    # With comment: false that job never writes.
+    permissions:
+      contents: read
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.hallway) }}
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@0c00c388c693012392da0c1cd391046c752e9b3c # v2.11.4
+    with:
+      repository: ${{ matrix.repository }}
+      ref: ${{ matrix.ref }}
+      configurations: ${{ matrix.configurations }}
+      verification-lock: ${{ matrix.lock }}
+      artifact-prefix: ${{ matrix.artifact_prefix }}
+      check: false
+      comment: ${{ inputs.comment }}
+      media: ${{ inputs.media }}
+  scenario:
+    needs: plan
+    if: needs.plan.outputs.scenario_count != '0'
+    # capability-verifier scenario.yml job comment declares pull-requests: write.
+    # With comment: false that job never writes.
+    permissions:
+      contents: read
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.scenario) }}
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@0c00c388c693012392da0c1cd391046c752e9b3c # v2.11.4
+    with:
+      repository: ${{ matrix.repository }}
+      ref: ${{ matrix.ref }}
+      configurations: ${{ matrix.configurations }}
+      verification-lock: ${{ matrix.lock }}
+      artifact-prefix: ${{ matrix.artifact_prefix }}
+      check: false
+      comment: ${{ inputs.comment }}
+      media: ${{ inputs.media }}
+  collect:
+    needs: [plan, fixture, walk-hallway, scenario]
+    if: >-
+      always() && !cancelled() &&
+      needs.plan.result == 'success' &&
+      (needs.fixture.result == 'success' || needs.fixture.result == 'skipped') &&
+      (needs.walk-hallway.result == 'success' || needs.walk-hallway.result == 'skipped') &&
+      (needs.scenario.result == 'success' || needs.scenario.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      report-path: ${{ steps.collect.outputs.report-path }}
+      status: ${{ steps.collect.outputs.status }}
+      grade: ${{ steps.collect.outputs.grade }}
+      grades: ${{ steps.collect.outputs.grades }}
+    steps:
+      - name: Caller repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
+          persist-credentials: false
+      - id: workflow-source
+        env:
+          JOB_JSON: ${{ toJson(job) }}
+        run: |
+          set -euo pipefail
+          repository="$(jq -r .workflow_repository <<<"$JOB_JSON")"
+          sha="$(jq -r .workflow_sha <<<"$JOB_JSON")"
+          test -n "$repository"
+          test "$repository" != null
+          test -n "$sha"
+          test "$sha" != null
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ steps.workflow-source.outputs.repository }}
+          ref: ${{ steps.workflow-source.outputs.sha }}
+          path: action
+          persist-credentials: false
+      - name: Scripts come from this workflow, not the caller root
+        run: |
+          set -euo pipefail
+          test -f action/src/collect.mjs
+          test ! -e src/collect.mjs
+          test -d caller
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.3'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verification-plan
+          path: artifacts/verification-plan
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vra-fixture-*
+          path: downloaded/fixture
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vra-*-capability-report-*
+          path: downloaded/reports
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vra-*-evidence-*
+          path: downloaded/evidence
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vra-*-mcap-*
+          path: downloaded/mcap
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vra-*-video-*
+          path: downloaded/video
+      - id: collect
+        working-directory: caller
+        env:
+          INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/verification-plan/plan.json
+          INPUT_OUTPUT_DIR: ${{ github.workspace }}/${{ inputs.output-dir }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_FIXTURE_ROOT: ${{ github.workspace }}/downloaded/fixture
+          INPUT_VERIFIER_ROOT: ${{ github.workspace }}/downloaded
+        run: node "${{ github.workspace }}/action/src/collect.mjs"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verification-report
+          path: ${{ inputs.output-dir }}
+          retention-days: 30
+          if-no-files-found: error

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# Fixture scenario definition. One trial, graded FAIL, so a robot failure stays
+# a successful report run.
+format = "livingproof-verification-definition/0.1.0"
+id = "fixture-scenario"
+procedure = "scenario"
+scenario = "walk-corner-left@0.2.0"
+
+[robot]
+repository = "Living-Proof-Labs/verification-reports-action"
+ref = "v0.0.0"
+configurations = ["stock"]
+
+[plan]
+trials = { count = 1 }

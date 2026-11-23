@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# Fixture hallway definition. The runner in this repository writes the report
+# from tests/fixtures/robot/expected. Robot repositories call capability-verifier.
+format = "livingproof-verification-definition/0.1.0"
+id = "fixture-hallway"
+procedure = "walk-hallway"
+scenario = "walk-hallway@0.1.0"
+
+[robot]
+repository = "Living-Proof-Labs/verification-reports-action"
+ref = "v0.0.0"
+configurations = ["stock"]
+
+[plan]
+trials = { count = 1 }

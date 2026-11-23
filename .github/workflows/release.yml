@@ -22,8 +22,21 @@ jobs:
   post-release:
     needs: release
     if: needs.release.outputs.published == 'true'
+    # capability-verifier's comment job declares pull-requests: write.
+    # With comment: false it never writes.
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/report.yml
+    with:
+      definitions: tests/fixtures/robot/verifications/*.toml
+      output-dir: artifacts/released-report
+      version: ${{ needs.release.outputs.version }}
+  post-release-check:
+    needs: [release, post-release]
+    if: needs.release.outputs.published == 'true' && needs.post-release.result == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -31,28 +44,32 @@ jobs:
         with:
           ref: ${{ needs.release.outputs.git-tag }}
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          node-version: '24.22.3'
-      - id: released
-        uses: ./
-        with:
-          output-dir: artifacts/released-report
-          version: ${{ needs.release.outputs.version }}
+          name: verification-report
+          path: artifacts/released-report
       - name: Verify the published action report
         env:
-          STATUS: ${{ steps.released.outputs.status }}
-          REPORT_PATH: ${{ steps.released.outputs.report-path }}
+          STATUS: ${{ needs.post-release.outputs.status }}
+          GRADES: ${{ needs.post-release.outputs.grades }}
           VERSION: ${{ needs.release.outputs.version }}
           GIT_TAG: ${{ needs.release.outputs.git-tag }}
           COMMIT: ${{ needs.release.outputs.commit }}
         run: |
           set -euo pipefail
-          test "$STATUS" = "placeholder"
+          test "$STATUS" = "ok"
           test -n "$VERSION"
           test -n "$GIT_TAG"
           test -n "$COMMIT"
-          test -f "$REPORT_PATH"
-          test "$(jq -r .status "$REPORT_PATH")" = "placeholder"
-          test "$(jq -r .version "$REPORT_PATH")" = "$VERSION"
           test "$(git rev-parse HEAD)" = "$COMMIT"
+          test "$(jq -r '.["fixture-scenario/stock"]' <<<"$GRADES")" = "FAIL"
+          dir="artifacts/released-report/fixture-scenario/stock"
+          test -f "$dir/report.json"
+          test -f "$dir/run.json"
+          test "$(jq -r '.summaries[0].grade' "$dir/report.json")" = "FAIL"
+          test "$(jq -r .version "$dir/run.json")" = "$VERSION"
+          test "$(jq -r .robot.commit "$dir/run.json")" = "$COMMIT"
+          if grep -R -n placeholder artifacts/released-report; then
+            echo "report still contains placeholder" >&2
+            exit 1
+          fi

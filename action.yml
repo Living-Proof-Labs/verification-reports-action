@@ -1,47 +1,72 @@
 # SPDX-License-Identifier: Apache-2.0
 name: Living Proof Verification Reports
 description: >-
-  Run capability verification for a pinned robot configuration and produce a
-  traceable verification report.
+  Run capability verification for the caller repository and produce a traceable
+  verification report. Robot repositories call .github/workflows/report.yml.
+  This composite runs this repository's fixture definitions and rejects every
+  other caller, because a composite action cannot call capability-verifier's
+  matrix workflows.
 inputs:
-  pins-path:
-    description: Path to the robot pins manifest (pins.json).
+  definitions:
+    description: Glob of livingproof-verification-definition files in the caller repository.
     required: false
-    default: pins.json
-  robot-manifest:
-    description: Path to the robot manifest (robot.json).
-    required: false
-    default: robot.json
-  runner-config:
-    description: Path to the runner configuration (runner.json).
-    required: false
-    default: runner.json
+    default: verifications/*.toml
   output-dir:
     description: Directory where the verification report artifacts will be written.
     required: false
     default: artifacts/verification-report
   version:
     description: >-
-      Optional version recorded in the verification report. Empty when the
-      caller does not supply one.
+      Optional version recorded in each run.json. Empty when the caller does not
+      supply one.
     required: false
     default: ''
+  repository:
+    description: >-
+      Robot repository. Empty means the caller. Another repository requires ref
+      to be its full commit SHA.
+    required: false
+    default: ''
+  ref:
+    description: >-
+      Robot commit. Empty means the caller's checked-out commit. A release tag
+      is rejected.
+    required: false
+    default: ''
+  media:
+    description: Record MCAP and video when capability-verifier records them.
+    required: false
+    default: 'true'
+  comment:
+    description: >-
+      Ask capability-verifier to comment on a same-repository pull request.
+      The comment job declares pull-requests: write. With comment false it never writes.
+    required: false
+    default: 'false'
 outputs:
   report-path:
-    description: Path to the generated verification report file.
+    description: Directory of the written reports.
     value: ${{ steps.run.outputs.report-path }}
   status:
-    description: Execution status of the verification report action (placeholder).
+    description: ok when a report was written for every definition. A robot grade does not change this.
     value: ${{ steps.run.outputs.status }}
+  grade:
+    description: The robot grade when there is one result, otherwise the grades JSON map.
+    value: ${{ steps.run.outputs.grade }}
+  grades:
+    description: JSON map of definition/configuration to robot grade.
+    value: ${{ steps.run.outputs.grades }}
 runs:
   using: composite
   steps:
     - id: run
       shell: bash
       env:
-        INPUT_PINS_PATH: ${{ inputs.pins-path }}
-        INPUT_ROBOT_MANIFEST: ${{ inputs.robot-manifest }}
-        INPUT_RUNNER_CONFIG: ${{ inputs.runner-config }}
+        INPUT_DEFINITIONS: ${{ inputs.definitions }}
         INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
         INPUT_VERSION: ${{ inputs.version }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_REF: ${{ inputs.ref }}
+        INPUT_MEDIA: ${{ inputs.media }}
+        INPUT_COMMENT: ${{ inputs.comment }}
       run: node "${{ github.action_path }}/src/run.mjs"

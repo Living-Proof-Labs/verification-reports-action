@@ -57,6 +57,55 @@ test('verify forecasts a candidate version and smokes it without sealing a relea
   assert.doesNotMatch(verifyYml, /expected-version/);
   assert.doesNotMatch(verifyYml, /uses: \.\/\.github\/workflows\/release\.yml/);
   assert.doesNotMatch(verifyYml, /actions: write/);
+  assert.doesNotMatch(verifyYml, /0\.0\.0-placeholder|"placeholder"|status=placeholder/);
   assert.match(verifyYml, / {2}verify:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {6}checks: write\n/);
-  assert.match(verifyYml, / {2}action-smoke:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {4}steps:\n/);
+  assert.match(
+    verifyYml,
+    / {2}action-smoke:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {6}pull-requests: write\n {4}uses: \.\/\.github\/workflows\/report\.yml\n/
+  );
+  assert.match(verifyYml, /^permissions:\n {2}contents: read\nconcurrency:/m);
+  assert.match(verifyYml, /definitions: tests\/fixtures\/robot\/verifications\/\*\.toml/);
+});
+
+test('the report workflow calls both verifier procedures and passes no secrets', () => {
+  const reportYml = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
+  assert.match(reportYml, /^on:\n {2}workflow_call:/m);
+  assert.match(
+    reportYml,
+    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/walk-hallway\.yml@0c00c388c693012392da0c1cd391046c752e9b3c # v2\.11\.4/
+  );
+  assert.match(
+    reportYml,
+    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/scenario\.yml@0c00c388c693012392da0c1cd391046c752e9b3c # v2\.11\.4/
+  );
+  assert.doesNotMatch(reportYml, /secrets:/);
+  assert.match(reportYml, /^permissions:\n {2}contents: read\njobs:/m);
+  assert.match(
+    reportYml,
+    / {2}walk-hallway:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {6}pull-requests: write\n/
+  );
+  assert.match(
+    reportYml,
+    / {2}scenario:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {6}pull-requests: write\n/
+  );
+  assert.match(reportYml, /toJson\(job\)/);
+  assert.match(reportYml, /jq -r \.workflow_repository/);
+  assert.match(reportYml, /jq -r \.workflow_sha/);
+  assert.match(reportYml, /steps\.workflow-source\.outputs\.repository/);
+  assert.match(reportYml, /steps\.workflow-source\.outputs\.sha/);
+  assert.match(reportYml, /path: action/);
+  assert.match(reportYml, /path: caller/);
+  assert.match(reportYml, /node "\$\{\{ github\.workspace \}\}\/action\/src\/plan\.mjs"/);
+  assert.match(reportYml, /test ! -e src\/plan\.mjs/);
+  assert.doesNotMatch(reportYml, /run: node src\//);
+  assert.match(reportYml, /name: verification-report/);
+  assert.match(releaseYml, /^permissions:\n {2}contents: read\njobs:/m);
+  assert.match(
+    releaseYml,
+    / {2}post-release:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {6}pull-requests: write\n {4}uses: \.\/\.github\/workflows\/report\.yml\n/
+  );
+  assert.match(releaseYml, /uses: \.\/\.github\/workflows\/report\.yml/);
+  assert.doesNotMatch(releaseYml, /0\.0\.0-placeholder|"placeholder"|status=placeholder/);
+  assert.match(releaseYml, /ref: \$\{\{ needs\.release\.outputs\.git-tag \}\}/);
+  assert.match(releaseYml, /version: \$\{\{ needs\.release\.outputs\.version \}\}/);
 });
