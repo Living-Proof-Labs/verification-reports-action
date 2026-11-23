@@ -156,3 +156,27 @@ jobs:
           path: artifacts/smoke-report
           retention-days: 30
           if-no-files-found: error
+  verification-gate:
+    name: Repository verification gate
+    # always() so a failed or cancelled dependency still reports this check.
+    # version is skipped unless this is a push or a pull request into main;
+    # that skip is expected. Any other skip, failure, or cancellation fails.
+    if: always()
+    needs: [verify, version, action-smoke, action-smoke-check]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.3'
+      - name: Require complete successful verification evidence
+        run: node tools/verification-gate.mjs
+        env:
+          VERIFICATION_NEEDS: ${{ toJSON(needs) }}
+          VERIFICATION_EVENT: ${{ github.event_name }}
+          VERIFICATION_BASE_REF: ${{ github.base_ref }}
