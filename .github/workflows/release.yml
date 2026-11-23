@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Release
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      commit:
+        type: string
+        required: true
+    outputs:
+      published:
+        value: ${{ jobs.release.outputs.published }}
+      git-tag:
+        value: ${{ jobs.release.outputs.git-tag }}
+      version:
+        value: ${{ jobs.release.outputs.version }}
+      commit:
+        value: ${{ jobs.release.outputs.commit }}
+permissions:
+  contents: read
+jobs:
+  current-main:
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.commit == github.sha
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Require current main before the release writer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          current=$(gh api repos/Living-Proof-Labs/verification-reports-action/git/ref/heads/main --jq .object.sha)
+          test "$current" = "$CANDIDATE"
+  release:
+    needs: current-main
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.commit == github.sha
+    permissions:
+      contents: write
+    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@d0d9ae8e684f8a828b774eda01622b7c66e5252e # v9.9.10
+    with:
+      expected-version: ${{ inputs.version }}
+      expected-commit: ${{ inputs.commit }}

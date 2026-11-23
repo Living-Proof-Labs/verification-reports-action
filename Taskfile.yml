@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# Adapted from Living Proof Labs collaboration-guidelines templates/node/Taskfile.yml
+# at v9.9.10, licensed under Apache-2.0.
+version: '3'
+
+tasks:
+  setup:
+    desc: Verify Node runtime and prepare artifacts directory
+    cmds:
+      - node --version
+      - mkdir -p artifacts
+  check:
+    desc: Run static checks
+    cmds:
+      - npm run check
+  test:
+    desc: Run tests and write JUnit XML report
+    cmds:
+      - mkdir -p artifacts
+      - node --test --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=artifacts/tests.xml tests/*.test.mjs
+  verify:
+    desc: Run checks and tests
+    cmds:
+      - task: check
+      - task: test

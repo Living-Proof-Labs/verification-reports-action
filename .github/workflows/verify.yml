@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: Apache-2.0
+# This repository has no published development image yet. Until one exists, CI
+# uses the documented GitHub-hosted ubuntu-24.04 fallback with pinned Node.js
+# and Task 3.54.0, running the same `task setup` and `task verify` commands.
+name: Verify
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write
+    env:
+      ACTIONLINT_VERSION: 1.7.12
+      # sha256 of actionlint_1.7.12_linux_amd64.tar.gz from the release checksums.
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.3'
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: '3.54.0'
+      - run: task setup
+      - run: task verify
+      - name: Publish test results
+        id: report
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0
+        with:
+          name: Action tests
+          path: artifacts/tests.xml
+          reporter: java-junit
+          use-actions-summary: 'true'
+          fail-on-error: 'true'
+          fail-on-empty: 'true'
+      - name: Retain the JUnit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: junit-report-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/tests.xml
+          retention-days: 30
+          if-no-files-found: error
+      - name: actionlint
+        if: ${{ !cancelled() }}
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive"
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+  action-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.3'
+      - id: smoke
+        uses: ./
+        with:
+          output-dir: artifacts/smoke-report
+      - name: Verify action outputs
+        env:
+          STATUS: ${{ steps.smoke.outputs.status }}
+          REPORT_PATH: ${{ steps.smoke.outputs.report-path }}
+        run: |
+          test "$STATUS" = "placeholder"
+          test -f "$REPORT_PATH"
+  version:
+    if: github.event_name == 'push' || github.base_ref == 'main'
+    permissions:
+      contents: read
+    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release-candidate.yml@d0d9ae8e684f8a828b774eda01622b7c66e5252e # v9.9.10
+  release:
+    needs: [verify, action-smoke, version]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.verify.result == 'success' &&
+      needs.action-smoke.result == 'success' &&
+      needs.version.result == 'success' &&
+      needs.version.outputs.version != '' &&
+      needs.version.outputs.version == needs.version.outputs.semver-version &&
+      needs.version.outputs.git-tag == format('v{0}', needs.version.outputs.version) &&
+      needs.version.outputs.commit == github.sha
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      commit: ${{ needs.version.outputs.commit }}

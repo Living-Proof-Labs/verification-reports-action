@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Living Proof Verification Reports
+description: >-
+  Run capability verification for a pinned robot configuration and produce a
+  traceable verification report.
+inputs:
+  pins-path:
+    description: Path to the robot pins manifest (pins.json).
+    required: false
+    default: pins.json
+  robot-manifest:
+    description: Path to the robot manifest (robot.json).
+    required: false
+    default: robot.json
+  runner-config:
+    description: Path to the runner configuration (runner.json).
+    required: false
+    default: runner.json
+  output-dir:
+    description: Directory where the verification report artifacts will be written.
+    required: false
+    default: artifacts/verification-report
+outputs:
+  report-path:
+    description: Path to the generated verification report file.
+    value: ${{ steps.run.outputs.report-path }}
+  status:
+    description: Execution status of the verification report action (placeholder).
+    value: ${{ steps.run.outputs.status }}
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        INPUT_PINS_PATH: ${{ inputs.pins-path }}
+        INPUT_ROBOT_MANIFEST: ${{ inputs.robot-manifest }}
+        INPUT_RUNNER_CONFIG: ${{ inputs.runner-config }}
+        INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: node "${{ github.action_path }}/src/run.mjs"
