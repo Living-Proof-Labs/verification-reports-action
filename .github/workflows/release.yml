@@ -18,7 +18,8 @@ jobs:
       github.event.workflow_run.head_sha == github.sha
     permissions:
       contents: write
-    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@v9.9.10
+    # Commit of collaboration-guidelines v9.9.10. Issue #4 pins action inputs, not these workflow refs.
+    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@d0d9ae8e684f8a828b774eda01622b7c66e5252e # v9.9.10
   post-release:
     needs: release
     if: needs.release.outputs.published == 'true'
