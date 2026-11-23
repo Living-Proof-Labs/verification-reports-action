@@ -88,6 +88,16 @@ test('the report workflow calls both verifier procedures and passes no secrets',
     reportYml,
     / {2}scenario:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {6}pull-requests: write\n/
   );
+  assert.match(reportYml, /toJson\(job\)/);
+  assert.match(reportYml, /jq -r \.workflow_repository/);
+  assert.match(reportYml, /jq -r \.workflow_sha/);
+  assert.match(reportYml, /steps\.workflow-source\.outputs\.repository/);
+  assert.match(reportYml, /steps\.workflow-source\.outputs\.sha/);
+  assert.match(reportYml, /path: action/);
+  assert.match(reportYml, /path: caller/);
+  assert.match(reportYml, /node "\$\{\{ github\.workspace \}\}\/action\/src\/plan\.mjs"/);
+  assert.match(reportYml, /test ! -e src\/plan\.mjs/);
+  assert.doesNotMatch(reportYml, /run: node src\//);
   assert.match(reportYml, /name: verification-report/);
   assert.match(releaseYml, /^permissions:\n {2}contents: read\njobs:/m);
   assert.match(

@@ -70,19 +70,54 @@ jobs:
       scenario: ${{ steps.plan.outputs.scenario }}
       scenario_count: ${{ steps.plan.outputs.scenario_count }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Caller repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
           persist-credentials: false
+      - id: workflow-source
+        env:
+          # actionlint 1.7.12's job type omits workflow_repository and workflow_sha.
+          # toJson keeps those fields, which name this workflow's own commit.
+          JOB_JSON: ${{ toJson(job) }}
+        run: |
+          set -euo pipefail
+          repository="$(jq -r .workflow_repository <<<"$JOB_JSON")"
+          sha="$(jq -r .workflow_sha <<<"$JOB_JSON")"
+          test -n "$repository"
+          test "$repository" != null
+          test -n "$sha"
+          test "$sha" != null
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ steps.workflow-source.outputs.repository }}
+          ref: ${{ steps.workflow-source.outputs.sha }}
+          path: action
+          persist-credentials: false
+      - name: Scripts come from this workflow, not the caller root
+        run: |
+          set -euo pipefail
+          test -f action/src/plan.mjs
+          test -f action/src/fixture-run.mjs
+          test -f action/src/collect.mjs
+          test ! -e src/plan.mjs
+          test -d caller
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.22.3'
       - id: plan
+        working-directory: caller
         env:
           INPUT_DEFINITIONS: ${{ inputs.definitions }}
           INPUT_REPOSITORY: ${{ inputs.repository }}
           INPUT_REF: ${{ inputs.ref }}
-          INPUT_PLAN_PATH: artifacts/verification-plan/plan.json
-        run: node src/plan.mjs
+          INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/verification-plan/plan.json
+        run: node "${{ github.workspace }}/action/src/plan.mjs"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verification-plan
@@ -99,9 +134,39 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.fixture) }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Caller repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
           persist-credentials: false
+      - id: workflow-source
+        env:
+          JOB_JSON: ${{ toJson(job) }}
+        run: |
+          set -euo pipefail
+          repository="$(jq -r .workflow_repository <<<"$JOB_JSON")"
+          sha="$(jq -r .workflow_sha <<<"$JOB_JSON")"
+          test -n "$repository"
+          test "$repository" != null
+          test -n "$sha"
+          test "$sha" != null
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ steps.workflow-source.outputs.repository }}
+          ref: ${{ steps.workflow-source.outputs.sha }}
+          path: action
+          persist-credentials: false
+      - name: Scripts come from this workflow, not the caller root
+        run: |
+          set -euo pipefail
+          test -f action/src/fixture-run.mjs
+          test ! -e src/fixture-run.mjs
+          test -d caller
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.22.3'
@@ -109,12 +174,13 @@ jobs:
         with:
           name: verification-plan
           path: artifacts/verification-plan
-      - env:
-          INPUT_PLAN_PATH: artifacts/verification-plan/plan.json
+      - working-directory: caller
+        env:
+          INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/verification-plan/plan.json
           INPUT_DEFINITION: ${{ matrix.definition }}
-          INPUT_OUTPUT_DIR: artifacts/fixture-out
+          INPUT_OUTPUT_DIR: ${{ github.workspace }}/artifacts/fixture-out
           INPUT_VERSION: ${{ inputs.version }}
-        run: node src/fixture-run.mjs
+        run: node "${{ github.workspace }}/action/src/fixture-run.mjs"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: vra-fixture-${{ matrix.id }}
@@ -181,9 +247,39 @@ jobs:
       grade: ${{ steps.collect.outputs.grade }}
       grades: ${{ steps.collect.outputs.grades }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Caller repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
           persist-credentials: false
+      - id: workflow-source
+        env:
+          JOB_JSON: ${{ toJson(job) }}
+        run: |
+          set -euo pipefail
+          repository="$(jq -r .workflow_repository <<<"$JOB_JSON")"
+          sha="$(jq -r .workflow_sha <<<"$JOB_JSON")"
+          test -n "$repository"
+          test "$repository" != null
+          test -n "$sha"
+          test "$sha" != null
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ steps.workflow-source.outputs.repository }}
+          ref: ${{ steps.workflow-source.outputs.sha }}
+          path: action
+          persist-credentials: false
+      - name: Scripts come from this workflow, not the caller root
+        run: |
+          set -euo pipefail
+          test -f action/src/collect.mjs
+          test ! -e src/collect.mjs
+          test -d caller
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.22.3'
@@ -212,13 +308,14 @@ jobs:
           pattern: vra-*-video-*
           path: downloaded/video
       - id: collect
+        working-directory: caller
         env:
-          INPUT_PLAN_PATH: artifacts/verification-plan/plan.json
-          INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
+          INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/verification-plan/plan.json
+          INPUT_OUTPUT_DIR: ${{ github.workspace }}/${{ inputs.output-dir }}
           INPUT_VERSION: ${{ inputs.version }}
-          INPUT_FIXTURE_ROOT: downloaded/fixture
-          INPUT_VERIFIER_ROOT: downloaded
-        run: node src/collect.mjs
+          INPUT_FIXTURE_ROOT: ${{ github.workspace }}/downloaded/fixture
+          INPUT_VERIFIER_ROOT: ${{ github.workspace }}/downloaded
+        run: node "${{ github.workspace }}/action/src/collect.mjs"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verification-report

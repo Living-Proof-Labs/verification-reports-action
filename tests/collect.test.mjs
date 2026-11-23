@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -70,6 +70,56 @@ test('plan, fixture-run and collect reproduce the full fixture report', () => {
     execFileSync('sha256sum', ['-c', 'SHA256SUMS'], {
       cwd: path.join(outputDir, 'fixture-hallway', 'stock'),
     });
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('scripts load from this repo when the caller directory has no src', () => {
+  const tempRoot = mkdtempSync(path.join(tmpdir(), 'vra-caller-'));
+  const repo = fileURLToPath(new URL('..', import.meta.url));
+  const caller = path.join(tempRoot, 'caller');
+  try {
+    cpSync(path.join(repo, 'tests/fixtures'), path.join(caller, 'tests/fixtures'), { recursive: true });
+    assert.equal(existsSync(path.join(caller, 'src', 'plan.mjs')), false);
+    const planPath = path.join(tempRoot, 'plan.json');
+    const outputFile = path.join(tempRoot, 'github-output.txt');
+    execFileSync(process.execPath, [path.join(repo, 'src/plan.mjs')], {
+      cwd: caller,
+      env: env({
+        INPUT_PLAN_PATH: planPath,
+        GITHUB_OUTPUT: outputFile,
+      }),
+    });
+    const plan = JSON.parse(readFileSync(planPath, 'utf8'));
+    assert.equal(plan.definitions.length, 2);
+    assert.equal(existsSync(path.join(caller, 'src')), false);
+    const stage = path.join(tempRoot, 'artifacts');
+    for (const item of plan.definitions) {
+      execFileSync(process.execPath, [path.join(repo, 'src/fixture-run.mjs')], {
+        cwd: caller,
+        env: env({
+          INPUT_PLAN_PATH: planPath,
+          INPUT_DEFINITION: item.path,
+          INPUT_OUTPUT_DIR: path.join(stage, `vra-fixture-${item.id}`),
+        }),
+      });
+    }
+    const outputDir = path.join(tempRoot, 'final');
+    execFileSync(process.execPath, [path.join(repo, 'src/collect.mjs')], {
+      cwd: caller,
+      env: env({
+        INPUT_PLAN_PATH: planPath,
+        INPUT_OUTPUT_DIR: outputDir,
+        INPUT_FIXTURE_ROOT: stage,
+        INPUT_VERIFIER_ROOT: path.join(tempRoot, 'no-verifier'),
+        GITHUB_OUTPUT: path.join(tempRoot, 'collect-out.txt'),
+      }),
+    });
+    const grades = readFileSync(path.join(tempRoot, 'collect-out.txt'), 'utf8');
+    assert.match(grades, /^status=ok$/m);
+    assert.match(grades, /"fixture-scenario\/stock":"FAIL"/);
+    assert.equal(existsSync(path.join(outputDir, 'fixture-hallway', 'stock', 'report.json')), true);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
