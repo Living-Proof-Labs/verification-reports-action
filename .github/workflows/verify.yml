@@ -123,14 +123,10 @@ jobs:
           set -euo pipefail
           test ! -e artifacts/smoke-report/report.json
           for spec in \
-            "fixture-hallway/stock PASS walk-hallway media" \
-            "fixture-scenario/stock FAIL scenario observation"
+            "artifacts/smoke-report/fixture-hallway/stock PASS walk-hallway media" \
+            "artifacts/smoke-report/fixture-scenario/stock FAIL scenario observation"
           do
-            set -- $spec
-            dir="artifacts/smoke-report/$1"
-            grade="$2"
-            procedure="$3"
-            kind="$4"
+            read -r dir grade procedure kind <<<"$spec"
             for name in report.html report.md report.json report.txt SHA256SUMS run.json; do
               test -f "$dir/$name"
             done
