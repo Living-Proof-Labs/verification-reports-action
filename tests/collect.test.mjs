@@ -25,6 +25,7 @@ function env(overrides) {
     INPUT_VERSION: '9.9.9',
     INPUT_REPOSITORY: '',
     INPUT_REF: '',
+    WORKFLOW_REPOSITORY: CALLER,
     ...overrides,
   };
 }
@@ -195,6 +196,7 @@ test('verifier artifacts are assembled and a missing report fails', () => {
     assert.equal(run.outcome[0].grade, 'INSUFFICIENT_EVIDENCE');
     assert.equal(run.robot.commit, SHA);
     assert.equal(run.version, '4.5.6');
+    assert.equal(run.fixture, false);
 
     rmSync(path.join(reportDir, 'report.html'));
     assert.throws(

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { existsSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { ReportError } from './definitions.mjs';
+import { ReportError, assertConfigurationSlug } from './definitions.mjs';
 import { buildRunRecord, renderReport, writeConfiguration } from './report.mjs';
 
 export function expectedConfigurationDir(root, id, configuration) {
@@ -9,6 +9,9 @@ export function expectedConfigurationDir(root, id, configuration) {
 }
 
 export function runFixtureDefinition(item, { root, outputDir, env, version }) {
+  for (const configuration of item.configurations ?? []) {
+    assertConfigurationSlug(configuration, item.path ?? 'fixture');
+  }
   const destination = path.join(outputDir, item.id);
   const staging = path.join(outputDir, `.partial-${item.id}`);
   rmSync(staging, { recursive: true, force: true });

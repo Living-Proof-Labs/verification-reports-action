@@ -29,7 +29,7 @@ test('release tags main before post-release consumes its outputs', () => {
   assert.match(releaseYml, /^permissions:\n {2}contents: read/m);
   assert.match(
     releaseYml,
-    /uses: Living-Proof-Labs\/collaboration-guidelines\/\.github\/workflows\/semantic-release\.yml@v9\.9\.10/
+    /uses: Living-Proof-Labs\/collaboration-guidelines\/\.github\/workflows\/semantic-release\.yml@d0d9ae8e684f8a828b774eda01622b7c66e5252e # v9\.9\.10/
   );
   const releaseJob = releaseYml.indexOf('\n  release:\n');
   const postReleaseJob = releaseYml.indexOf('\n  post-release:\n');
@@ -49,7 +49,7 @@ test('verify forecasts a candidate version and smokes it without sealing a relea
   assert.match(verifyYml, /^on:[\s\S]*?push:/m);
   assert.match(
     verifyYml,
-    /uses: Living-Proof-Labs\/collaboration-guidelines\/\.github\/workflows\/semantic-release-candidate\.yml@v9\.9\.10/
+    /uses: Living-Proof-Labs\/collaboration-guidelines\/\.github\/workflows\/semantic-release-candidate\.yml@d0d9ae8e684f8a828b774eda01622b7c66e5252e # v9\.9\.10/
   );
   assert.match(verifyYml, /action-smoke:[\s\S]*?needs: version/);
   assert.match(verifyYml, /version: \$\{\{ needs\.version\.outputs\.semver-version \}\}/);
@@ -108,4 +108,26 @@ test('the report workflow calls both verifier procedures and passes no secrets',
   assert.doesNotMatch(releaseYml, /0\.0\.0-placeholder|"placeholder"|status=placeholder/);
   assert.match(releaseYml, /ref: \$\{\{ needs\.release\.outputs\.git-tag \}\}/);
   assert.match(releaseYml, /version: \$\{\{ needs\.release\.outputs\.version \}\}/);
+});
+
+test('org workflow uses refs are full SHAs with a tag comment', () => {
+  const reportYml = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
+  const files = {
+    'report.yml': reportYml,
+    'verify.yml': verifyYml,
+    'release.yml': releaseYml,
+  };
+  for (const [name, text] of Object.entries(files)) {
+    assert.doesNotMatch(text, /uses:\s*Living-Proof-Labs\/\S+@v\d/);
+    for (const match of text.matchAll(/^\s*(?:-\s*)?uses:\s*(\S+)(.*)$/gm)) {
+      const ref = match[1];
+      if (ref.startsWith('.')) continue;
+      const at = ref.lastIndexOf('@');
+      assert.ok(at > 0, `${name}: ${ref} has no pin`);
+      const target = ref.slice(0, at);
+      if (!target.startsWith('Living-Proof-Labs/')) continue;
+      assert.match(ref.slice(at + 1), /^[0-9a-f]{40}$/, `${name}: ${ref} must be a full SHA`);
+      assert.match(match[2], /#\s*v\d+\.\d+\.\d+/, `${name}: ${ref} needs a tag comment`);
+    }
+  }
 });
