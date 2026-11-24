@@ -1,23 +1,27 @@
 # SPDX-License-Identifier: Apache-2.0
 # Adapted from Living Proof Labs collaboration-guidelines templates/node/Taskfile.yml
-# at v9.9.10, licensed under Apache-2.0.
+# and templates/python/Taskfile.yml at v9.9.10, licensed under Apache-2.0.
 version: '3'
 
 tasks:
   setup:
-    desc: Verify Node runtime and prepare artifacts directory
+    desc: Verify Node runtime, sync locked Python dev tools, and prepare artifacts directory
     cmds:
       - node --version
+      - uv sync --locked --no-python-downloads
       - mkdir -p artifacts
   check:
-    desc: Run static checks
+    desc: Run static checks for JavaScript, Python, and Action metadata
     cmds:
       - npm run check
+      - uv run --locked --no-sync --no-python-downloads ruff check .
+      - uv run --locked --no-sync --no-python-downloads ruff format --check .
   test:
-    desc: Run tests and write JUnit XML report
+    desc: Run Node and Python test suites and write JUnit XML reports
     cmds:
       - mkdir -p artifacts
-      - node --test --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=artifacts/tests.xml tests/*.test.mjs
+      - node --test --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=artifacts/node-tests.xml tests/*.test.mjs
+      - uv run --locked --no-sync --no-python-downloads pytest --junitxml=artifacts/pytest-tests.xml
   verify:
     desc: Run checks and tests
     cmds:

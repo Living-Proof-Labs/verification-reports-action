@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Living Proof Verification Reports Site
+description: >-
+  Assemble a single-robot verification reports section (reports/) with latest
+  per-scenario results, scenario history, and immutable run pages.
+inputs:
+  runs-dir:
+    description: >-
+      Directory of per-scenario run folders, each holding report.html,
+      report.json, report.md, report.txt, SHA256SUMS, and run.json.
+    required: true
+  output-dir:
+    description: >-
+      Destination directory for the generated static reports/ tree (for example
+      artifacts/docs/html/reports).
+    required: false
+    default: reports
+  evidence-retention-days:
+    description: >-
+      Days to retain copied MCAP, video, and media files before pruning. Report
+      pages and checksums remain.
+    required: false
+    default: '7'
+  restore-history:
+    description: >-
+      Whether to restore earlier runs from this repository's (github.repository)
+      last successfully deployed, non-pull-request GitHub Pages artifact (auto,
+      true, or false).
+      auto restores on non-PR runs and skips restore on pull requests.
+    required: false
+    default: auto
+  site-url:
+    description: >-
+      Optional live documentation URL checked when no earlier Pages artifact is
+      listed so existing live report history is never silently dropped.
+    required: false
+    default: ''
+  branch:
+    description: Branch whose deployed Pages artifacts hold earlier runs.
+    required: false
+    default: main
+  pages-artifact:
+    description: >-
+      Optional exact Pages artifact name. When empty, matches github-pages and
+      github-pages-*.
+    required: false
+    default: ''
+  pages-job:
+    description: >-
+      Optional Pages deploy job name. When empty, matches pages, deploy, and
+      deploy-pages.
+    required: false
+    default: ''
+  reset-history:
+    description: >-
+      Start a fresh reports/ tree without restoring earlier runs from GitHub
+      Pages artifacts (true or false).
+    required: false
+    default: 'false'
+  upload-artifact:
+    description: >-
+      Whether to upload the built reports/ tree as a workflow artifact (auto,
+      true, or false). auto uploads on pull_request runs and never deploys.
+    required: false
+    default: auto
+  artifact-name:
+    description: >-
+      Optional workflow artifact name when upload-artifact runs. Defaults to
+      verification-reports-site-<run_id>-<run_attempt>.
+    required: false
+    default: ''
+  artifact-retention-days:
+    description: Retention days for the uploaded workflow artifact.
+    required: false
+    default: '14'
+  github-token:
+    description: GitHub token used for read-only Pages artifact lookup and download.
+    required: false
+    default: ${{ github.token }}
+outputs:
+  reports-dir:
+    description: Path to the generated static reports/ directory.
+    value: ${{ steps.build.outputs.reports-dir }}
+  index-path:
+    description: Path to the generated reports/index.html overview page.
+    value: ${{ steps.build.outputs.index-path }}
+  runs-count:
+    description: Total number of run records present in the generated reports/ tree.
+    value: ${{ steps.build.outputs.runs-count }}
+  artifact-only:
+    description: >-
+      true on pull_request and merge_group runs (built as an artifact only,
+      never deployed); false otherwise.
+    value: ${{ steps.build.outputs.artifact-only }}
+runs:
+  using: composite
+  steps:
+    - name: Set up Python 3.12
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      with:
+        python-version: '3.12'
+    - name: Restore history and build reports section
+      id: build
+      shell: bash
+      env:
+        INPUT_RUNS_DIR: ${{ inputs.runs-dir }}
+        INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
+        INPUT_EVIDENCE_RETENTION_DAYS: ${{ inputs.evidence-retention-days }}
+        INPUT_RESTORE_HISTORY: ${{ inputs.restore-history }}
+        INPUT_SITE_URL: ${{ inputs.site-url }}
+        INPUT_BRANCH: ${{ inputs.branch }}
+        INPUT_PAGES_ARTIFACT: ${{ inputs.pages-artifact }}
+        INPUT_PAGES_JOB: ${{ inputs.pages-job }}
+        INPUT_RESET_HISTORY: ${{ inputs.reset-history }}
+        INPUT_UPLOAD_ARTIFACT: ${{ inputs.upload-artifact }}
+        INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        SITE_ACTION_PATH: ${{ github.action_path }}
+      run: python3 "$SITE_ACTION_PATH/../src/site_action.py"
+    - name: Upload reports section artifact
+      if: steps.build.outputs.should-upload-artifact == 'true'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ steps.build.outputs.artifact-name }}
+        path: ${{ steps.build.outputs.reports-dir }}
+        retention-days: ${{ inputs.artifact-retention-days }}
+        if-no-files-found: error
