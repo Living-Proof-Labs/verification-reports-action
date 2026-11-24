@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+import reports_restore
 import reports_site as site_tool
 import site_action
 import site_fixture
@@ -480,8 +481,8 @@ def test_run_n_plus_one_restores_from_pages_artifact_and_keeps_run_n_immutable(
             return io.BytesIO(pages_archive)
         raise AssertionError(f"Unexpected URL {url}")
 
-    monkeypatch.setattr(site_tool, "_request", fake_request)
-    monkeypatch.setattr(site_tool, "_open_once", fake_open_once)
+    monkeypatch.setattr(reports_restore, "_request", fake_request)
+    monkeypatch.setattr(reports_restore, "_open_once", fake_open_once)
 
     # --- Run N+1 (200) ---
     run2_input = tmp_path / "run2-in"
@@ -559,8 +560,8 @@ def test_restore_handles_manual_only_pages_artifact_before_first_report(
             return io.BytesIO(json.dumps(_workflow_run_payload(90, event="push")).encode())
         return io.BytesIO(json.dumps({"artifacts": artifacts_list}).encode())
 
-    monkeypatch.setattr(site_tool, "_request", fake_request)
-    monkeypatch.setattr(site_tool, "_open_once", lambda url, token: io.BytesIO(archive))
+    monkeypatch.setattr(reports_restore, "_request", fake_request)
+    monkeypatch.setattr(reports_restore, "_open_once", lambda url, token: io.BytesIO(archive))
 
     dest = tmp_path / "reports"
     found = site_tool.restore(dest, REPO, "main", 100, "tok")
@@ -594,11 +595,11 @@ def test_restore_security_and_failure_modes(tmp_path: Path, monkeypatch: pytest.
         site_tool.extract_pages_reports(zip_sym.getvalue(), tmp_path / "out2")
 
     # 3. Fork artifact & pull_request event artifact are ignored; boolean repo ID is rejected.
-    assert site_tool._github_id(True) is None
+    assert reports_restore._github_id(True) is None
     fork_artifact = _artifact_entry(1, "main", 10, "2026-11-20T00:00:00Z", head_repo_id=999999)
-    assert not site_tool._listed_run_is_this_repository(fork_artifact, REPO_ID)
+    assert not reports_restore._listed_run_is_this_repository(fork_artifact, REPO_ID)
     pr_run = _workflow_run_payload(11, event="pull_request")
-    assert not site_tool._fetched_run_is_pages_deploy(pr_run, REPO_ID, "main")
+    assert not reports_restore._fetched_run_is_pages_deploy(pr_run, REPO_ID, "main")
 
     # 4. Expired newest deployed artifact raises SiteError unless reset_history=True.
     expired_list = [_artifact_entry(8, "main", 100, "2026-08-01T00:00:00Z", expired=True)]
@@ -615,7 +616,7 @@ def test_restore_security_and_failure_modes(tmp_path: Path, monkeypatch: pytest.
             return io.BytesIO(json.dumps(_workflow_run_payload(100)).encode())
         return io.BytesIO(json.dumps({"artifacts": expired_list}).encode())
 
-    monkeypatch.setattr(site_tool, "_request", fake_expired_req)
+    monkeypatch.setattr(reports_restore, "_request", fake_expired_req)
     with pytest.raises(site_tool.SiteError, match="expired"):
         site_tool.restore(tmp_path / "exp", REPO, "main", 200, "tok", site_url=SITE_URL)
     assert (
@@ -626,18 +627,18 @@ def test_restore_security_and_failure_modes(tmp_path: Path, monkeypatch: pytest.
     )
 
     # 5. Live site check probes reports/site.json and reports/index.html, not root index.html.
-    monkeypatch.setattr(site_tool, "_request", lambda u, t: io.BytesIO(b'{"artifacts": []}'))
+    monkeypatch.setattr(reports_restore, "_request", lambda u, t: io.BytesIO(b'{"artifacts": []}'))
     probed: list[str] = []
 
     def fake_status_404(url: str) -> int:
         probed.append(url)
         return 404
 
-    monkeypatch.setattr(site_tool, "_fetch_status", fake_status_404)
+    monkeypatch.setattr(reports_restore, "_fetch_status", fake_status_404)
     assert site_tool.restore(tmp_path / "fresh", REPO, "main", 1, "tok", site_url=SITE_URL) is None
     assert probed == [SITE_URL + "reports/site.json", SITE_URL + "reports/index.html"]
 
-    monkeypatch.setattr(site_tool, "_fetch_status", lambda url: 200)
+    monkeypatch.setattr(reports_restore, "_fetch_status", lambda url: 200)
     with pytest.raises(site_tool.SiteError, match="reset-history"):
         site_tool.restore(tmp_path / "live", REPO, "main", 1, "tok", site_url=SITE_URL)
 
@@ -682,10 +683,10 @@ def test_restore_retries_transient_503_on_blob_download(
             raise nxt
         return io.BytesIO(nxt)
 
-    monkeypatch.setattr(site_tool, "_request", fake_request)
-    monkeypatch.setattr(site_tool, "_open_once", fake_open)
-    monkeypatch.setattr(site_tool.time, "sleep", sleeps.append)
-    monkeypatch.setattr(site_tool.random, "uniform", lambda _a, _b: 1.0)
+    monkeypatch.setattr(reports_restore, "_request", fake_request)
+    monkeypatch.setattr(reports_restore, "_open_once", fake_open)
+    monkeypatch.setattr(reports_restore.time, "sleep", sleeps.append)
+    monkeypatch.setattr(reports_restore.random, "uniform", lambda _a, _b: 1.0)
 
     dest = tmp_path / "restored"
     found = site_tool.restore(dest, REPO, "main", 200, "secret_tok")
@@ -1149,7 +1150,7 @@ def test_restore_refuses_hardlinks_duplicates_and_symlinks_already_in_the_destin
 def test_restore_refuses_an_oversized_reports_subtree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr(site_tool, "MAX_RESTORED_BYTES", 4)
+    monkeypatch.setattr(reports_restore, "MAX_RESTORED_BYTES", 4)
     archive = _zip_of_tar([(tarfile.TarInfo("reports/index.html"), b"12345")])
     with pytest.raises(site_tool.SiteError, match="too large"):
         site_tool.extract_pages_reports(archive, tmp_path / "big")
@@ -1216,3 +1217,109 @@ def test_build_never_runs_a_reporter_binary_found_on_path(
     site_tool.build(tmp_path / "reports", runs_in)
     assert not marker.exists()
     assert site_fixture.check_reports_tree(tmp_path / "reports") == []
+
+
+def test_forged_run_json_hrefs_allow_only_https_and_relative_links(tmp_path: Path):
+    runs_in = tmp_path / "in"
+    folder = _make_run_folder(runs_in, "hallway", run_id="404", tag=None)
+    record = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+    record["commit"]["url"] = "javascript:alert(4)"
+    record["robot"]["url"] = "  JaVaScRiPt:alert(5)"
+    record["releases"]["verifier"]["url"] = "data:text/html,<script>alert(6)</script>"
+    record["releases"]["reporter"]["url"] = "http://insecure.example/tag"
+    record["releases"]["specs"]["url"] = "java\tscript:alert(7)"
+    record["releases"]["extra"] = {
+        "tag": "v1.0.0",
+        "url": "https://github.com/Living-Proof-Labs/example/releases/tag/v1.0.0",
+    }
+    (folder / "run.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+    reports_dir = tmp_path / "reports"
+    site_tool.build(reports_dir, runs_in)
+
+    history_html = (reports_dir / "unitree-g1/stock-mujoco-hallway/index.html").read_text(
+        encoding="utf-8"
+    )
+    index_html = (reports_dir / "index.html").read_text(encoding="utf-8")
+    styles_css = (reports_dir / "styles.css").read_text(encoding="utf-8")
+
+    for text in (history_html, index_html):
+        assert "javascript:" not in text.lower()
+        assert "data:" not in text.lower()
+        assert 'href="http://' not in text.lower()
+        assert "fonts.googleapis.com" not in text
+        assert "fonts.gstatic.com" not in text
+
+    assert "https://github.com/Living-Proof-Labs/example/releases/tag/v1.0.0" in history_html
+    assert 'href="latest/"' in history_html
+    assert "DM Sans" not in styles_css
+
+
+@pytest.mark.parametrize(
+    "bad_output_dir",
+    ["", "   ", ".", "..", "../escape", "sub/../../escape", "a\\b", "/"],
+)
+def test_site_action_rejects_unsafe_output_dir(tmp_path: Path, bad_output_dir: str):
+    runs_in = tmp_path / "runs"
+    site_fixture.write(runs_in, run_id="77", created="2026-11-23T03:00:00Z")
+    with pytest.raises(site_tool.SiteError, match="output-dir"):
+        site_action.run_site_action(
+            {
+                "INPUT_RUNS_DIR": str(runs_in),
+                "INPUT_OUTPUT_DIR": bad_output_dir,
+                "INPUT_RESTORE_HISTORY": "false",
+                "INPUT_UPLOAD_ARTIFACT": "false",
+                "GITHUB_WORKSPACE": str(tmp_path),
+            }
+        )
+
+
+def test_site_action_constrains_output_dir_to_github_workspace_and_ignores_input_now(
+    tmp_path: Path,
+):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (workspace / "link-out").symlink_to(outside, target_is_directory=True)
+
+    runs_in = tmp_path / "runs"
+    site_fixture.write(runs_in, run_id="77", created="2026-11-23T03:00:00Z")
+
+    for escaped in (str(outside / "reports"), str(workspace), "link-out/reports"):
+        with pytest.raises(site_tool.SiteError, match="GITHUB_WORKSPACE"):
+            site_action.run_site_action(
+                {
+                    "INPUT_RUNS_DIR": str(runs_in),
+                    "INPUT_OUTPUT_DIR": escaped,
+                    "INPUT_RESTORE_HISTORY": "false",
+                    "INPUT_UPLOAD_ARTIFACT": "false",
+                    "GITHUB_WORKSPACE": str(workspace),
+                }
+            )
+
+    # INPUT_NOW is removed and ignored: setting it far in the future must not prune evidence.
+    rel_out = "docs/reports"
+    prev_cwd = Path.cwd()
+    try:
+        os.chdir(workspace)
+        outputs = site_action.run_site_action(
+            {
+                "INPUT_RUNS_DIR": str(runs_in),
+                "INPUT_OUTPUT_DIR": rel_out,
+                "INPUT_EVIDENCE_RETENTION_DAYS": "7",
+                "INPUT_NOW": "2099-01-01T00:00:00Z",
+                "INPUT_RESTORE_HISTORY": "false",
+                "INPUT_UPLOAD_ARTIFACT": "false",
+                "GITHUB_EVENT_NAME": "push",
+                "GITHUB_WORKSPACE": str(workspace),
+                "GITHUB_RUN_ID": "77",
+            }
+        )
+    finally:
+        os.chdir(prev_cwd)
+
+    assert outputs["reports-dir"] == rel_out
+    assert (
+        workspace / "docs/reports/unitree-g1/stock-mujoco-hallway/runs/77/evidence/trials.mcap"
+    ).is_file()

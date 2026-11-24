@@ -44,6 +44,31 @@ def _parse_positive_int(name: str, raw: str, default: int) -> int:
     return int(text)
 
 
+def _validate_output_dir(raw: str, workspace: str) -> Path:
+    cleaned = raw.strip()
+    if not cleaned or "\x00" in cleaned or "\\" in cleaned:
+        raise site_tool.SiteError("output-dir must be a non-empty relative directory path.")
+    candidate = Path(cleaned)
+    if ".." in candidate.parts or cleaned == ".":
+        raise site_tool.SiteError(
+            f"output-dir {raw!r} must not contain '..' or point to the workspace root."
+        )
+    if candidate.resolve() == Path("/"):
+        raise site_tool.SiteError("output-dir must not be the filesystem root.")
+    if workspace:
+        workspace_root = Path(workspace).resolve()
+        resolved = (
+            candidate.resolve()
+            if candidate.is_absolute()
+            else (workspace_root / candidate).resolve()
+        )
+        if resolved == workspace_root or not resolved.is_relative_to(workspace_root):
+            raise site_tool.SiteError(
+                f"output-dir {raw!r} must stay inside GITHUB_WORKSPACE ({workspace_root})."
+            )
+    return candidate
+
+
 def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
     env_map = dict(os.environ if env is None else env)
     runs_dir_raw = (env_map.get("INPUT_RUNS_DIR") or "").strip()
@@ -51,9 +76,12 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         raise site_tool.SiteError(
             "runs-dir must be a non-empty path to the directory of per-scenario run folders."
         )
-    output_dir_raw = (env_map.get("INPUT_OUTPUT_DIR") or "reports").strip()
-    if not output_dir_raw:
+    raw_output_input = env_map.get("INPUT_OUTPUT_DIR")
+    if raw_output_input is not None and not raw_output_input.strip():
         raise site_tool.SiteError("output-dir must be a non-empty directory path.")
+    output_dir_raw = (raw_output_input or "reports").strip()
+    workspace = (env_map.get("GITHUB_WORKSPACE") or "").strip()
+    reports_dir = _validate_output_dir(output_dir_raw, workspace)
 
     retention_days = _parse_positive_int(
         "evidence-retention-days",
@@ -76,7 +104,6 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
     should_upload = upload_mode == "true" or (upload_mode == "auto" and is_pr)
 
     runs_dir = Path(runs_dir_raw)
-    reports_dir = Path(output_dir_raw)
 
     if should_restore:
         # History is only ever restored from the calling repository's own Pages deploys.
@@ -103,15 +130,12 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
             pages_job=pages_job,
         )
 
-    now_override = (env_map.get("INPUT_NOW") or "").strip() or None
     allow_replace = (env_map.get("GITHUB_RUN_ID") or "").strip() or None
-    workspace = (env_map.get("GITHUB_WORKSPACE") or "").strip()
     git_dir = Path(workspace) if workspace and Path(workspace).is_dir() else None
 
     site_tool.build(
         reports_dir,
         runs_dir,
-        now=now_override,
         days=retention_days,
         allow_replace_run_id=allow_replace,
         git_dir=git_dir,
