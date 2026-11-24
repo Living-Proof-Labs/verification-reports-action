@@ -1415,7 +1415,7 @@ test('a definition cannot steer the evaluator-run default', async () => {
         }),
         client()
       ),
-    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.repository is not the expected repository\. expected Living-Proof-Labs\/livingproof-evaluator-run, found Living-Proof-Labs\/something-else/
+    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.repository is not what scenario\.yml runs\. expected Living-Proof-Labs\/livingproof-evaluator-run, found Living-Proof-Labs\/something-else/
   );
   const matched = await assertPinnedInputs(
     item(lock, {
@@ -1432,6 +1432,48 @@ test('a definition cannot steer the evaluator-run default', async () => {
   assert.equal(record.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
   assert.equal(record.tag, 'v1.5.0');
   assert.equal(record.commit, COMMIT);
+});
+
+test('an evaluator-run tag is defaulted on its own when the lock has a repository', async () => {
+  const lock = sampleLock();
+  delete lock.evaluators['livingproof-evaluator-run'].tag;
+  await assert.rejects(
+    () =>
+      assertPinnedInputs(
+        item(lock, {
+          evaluators: {
+            'livingproof-evaluator-run': {
+              repository: 'Living-Proof-Labs/livingproof-evaluator-run',
+              tag: 'v1.8.11',
+            },
+          },
+        }),
+        client()
+      ),
+    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.tag is not what scenario\.yml runs\. expected v1\.5\.0, found v1\.8\.11/
+  );
+  const records = await assertPinnedInputs(item(lock), client());
+  const record = records.find((entry) => entry.name === 'livingproof-evaluator-run');
+  assert.equal(record.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
+  assert.equal(record.tag, 'v1.5.0');
+  assert.equal(record.commit, COMMIT);
+});
+
+test('an evaluator-run repository is defaulted on its own when the lock has a tag', async () => {
+  const lock = sampleLock();
+  delete lock.evaluators['livingproof-evaluator-run'].repository;
+  await assert.rejects(
+    () =>
+      assertPinnedInputs(
+        item(lock, {
+          evaluators: {
+            'livingproof-evaluator-run': { repository: 'Evil-Org/livingproof-evaluator-run', tag: 'v1.8.6' },
+          },
+        }),
+        client()
+      ),
+    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.repository is not what scenario\.yml runs\. expected Living-Proof-Labs\/livingproof-evaluator-run, found Evil-Org\/livingproof-evaluator-run/
+  );
 });
 
 test('evaluator-run uses the default repository when the lock omits it', async () => {

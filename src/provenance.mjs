@@ -79,7 +79,9 @@ const SPECS = [
     read: (lock, sources) =>
       fromRelease(
         lock.evaluators?.['livingproof-evaluator-run'],
-        sources?.evaluators?.['livingproof-evaluator-run']
+        sources?.evaluators?.['livingproof-evaluator-run'],
+        false,
+        { lockFieldsOnly: true }
       ),
   },
   {
@@ -114,9 +116,15 @@ function lockRaw(entry) {
   };
 }
 
-function fromRelease(lockEntry, tomlEntry, withFiles = false) {
-  const repository = text(tomlEntry?.repository) || text(lockEntry?.repository);
-  const tag = text(tomlEntry?.tag) || text(lockEntry?.tag);
+function fromRelease(lockEntry, tomlEntry, withFiles = false, options = {}) {
+  // evaluator-run: scenario.yml reads each lock field on its own and substitutes
+  // its default when that field is absent. The definition must not fill the gap.
+  const repository = options.lockFieldsOnly
+    ? text(lockEntry?.repository)
+    : text(tomlEntry?.repository) || text(lockEntry?.repository);
+  const tag = options.lockFieldsOnly
+    ? text(lockEntry?.tag)
+    : text(tomlEntry?.tag) || text(lockEntry?.tag);
   if (!repository && !tag && !lockEntry && !tomlEntry) return null;
   const files = {};
   const raw = lockRaw(lockEntry);
@@ -173,8 +181,7 @@ function requirePin(spec, raw) {
     };
   }
   const image = spec.defaultImage || '';
-  if (!raw.repository && spec.defaultRepository) raw.repository = spec.defaultRepository;
-  if (!raw.tag && spec.defaultTag) raw.tag = spec.defaultTag;
+  applyScenarioDefaults(spec, raw);
   assertConsumedLock(spec, raw.repository, raw.tag, image, raw.lockRaw, raw.definitionRaw, raw.sourceWorld);
   const segments = raw.repository.split('/');
   if (
@@ -242,6 +249,27 @@ function assertLockString(name, field, value, form) {
   }
 }
 
+function applyScenarioDefaults(spec, raw) {
+  const lock = raw.lockRaw ?? {};
+  const defined = raw.definitionRaw ?? {};
+  if (spec.defaultRepository && lock.repository == null) {
+    if (defined.repository != null && !sameRepository(defined.repository, spec.defaultRepository)) {
+      throw new ReportError(
+        `${spec.name}: ${spec.lockField}.repository is not what scenario.yml runs. expected ${spec.defaultRepository}, found ${defined.repository}.`
+      );
+    }
+    raw.repository = spec.defaultRepository;
+  }
+  if (spec.defaultTag && lock.tag == null) {
+    if (defined.tag != null && defined.tag !== spec.defaultTag) {
+      throw new ReportError(
+        `${spec.name}: ${spec.lockField}.tag is not what scenario.yml runs. expected ${spec.defaultTag}, found ${defined.tag}.`
+      );
+    }
+    raw.tag = spec.defaultTag;
+  }
+}
+
 function assertExpectedRepository(spec, value, where) {
   if (sameRepository(value, spec.expectedRepository)) return;
   throw new ReportError(
@@ -258,12 +286,6 @@ function assertConsumedLock(spec, repository, tag, image, raw, definition, sourc
   }
   if (defined.tag !== undefined && defined.tag !== null) {
     assertLockString(spec.name, `${spec.lockField}.tag`, defined.tag, FIELD_FORM.tag);
-  }
-  const lockOmitsPin = values.repository == null && values.tag == null;
-  if (spec.defaultTag && lockOmitsPin && defined.tag != null && defined.tag !== spec.defaultTag) {
-    throw new ReportError(
-      `${spec.name}: ${spec.lockField}.tag is not what scenario.yml runs. expected ${spec.defaultTag}, found ${defined.tag}.`
-    );
   }
   for (const [key, rule] of Object.entries(spec.fields)) {
     if (key === 'files') continue;
