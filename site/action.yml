@@ -12,7 +12,8 @@ inputs:
   output-dir:
     description: >-
       Destination directory for the generated static reports/ tree (for example
-      artifacts/docs/html/reports).
+      artifacts/docs/html/reports). Must resolve inside GITHUB_WORKSPACE and must
+      not contain .., .git, or control characters.
     required: false
     default: reports
   evidence-retention-days:

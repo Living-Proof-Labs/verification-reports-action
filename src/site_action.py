@@ -44,6 +44,37 @@ def _parse_positive_int(name: str, raw: str, default: int) -> int:
     return int(text)
 
 
+def _has_control_character(value: str) -> bool:
+    return any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+
+
+def _validate_output_dir(raw: str, workspace: str) -> tuple[str, Path]:
+    """Return `(as_given, resolved)` for an output-dir that stays inside the workspace.
+
+    The workspace is GITHUB_WORKSPACE, or the current directory when it is unset, so
+    the check never silently turns off. Symlinks are resolved before the containment
+    check, so a link inside the workspace that points elsewhere is refused.
+    """
+    if _has_control_character(raw):
+        # A newline here would also forge extra lines in GITHUB_OUTPUT.
+        raise site_tool.SiteError("output-dir must not contain control characters.")
+    cleaned = raw.strip()
+    if not cleaned or "\\" in cleaned:
+        raise site_tool.SiteError("output-dir must be a non-empty relative directory path.")
+    candidate = Path(cleaned)
+    if ".." in candidate.parts or ".git" in candidate.parts or cleaned in {".", "./"}:
+        raise site_tool.SiteError(
+            f"output-dir {raw!r} must not contain '..' or '.git' or be the workspace root."
+        )
+    workspace_root = Path(workspace or os.getcwd()).resolve()
+    resolved = (candidate if candidate.is_absolute() else workspace_root / candidate).resolve()
+    if resolved == workspace_root or not resolved.is_relative_to(workspace_root):
+        raise site_tool.SiteError(
+            f"output-dir {raw!r} must stay inside GITHUB_WORKSPACE ({workspace_root})."
+        )
+    return cleaned, resolved
+
+
 def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
     env_map = dict(os.environ if env is None else env)
     runs_dir_raw = (env_map.get("INPUT_RUNS_DIR") or "").strip()
@@ -51,9 +82,14 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         raise site_tool.SiteError(
             "runs-dir must be a non-empty path to the directory of per-scenario run folders."
         )
-    output_dir_raw = (env_map.get("INPUT_OUTPUT_DIR") or "reports").strip()
-    if not output_dir_raw:
+    raw_output_input = env_map.get("INPUT_OUTPUT_DIR")
+    if raw_output_input is not None and _has_control_character(raw_output_input):
+        raise site_tool.SiteError("output-dir must not contain control characters.")
+    if raw_output_input is not None and not raw_output_input.strip():
         raise site_tool.SiteError("output-dir must be a non-empty directory path.")
+    output_dir_raw = (raw_output_input or "reports").strip()
+    workspace = (env_map.get("GITHUB_WORKSPACE") or "").strip()
+    output_dir_given, reports_dir = _validate_output_dir(output_dir_raw, workspace)
 
     retention_days = _parse_positive_int(
         "evidence-retention-days",
@@ -76,7 +112,6 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
     should_upload = upload_mode == "true" or (upload_mode == "auto" and is_pr)
 
     runs_dir = Path(runs_dir_raw)
-    reports_dir = Path(output_dir_raw)
 
     if should_restore:
         # History is only ever restored from the calling repository's own Pages deploys.
@@ -103,15 +138,12 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
             pages_job=pages_job,
         )
 
-    now_override = (env_map.get("INPUT_NOW") or "").strip() or None
     allow_replace = (env_map.get("GITHUB_RUN_ID") or "").strip() or None
-    workspace = (env_map.get("GITHUB_WORKSPACE") or "").strip()
     git_dir = Path(workspace) if workspace and Path(workspace).is_dir() else None
 
     site_tool.build(
         reports_dir,
         runs_dir,
-        now=now_override,
         days=retention_days,
         allow_replace_run_id=allow_replace,
         git_dir=git_dir,
@@ -122,15 +154,19 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         raise site_tool.SiteError("Generated reports/ check failed: " + "; ".join(issues))
 
     marker = site_tool.read_json_object(reports_dir / site_tool.MARKER)
+    if _has_control_character(env_map.get("INPUT_ARTIFACT_NAME") or ""):
+        raise site_tool.SiteError("artifact-name must not contain control characters.")
     artifact_name = (env_map.get("INPUT_ARTIFACT_NAME") or "").strip()
     if not artifact_name:
         run_id_part = (env_map.get("GITHUB_RUN_ID") or "local").strip()
         attempt_part = (env_map.get("GITHUB_RUN_ATTEMPT") or "1").strip()
         artifact_name = f"verification-reports-site-{run_id_part}-{attempt_part}"
+    if _has_control_character(artifact_name):
+        raise site_tool.SiteError("artifact-name must not contain control characters.")
 
     outputs = {
-        "reports-dir": str(reports_dir),
-        "index-path": str(reports_dir / "index.html"),
+        "reports-dir": output_dir_given,
+        "index-path": str(Path(output_dir_given) / "index.html"),
         "runs-count": str(marker["runs"]),
         "artifact-only": "true" if artifact_only else "false",
         "should-upload-artifact": "true" if should_upload else "false",

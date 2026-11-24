@@ -3,14 +3,18 @@
 
 from __future__ import annotations
 
+import ast
 import email.message
 import hashlib
 import io
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tarfile
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -20,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+import reports_restore
 import reports_site as site_tool
 import site_action
 import site_fixture
@@ -480,8 +485,8 @@ def test_run_n_plus_one_restores_from_pages_artifact_and_keeps_run_n_immutable(
             return io.BytesIO(pages_archive)
         raise AssertionError(f"Unexpected URL {url}")
 
-    monkeypatch.setattr(site_tool, "_request", fake_request)
-    monkeypatch.setattr(site_tool, "_open_once", fake_open_once)
+    monkeypatch.setattr(reports_restore, "_request", fake_request)
+    monkeypatch.setattr(reports_restore, "_open_once", fake_open_once)
 
     # --- Run N+1 (200) ---
     run2_input = tmp_path / "run2-in"
@@ -559,8 +564,8 @@ def test_restore_handles_manual_only_pages_artifact_before_first_report(
             return io.BytesIO(json.dumps(_workflow_run_payload(90, event="push")).encode())
         return io.BytesIO(json.dumps({"artifacts": artifacts_list}).encode())
 
-    monkeypatch.setattr(site_tool, "_request", fake_request)
-    monkeypatch.setattr(site_tool, "_open_once", lambda url, token: io.BytesIO(archive))
+    monkeypatch.setattr(reports_restore, "_request", fake_request)
+    monkeypatch.setattr(reports_restore, "_open_once", lambda url, token: io.BytesIO(archive))
 
     dest = tmp_path / "reports"
     found = site_tool.restore(dest, REPO, "main", 100, "tok")
@@ -594,11 +599,11 @@ def test_restore_security_and_failure_modes(tmp_path: Path, monkeypatch: pytest.
         site_tool.extract_pages_reports(zip_sym.getvalue(), tmp_path / "out2")
 
     # 3. Fork artifact & pull_request event artifact are ignored; boolean repo ID is rejected.
-    assert site_tool._github_id(True) is None
+    assert reports_restore._github_id(True) is None
     fork_artifact = _artifact_entry(1, "main", 10, "2026-11-20T00:00:00Z", head_repo_id=999999)
-    assert not site_tool._listed_run_is_this_repository(fork_artifact, REPO_ID)
+    assert not reports_restore._listed_run_is_this_repository(fork_artifact, REPO_ID)
     pr_run = _workflow_run_payload(11, event="pull_request")
-    assert not site_tool._fetched_run_is_pages_deploy(pr_run, REPO_ID, "main")
+    assert not reports_restore._fetched_run_is_pages_deploy(pr_run, REPO_ID, "main")
 
     # 4. Expired newest deployed artifact raises SiteError unless reset_history=True.
     expired_list = [_artifact_entry(8, "main", 100, "2026-08-01T00:00:00Z", expired=True)]
@@ -615,7 +620,7 @@ def test_restore_security_and_failure_modes(tmp_path: Path, monkeypatch: pytest.
             return io.BytesIO(json.dumps(_workflow_run_payload(100)).encode())
         return io.BytesIO(json.dumps({"artifacts": expired_list}).encode())
 
-    monkeypatch.setattr(site_tool, "_request", fake_expired_req)
+    monkeypatch.setattr(reports_restore, "_request", fake_expired_req)
     with pytest.raises(site_tool.SiteError, match="expired"):
         site_tool.restore(tmp_path / "exp", REPO, "main", 200, "tok", site_url=SITE_URL)
     assert (
@@ -626,18 +631,18 @@ def test_restore_security_and_failure_modes(tmp_path: Path, monkeypatch: pytest.
     )
 
     # 5. Live site check probes reports/site.json and reports/index.html, not root index.html.
-    monkeypatch.setattr(site_tool, "_request", lambda u, t: io.BytesIO(b'{"artifacts": []}'))
+    monkeypatch.setattr(reports_restore, "_request", lambda u, t: io.BytesIO(b'{"artifacts": []}'))
     probed: list[str] = []
 
     def fake_status_404(url: str) -> int:
         probed.append(url)
         return 404
 
-    monkeypatch.setattr(site_tool, "_fetch_status", fake_status_404)
+    monkeypatch.setattr(reports_restore, "_fetch_status", fake_status_404)
     assert site_tool.restore(tmp_path / "fresh", REPO, "main", 1, "tok", site_url=SITE_URL) is None
     assert probed == [SITE_URL + "reports/site.json", SITE_URL + "reports/index.html"]
 
-    monkeypatch.setattr(site_tool, "_fetch_status", lambda url: 200)
+    monkeypatch.setattr(reports_restore, "_fetch_status", lambda url: 200)
     with pytest.raises(site_tool.SiteError, match="reset-history"):
         site_tool.restore(tmp_path / "live", REPO, "main", 1, "tok", site_url=SITE_URL)
 
@@ -682,10 +687,10 @@ def test_restore_retries_transient_503_on_blob_download(
             raise nxt
         return io.BytesIO(nxt)
 
-    monkeypatch.setattr(site_tool, "_request", fake_request)
-    monkeypatch.setattr(site_tool, "_open_once", fake_open)
-    monkeypatch.setattr(site_tool.time, "sleep", sleeps.append)
-    monkeypatch.setattr(site_tool.random, "uniform", lambda _a, _b: 1.0)
+    monkeypatch.setattr(reports_restore, "_request", fake_request)
+    monkeypatch.setattr(reports_restore, "_open_once", fake_open)
+    monkeypatch.setattr(reports_restore.time, "sleep", sleeps.append)
+    monkeypatch.setattr(reports_restore.random, "uniform", lambda _a, _b: 1.0)
 
     dest = tmp_path / "restored"
     found = site_tool.restore(dest, REPO, "main", 200, "secret_tok")
@@ -993,6 +998,7 @@ def test_site_action_pull_request_builds_artifact_only_without_restoring(
             "INPUT_UPLOAD_ARTIFACT": "auto",
             "GITHUB_EVENT_NAME": "pull_request",
             "GITHUB_RUN_ID": "999",
+            "GITHUB_WORKSPACE": str(tmp_path),
             "GITHUB_RUN_ATTEMPT": "1",
             "GITHUB_OUTPUT": str(gh_out),
         }
@@ -1030,6 +1036,7 @@ def test_site_action_main_push_restores_history_and_skips_pr_upload_by_default(
             "GITHUB_EVENT_NAME": "push",
             "GITHUB_REPOSITORY": REPO,
             "GITHUB_RUN_ID": "500",
+            "GITHUB_WORKSPACE": str(tmp_path),
             "GITHUB_TOKEN": "tok",
         }
     )
@@ -1149,7 +1156,7 @@ def test_restore_refuses_hardlinks_duplicates_and_symlinks_already_in_the_destin
 def test_restore_refuses_an_oversized_reports_subtree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr(site_tool, "MAX_RESTORED_BYTES", 4)
+    monkeypatch.setattr(reports_restore, "MAX_RESTORED_BYTES", 4)
     archive = _zip_of_tar([(tarfile.TarInfo("reports/index.html"), b"12345")])
     with pytest.raises(site_tool.SiteError, match="too large"):
         site_tool.extract_pages_reports(archive, tmp_path / "big")
@@ -1196,6 +1203,7 @@ def test_site_action_restores_only_from_the_calling_repository(
             "GITHUB_EVENT_NAME": "push",
             "GITHUB_REPOSITORY": REPO,
             "GITHUB_RUN_ID": "501",
+            "GITHUB_WORKSPACE": str(tmp_path),
         }
     )
     assert seen == [REPO]
@@ -1216,3 +1224,364 @@ def test_build_never_runs_a_reporter_binary_found_on_path(
     site_tool.build(tmp_path / "reports", runs_in)
     assert not marker.exists()
     assert site_fixture.check_reports_tree(tmp_path / "reports") == []
+
+
+def test_forged_run_json_hrefs_allow_only_https_and_relative_links(tmp_path: Path):
+    runs_in = tmp_path / "in"
+    folder = _make_run_folder(runs_in, "hallway", run_id="404", tag=None)
+    record = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+    record["commit"]["url"] = "javascript:alert(4)"
+    record["robot"]["url"] = "  JaVaScRiPt:alert(5)"
+    record["releases"]["verifier"]["url"] = "data:text/html,<script>alert(6)</script>"
+    record["releases"]["reporter"]["url"] = "http://insecure.example/tag"
+    record["releases"]["specs"]["url"] = "java\tscript:alert(7)"
+    record["releases"]["extra"] = {
+        "tag": "v1.0.0",
+        "url": "https://github.com/Living-Proof-Labs/example/releases/tag/v1.0.0",
+    }
+    (folder / "run.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+    reports_dir = tmp_path / "reports"
+    site_tool.build(reports_dir, runs_in)
+
+    history_html = (reports_dir / "unitree-g1/stock-mujoco-hallway/index.html").read_text(
+        encoding="utf-8"
+    )
+    index_html = (reports_dir / "index.html").read_text(encoding="utf-8")
+    styles_css = (reports_dir / "styles.css").read_text(encoding="utf-8")
+
+    for text in (history_html, index_html):
+        assert "javascript:" not in text.lower()
+        assert "data:" not in text.lower()
+        assert 'href="http://' not in text.lower()
+        assert "fonts.googleapis.com" not in text
+        assert "fonts.gstatic.com" not in text
+
+    assert "https://github.com/Living-Proof-Labs/example/releases/tag/v1.0.0" in history_html
+    assert 'href="latest/"' in history_html
+    assert "DM Sans" not in styles_css
+
+
+@pytest.mark.parametrize(
+    "bad_output_dir",
+    ["", "   ", ".", "..", "../escape", "sub/../../escape", "a\\b", "/"],
+)
+def test_site_action_rejects_unsafe_output_dir(tmp_path: Path, bad_output_dir: str):
+    runs_in = tmp_path / "runs"
+    site_fixture.write(runs_in, run_id="77", created="2026-11-23T03:00:00Z")
+    with pytest.raises(site_tool.SiteError, match="output-dir"):
+        site_action.run_site_action(
+            {
+                "INPUT_RUNS_DIR": str(runs_in),
+                "INPUT_OUTPUT_DIR": bad_output_dir,
+                "INPUT_RESTORE_HISTORY": "false",
+                "INPUT_UPLOAD_ARTIFACT": "false",
+                "GITHUB_WORKSPACE": str(tmp_path),
+            }
+        )
+
+
+def test_site_action_constrains_output_dir_to_github_workspace_and_ignores_input_now(
+    tmp_path: Path,
+):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (workspace / "link-out").symlink_to(outside, target_is_directory=True)
+
+    runs_in = tmp_path / "runs"
+    site_fixture.write(runs_in, run_id="77", created="2026-11-23T03:00:00Z")
+
+    for escaped in (str(outside / "reports"), str(workspace), "link-out/reports"):
+        with pytest.raises(site_tool.SiteError, match="GITHUB_WORKSPACE"):
+            site_action.run_site_action(
+                {
+                    "INPUT_RUNS_DIR": str(runs_in),
+                    "INPUT_OUTPUT_DIR": escaped,
+                    "INPUT_RESTORE_HISTORY": "false",
+                    "INPUT_UPLOAD_ARTIFACT": "false",
+                    "GITHUB_WORKSPACE": str(workspace),
+                }
+            )
+
+    # INPUT_NOW is removed and ignored: setting it far in the future must not prune evidence.
+    rel_out = "docs/reports"
+    prev_cwd = Path.cwd()
+    try:
+        os.chdir(workspace)
+        outputs = site_action.run_site_action(
+            {
+                "INPUT_RUNS_DIR": str(runs_in),
+                "INPUT_OUTPUT_DIR": rel_out,
+                "INPUT_EVIDENCE_RETENTION_DAYS": "7",
+                "INPUT_NOW": "2099-01-01T00:00:00Z",
+                "INPUT_RESTORE_HISTORY": "false",
+                "INPUT_UPLOAD_ARTIFACT": "false",
+                "GITHUB_EVENT_NAME": "push",
+                "GITHUB_WORKSPACE": str(workspace),
+                "GITHUB_RUN_ID": "77",
+            }
+        )
+    finally:
+        os.chdir(prev_cwd)
+
+    assert outputs["reports-dir"] == rel_out
+    assert (
+        workspace / "docs/reports/unitree-g1/stock-mujoco-hallway/runs/77/evidence/trials.mcap"
+    ).is_file()
+
+
+# ---------------------------------------------------------------- va#14 takeover checks (Rivet)
+
+ROOT = Path(__file__).resolve().parents[1]
+REPORT_MODULES = ("reports_site", "reports_render", "reports_restore", "reports_common")
+
+
+def _top_level_names(path: Path) -> set[str]:
+    names: set[str] = set()
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+
+def test_split_modules_define_each_top_level_name_once():
+    # The split was cut by line ranges; a second, drifted copy of a helper (as with
+    # _require_single_robot, _stamp, SITE_PATH) must not come back.
+    seen: dict[str, str] = {}
+    for module in REPORT_MODULES:
+        for name in _top_level_names(ROOT / "src" / f"{module}.py") - {"__all__"}:
+            assert name not in seen, f"{name} is defined in both {seen[name]} and {module}"
+            seen[name] = module
+
+
+def test_generated_site_matches_the_golden_bytes():
+    import site_golden
+
+    expected = (ROOT / "tests/fixtures/site-golden/SHA256SUMS").read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory() as tmp:
+        actual = site_golden.digests(site_golden.build_golden_site(Path(tmp)))
+    assert actual == expected
+
+
+def test_theme_switch_markup_matches_the_packaged_styles(tmp_path: Path):
+    runs_in = tmp_path / "in"
+    site_fixture.write(runs_in, run_id="1", created="2026-11-20T06:00:00Z")
+    site_tool.build(tmp_path / "reports", runs_in)
+    index_html = (tmp_path / "reports/index.html").read_text(encoding="utf-8")
+    css = (tmp_path / "reports/styles.css").read_text(encoding="utf-8")
+    assert '<fieldset class="theme">' in index_html
+    for selector in (".theme label", "#theme-light:checked", "#theme-dark:checked"):
+        assert selector in css
+    for element_id in ("theme-system", "theme-light", "theme-dark"):
+        assert f'id="{element_id}"' in index_html
+    assert "DM Sans" not in css and "fonts.g" not in index_html
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("https://github.com/x/y", "https://github.com/x/y"),
+        ("../runs/1/", "../runs/1/"),
+        ("#summary", "#summary"),
+        ("javascript:alert(1)", None),
+        ("  JAVASCRIPT:alert(1)", None),
+        ("java\nscript:alert(1)", None),
+        ("vbscript:x", None),
+        ("data:text/html,x", None),
+        ("http://example.com/", None),
+        ("//evil.example/x", None),
+        ("https:evil", None),
+        ("https://[::1", None),
+        ("a\\b", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_safe_href_allows_only_https_and_relative_links(value, expected):
+    import reports_render
+
+    assert reports_render.safe_href(value) == expected
+
+
+def test_packaged_assets_require_their_license_header(tmp_path: Path, monkeypatch):
+    import reports_render
+
+    (tmp_path / "styles.css").write_text(":root {}\n", encoding="utf-8")
+    monkeypatch.setattr(reports_render, "ASSETS_DIR", tmp_path)
+    with pytest.raises(site_tool.SiteError, match="license header"):
+        reports_render.load_styles_css()
+
+
+def test_site_action_from_another_checkout_loads_assets_from_the_action_path(tmp_path: Path):
+    # Mirrors `uses: Living-Proof-Labs/verification-reports-action/site@<sha>`: the runner
+    # unpacks the action somewhere else and runs it with the caller's workspace as cwd.
+    action = tmp_path / "_actions/verification-reports-action/sha"
+    for part in ("src", "tools", "site"):
+        shutil.copytree(ROOT / part, action / part, ignore=shutil.ignore_patterns("__pycache__"))
+    workspace = tmp_path / "caller"
+    workspace.mkdir()
+    site_fixture.write(
+        workspace / "verification-report", run_id="9", created="2026-11-20T06:00:00Z"
+    )
+    env = {
+        "PATH": os.environ["PATH"],
+        "INPUT_RUNS_DIR": "verification-report",
+        "INPUT_OUTPUT_DIR": "docs/html/reports",
+        "INPUT_RESTORE_HISTORY": "false",
+        "INPUT_UPLOAD_ARTIFACT": "false",
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_WORKSPACE": str(workspace),
+        "GITHUB_OUTPUT": str(tmp_path / "out.txt"),
+    }
+    subprocess.run(
+        [sys.executable, str(action / "site/../src/site_action.py")],
+        cwd=workspace,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    built = workspace / "docs/html/reports"
+    packaged = (action / "src/assets/styles.css").read_text(encoding="utf-8")
+    assert (built / "styles.css").read_text(encoding="utf-8") == packaged.split("\n", 1)[1]
+    packaged_js = (action / "src/assets/open.js").read_text(encoding="utf-8")
+    assert (built / "open.js").read_text(encoding="utf-8") == packaged_js.split("\n", 1)[1]
+    assert "reports-dir=docs/html/reports\n" in (tmp_path / "out.txt").read_text()
+
+
+def test_site_action_yml_runs_the_script_from_the_action_path():
+    text = (ROOT / "site/action.yml").read_text(encoding="utf-8")
+    assert "SITE_ACTION_PATH: ${{ github.action_path }}" in text
+    assert 'run: python3 "$SITE_ACTION_PATH/../src/site_action.py"' in text
+    assert "github.workspace" not in text
+
+
+def test_output_dir_is_resolved_in_the_workspace_not_the_cwd(tmp_path: Path, monkeypatch):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    runs_in = tmp_path / "runs"
+    site_fixture.write(runs_in, run_id="5", created="2026-11-23T03:00:00Z")
+    base = {
+        "INPUT_RUNS_DIR": str(runs_in),
+        "INPUT_RESTORE_HISTORY": "false",
+        "INPUT_UPLOAD_ARTIFACT": "false",
+        "GITHUB_EVENT_NAME": "push",
+    }
+    outputs = site_action.run_site_action(
+        base | {"INPUT_OUTPUT_DIR": "site/reports", "GITHUB_WORKSPACE": str(workspace)}
+    )
+    assert outputs["reports-dir"] == "site/reports"
+    assert (workspace / "site/reports/index.html").is_file()
+    assert not (elsewhere / "site").exists()
+
+    for bad in (".git/reports", "docs/.git/x", "./"):
+        with pytest.raises(site_tool.SiteError, match="output-dir"):
+            site_action.run_site_action(
+                base | {"INPUT_OUTPUT_DIR": bad, "GITHUB_WORKSPACE": str(workspace)}
+            )
+
+    # With GITHUB_WORKSPACE unset, the current directory is the boundary; the check stays on.
+    with pytest.raises(site_tool.SiteError, match="GITHUB_WORKSPACE"):
+        site_action.run_site_action(base | {"INPUT_OUTPUT_DIR": str(workspace / "reports")})
+
+
+def test_output_dir_symlink_to_a_parent_of_the_workspace_is_refused(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "up").symlink_to(tmp_path, target_is_directory=True)
+    runs_in = tmp_path / "runs"
+    site_fixture.write(runs_in, run_id="6", created="2026-11-23T03:00:00Z")
+    with pytest.raises(site_tool.SiteError, match="GITHUB_WORKSPACE"):
+        site_action.run_site_action(
+            {
+                "INPUT_RUNS_DIR": str(runs_in),
+                "INPUT_OUTPUT_DIR": "up/escaped",
+                "INPUT_RESTORE_HISTORY": "false",
+                "INPUT_UPLOAD_ARTIFACT": "false",
+                "GITHUB_WORKSPACE": str(workspace),
+            }
+        )
+    assert not (tmp_path / "escaped").exists()
+
+
+# ---------------------------------------------------------------- Vera's PR 16 findings (Rivet)
+
+
+@pytest.mark.parametrize(
+    ("value", "allowed"),
+    [
+        # Characters main's SITE_PATH allows. Gemini's split had dropped the apostrophe.
+        ("evidence/a'b.html", True),
+        ("evidence/trial's-video.mp4", True),
+        ("evidence/a~b!c$d&e(f)g*h+i,j;k=l@m%20n-o_p.q", True),
+        ("evidence/seed-1/trials.mcap", True),
+        # Characters main refuses. Gemini's split had added the colon.
+        ("evidence/a:b", False),
+        ("a:b", False),
+        ("evidence/a b.html", False),
+        ('evidence/a"b.html', False),
+        ("evidence/a<b>.html", False),
+        ("evidence/a\\b.html", False),
+        ("", False),
+        ("x" * 241, False),
+    ],
+)
+def test_site_path_charset_matches_main(value: str, allowed: bool):
+    import reports_common
+
+    # Reverting the SITE_PATH fix (dropping ' or adding :) fails this table.
+    assert (reports_common.SITE_PATH.fullmatch(value) is not None) is allowed
+    assert (reports_common.site_path(value) == value) is allowed
+
+
+@pytest.mark.parametrize(
+    "value", ["a\x01b", "evidence/\x00x", "https://example.com/\x7f", "x\x1fy"]
+)
+def test_safe_href_refuses_control_characters_that_urlsplit_keeps(value: str):
+    import reports_render
+
+    # urlsplit strips tab and newline itself. These survive it, so only safe_href's own
+    # control-character check refuses them. Removing that check fails this test.
+    assert reports_render.safe_href(value) is None
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("INPUT_OUTPUT_DIR", "docs/reports\nartifact-only=false"),
+        ("INPUT_OUTPUT_DIR", "docs/reports\r"),
+        ("INPUT_OUTPUT_DIR", "docs/\x00reports"),
+        ("INPUT_OUTPUT_DIR", "docs/\x1breports"),
+        ("INPUT_ARTIFACT_NAME", "site\nreports-dir=/etc"),
+        ("INPUT_ARTIFACT_NAME", "site\n"),
+    ],
+)
+def test_site_action_refuses_control_characters_before_writing_github_output(
+    tmp_path: Path, name: str, value: str
+):
+    runs_in = tmp_path / "runs"
+    site_fixture.write(runs_in, run_id="8", created="2026-11-23T03:00:00Z")
+    gh_out = tmp_path / "github_output.txt"
+    env = {
+        "INPUT_RUNS_DIR": str(runs_in),
+        "INPUT_OUTPUT_DIR": "docs/reports",
+        "INPUT_RESTORE_HISTORY": "false",
+        "INPUT_UPLOAD_ARTIFACT": "false",
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_WORKSPACE": str(tmp_path),
+        "GITHUB_OUTPUT": str(gh_out),
+    }
+    env[name] = value
+    # Removing the control-character check lets the newline forge a GITHUB_OUTPUT line.
+    with pytest.raises(site_tool.SiteError, match="control characters"):
+        site_action.run_site_action(env)
+    assert not gh_out.exists()

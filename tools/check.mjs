@@ -21,8 +21,15 @@ const requiredFiles = [
   'src/collect.mjs',
   'src/fixture-run.mjs',
   'src/reports_site.py',
+  'src/reports_restore.py',
+  'src/reports_render.py',
+  'src/reports_common.py',
+  'src/assets/styles.css',
+  'src/assets/open.js',
   'src/site_action.py',
   'tools/site_fixture.py',
+  'tools/site_golden.py',
+  'tests/fixtures/site-golden/SHA256SUMS',
   'tests/action.test.mjs',
   'tests/collect.test.mjs',
   'tests/site-action.test.mjs',
@@ -53,6 +60,7 @@ for (const directory of ['src', 'tests', 'tools']) {
     execFileSync(process.execPath, ['--check', `${directory}/${name}`], { stdio: 'inherit' });
   }
 }
+execFileSync(process.execPath, ['--check', 'src/assets/open.js'], { stdio: 'inherit' });
 
 console.log(
   'Static checks passed: repository files, action metadata, and JavaScript syntax are valid.'
