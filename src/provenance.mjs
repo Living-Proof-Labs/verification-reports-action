@@ -11,12 +11,15 @@ const VERIFIER_IMAGE = 'ghcr.io/living-proof-labs/capability-verifier-hallway';
 const REPORTER_IMAGE = 'ghcr.io/living-proof-labs/livingproof-capability-report';
 
 /**
- * Pins the report resolves from release tags. Commits and digests stored beside
- * those tags are not expected values: a tag bump does not need them rewritten.
+ * The tag is what people edit. assertLockAgrees is the temporary check that
+ * the lock fields capability-verifier reads are exactly the resolved values.
+ * When scenario.yml takes those resolved values as inputs, delete
+ * assertLockAgrees and pass the resolved commit and image reference through.
  */
 const SPECS = [
   {
     name: 'capability-verifier',
+    lockField: 'releases.verifier',
     kind: 'image',
     workflow: true,
     defaultImage: VERIFIER_IMAGE,
@@ -24,21 +27,25 @@ const SPECS = [
   },
   {
     name: 'livingproof-sim-mujoco',
+    lockField: 'releases.runner',
     kind: 'source',
     read: (lock, sources) => fromRelease(lock.releases?.runner, sources?.releases?.runner),
   },
   {
     name: 'robot-capability-specs',
+    lockField: 'releases.specs',
     kind: 'files',
     read: (lock, sources) => fromRelease(lock.releases?.specs, sources?.releases?.specs, true),
   },
   {
     name: 'livingproof-worlds',
+    lockField: 'world',
     kind: 'files',
     read: (lock, sources) => fromWorld(lock.world, sources?.world),
   },
   {
     name: 'livingproof-evaluator-scenario',
+    lockField: 'evaluators.livingproof-evaluator-scenario',
     kind: 'source',
     read: (lock, sources) =>
       fromRelease(
@@ -48,6 +55,7 @@ const SPECS = [
   },
   {
     name: 'livingproof-evaluator-run',
+    lockField: 'evaluators.livingproof-evaluator-run',
     kind: 'source',
     read: (lock, sources) =>
       fromRelease(
@@ -57,6 +65,7 @@ const SPECS = [
   },
   {
     name: 'livingproof-capability-report',
+    lockField: 'releases.reporter',
     kind: 'image',
     defaultImage: REPORTER_IMAGE,
     read: (lock, sources) => fromRelease(lock.releases?.reporter, sources?.releases?.reporter),
@@ -74,14 +83,23 @@ function fromRelease(lockEntry, tomlEntry, withFiles = false) {
   const tag = text(tomlEntry?.tag) || text(lockEntry?.tag);
   if (!repository && !tag && !lockEntry && !tomlEntry) return null;
   const files = {};
+  const lockFiles = {};
   if (withFiles && lockEntry?.files && typeof lockEntry.files === 'object' && !Array.isArray(lockEntry.files)) {
-    for (const path of Object.keys(lockEntry.files)) files[path] = true;
+    for (const [path, hash] of Object.entries(lockEntry.files)) {
+      files[path] = true;
+      if (typeof hash === 'string') lockFiles[path] = hash.trim().toLowerCase();
+    }
   }
   return {
     repository,
     tag,
     image: text(lockEntry?.image),
     files,
+    lockCommit: text(lockEntry?.commit),
+    lockDigest: text(lockEntry?.digest),
+    lockSha256: text(lockEntry?.sha256).toLowerCase(),
+    lockImage: text(lockEntry?.image),
+    lockFiles,
   };
 }
 
@@ -95,7 +113,19 @@ function fromWorld(lockWorld, tomlWorld) {
   if (id && version && !id.includes('/') && !version.includes('/') && !id.includes('..') && !version.includes('..')) {
     files[`worlds/${id}/${version}/world.json`] = true;
   }
-  return { repository, tag, image: '', files, worldId: id, worldVersion: version };
+  return {
+    repository,
+    tag,
+    image: text(lockWorld?.image),
+    files,
+    worldId: id,
+    worldVersion: version,
+    lockCommit: text(lockWorld?.commit),
+    lockDigest: text(lockWorld?.digest),
+    lockSha256: text(lockWorld?.sha256).toLowerCase(),
+    lockImage: text(lockWorld?.image),
+    lockFiles: {},
+  };
 }
 
 function requirePin(spec, raw) {
@@ -104,7 +134,12 @@ function requirePin(spec, raw) {
       `${spec.name}: pin is missing. expected a repository and a vX.Y.Z tag, found no pin.`
     );
   }
-  if (!REPOSITORY.test(raw.repository)) {
+  const segments = raw.repository.split('/');
+  if (
+    !REPOSITORY.test(raw.repository) ||
+    segments.length !== 2 ||
+    segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+  ) {
     throw new ReportError(
       `${spec.name}: repository is not OWNER/NAME. expected OWNER/NAME, found ${JSON.stringify(raw.repository)}.`
     );
@@ -114,10 +149,15 @@ function requirePin(spec, raw) {
       `${spec.name}: tag is not a release tag. expected a vX.Y.Z tag, found ${JSON.stringify(raw.tag)}.`
     );
   }
-  const image = raw.image || spec.defaultImage || '';
-  if (spec.kind === 'image' && !image.startsWith('ghcr.io/')) {
+  if (raw.image && raw.image !== spec.defaultImage) {
     throw new ReportError(
-      `${spec.name}: image host is unsupported. expected a ghcr.io image, found ${JSON.stringify(image)}.`
+      `${spec.name}: ${spec.lockField}.image name is not the default. expected ${spec.defaultImage || 'no image'}, found ${raw.image}.`
+    );
+  }
+  const image = spec.defaultImage || '';
+  if (spec.kind === 'image' && !image.startsWith('ghcr.io/living-proof-labs/')) {
+    throw new ReportError(
+      `${spec.name}: ${spec.lockField}.image name is not the default. expected a ghcr.io/living-proof-labs image, found ${JSON.stringify(image)}.`
     );
   }
   if (spec.name === 'livingproof-worlds' && Object.keys(raw.files).length === 0) {
@@ -133,7 +173,70 @@ function requirePin(spec, raw) {
     tag: raw.tag,
     image,
     paths: Object.keys(raw.files).sort(),
+    lockField: spec.lockField,
+    lockCommit: raw.lockCommit || '',
+    lockDigest: raw.lockDigest || '',
+    lockSha256: raw.lockSha256 || '',
+    lockImage: raw.lockImage || '',
+    lockFiles: raw.lockFiles || {},
   };
+}
+
+export function normaliseRepository(value) {
+  if (typeof value !== 'string') return '';
+  let name = value.trim().replace(/\.git$/i, '');
+  const url = name.match(/^https?:\/\/github\.com\/([^/\s]+)\/([^/\s#?]+)/i);
+  if (url) name = `${url[1]}/${url[2]}`;
+  return name;
+}
+
+export function sameRepository(left, right) {
+  const a = normaliseRepository(left);
+  const b = normaliseRepository(right);
+  return a.length > 0 && a.toLowerCase() === b.toLowerCase();
+}
+
+/**
+ * Lock fields that the trial reads must equal the values resolved from the tag.
+ * This is the drop-in point for the follow-up that passes those resolved values
+ * into capability-verifier and stops reading them from the lock.
+ */
+export function assertLockAgrees(pin, resolved) {
+  if (pin.lockCommit && pin.lockCommit !== resolved.commit) {
+    throw new ReportError(
+      `${pin.name}: ${pin.lockField}.commit differs from the resolved tag. expected ${resolved.commit}, found ${pin.lockCommit}.`
+    );
+  }
+  if (pin.lockDigest && asDigest(pin.lockDigest) !== resolved.digest) {
+    throw new ReportError(
+      `${pin.name}: ${pin.lockField}.digest differs from the resolved tag. expected ${resolved.digest}, found ${pin.lockDigest}.`
+    );
+  }
+  const fileHash = (resolved.digest || '').replace(/^sha256:/, '');
+  if (pin.lockSha256 && pin.lockSha256 !== fileHash) {
+    throw new ReportError(
+      `${pin.name}: ${pin.lockField}.sha256 differs from the resolved tag. expected ${fileHash}, found ${pin.lockSha256}.`
+    );
+  }
+  for (const [path, locked] of Object.entries(pin.lockFiles)) {
+    const found = resolved.files?.[path] || '';
+    if (locked !== found) {
+      throw new ReportError(
+        `${pin.name}: ${pin.lockField}.files[${path}] differs from the resolved tag. expected ${found || 'the file sha256'}, found ${locked}.`
+      );
+    }
+  }
+  if (pin.kind === 'image' && pin.lockImage) {
+    const version = pin.tag.replace(/^v/, '');
+    const expected = `${pin.image}:${version}@${resolved.digest}`;
+    const foundDigest = asDigest(pin.lockDigest) || resolved.digest;
+    const found = `${pin.lockImage}:${version}@${foundDigest}`;
+    if (found !== expected) {
+      throw new ReportError(
+        `${pin.name}: ${pin.lockField}.image differs from the resolved tag. expected ${expected}, found ${found}.`
+      );
+    }
+  }
 }
 
 export function collectPins(item) {
@@ -246,7 +349,7 @@ function checkAttestation(pin, digest, tagCommit, attestation) {
         `${pin.name}: attestation digest mismatch. expected subject ${digest}, found subject ${subject || 'none'}.`
       );
     }
-    if (attestation.repository !== pin.repository) {
+    if (!sameRepository(attestation.repository, pin.repository)) {
       throw new ReportError(
         `${pin.name}: attestation source repository mismatch. expected ${pin.repository}, found ${attestation.repository || 'none'}.`
       );
@@ -320,12 +423,18 @@ export function checkPin(pin, evidence, options = {}) {
     );
   }
   const status = attestation === 'verified' ? 'verified' : publishedCommit ? 'not-published' : 'resolved';
+  assertLockAgrees(pin, {
+    commit: tagCommit,
+    digest,
+    files: Object.fromEntries(pin.paths.map((path) => [path, evidence.files?.[path]?.found || ''])),
+  });
   return {
     name: pin.name,
     repository: pin.repository,
     tag: pin.tag,
     commit: tagCommit,
     digest,
+    workflow: evidence.attestation?.workflowPath || '',
     status,
     result: status,
     attestation: status === 'verified' ? 'verified' : 'not-published',

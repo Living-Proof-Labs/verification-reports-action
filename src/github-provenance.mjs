@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from 'node:crypto';
 import { ReportError, sha256 } from './definitions.mjs';
-import { subjectDigest } from './provenance.mjs';
+import { normaliseRepository, sameRepository, subjectDigest } from './provenance.mjs';
+import { decodeMaybeSnappy } from './snappy.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 const DOWNLOAD_LIMIT = 128 * 1024 * 1024;
@@ -27,11 +28,87 @@ export function parseSha256Sums(text) {
 
 export function imageDigestFromBody(body, image) {
   if (typeof body !== 'string' || !image) return null;
-  const index = body.indexOf(`${image}:`);
-  if (index === -1) return null;
-  const slice = body.slice(index, index + image.length + 90);
-  const match = slice.match(/@sha256:([0-9a-f]{64})/);
-  return match ? `sha256:${match[1]}` : null;
+  const escaped = image.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const withVersion = new RegExp(`${escaped}:[^\\s@]*@sha256:([0-9a-f]{64})`, 'i');
+  const bare = new RegExp(`${escaped}@sha256:([0-9a-f]{64})`, 'i');
+  const match = body.match(withVersion) || body.match(bare);
+  return match ? `sha256:${match[1].toLowerCase()}` : null;
+}
+
+export const SLSA_PROVENANCE_V1 = 'https://slsa.dev/provenance/v1';
+
+function statementRecord(statement) {
+  const subjects = [];
+  for (const subject of statement?.subject ?? []) {
+    const hex = subject?.digest?.sha256;
+    if (typeof hex === 'string' && /^[0-9a-f]{64}$/i.test(hex)) subjects.push(`sha256:${hex.toLowerCase()}`);
+  }
+  const workflow = statement?.predicate?.buildDefinition?.externalParameters?.workflow ?? {};
+  return {
+    predicateType: typeof statement?.predicateType === 'string' ? statement.predicateType : '',
+    subjects,
+    repository: normaliseRepository(workflow.repository),
+    workflowPath: typeof workflow.path === 'string' ? workflow.path : '',
+    gitCommit: findGitCommit(statement),
+  };
+}
+
+function bundleStatement(bundle) {
+  const encoded = bundle?.dsseEnvelope?.payload;
+  if (typeof encoded !== 'string' || !encoded) return null;
+  try {
+    return statementRecord(JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')));
+  } catch {
+    return null;
+  }
+}
+
+async function entryStatement(entry, fetchImpl) {
+  let bundle = entry?.bundle;
+  if (!bundle && typeof entry?.bundle_url === 'string' && entry.bundle_url) {
+    const response = await fetchImpl(entry.bundle_url);
+    if (!response.ok) {
+      throw new Error(`bundle_url returned HTTP ${response.status}`);
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    bundle = JSON.parse(decodeMaybeSnappy(bytes).toString('utf8'));
+  }
+  return bundle ? bundleStatement(bundle) : null;
+}
+
+export async function readAttestationEntries(payload, digest, fetchImpl = globalThis.fetch) {
+  const list = Array.isArray(payload?.attestations) ? payload.attestations : [];
+  const records = [];
+  for (const entry of list) {
+    const record = await entryStatement(entry, fetchImpl);
+    if (record) records.push(record);
+  }
+  return selectProvenance(records, digest);
+}
+
+export function selectProvenance(records, digest) {
+  const wanted = typeof digest === 'string' ? digest.toLowerCase() : '';
+  const slsa = records.filter((record) => record.predicateType === SLSA_PROVENANCE_V1);
+  const match = slsa.find((record) => record.subjects.includes(wanted));
+  if (!match) {
+    return {
+      published: records.length > 0,
+      match: null,
+      found: slsa.flatMap((record) => record.subjects),
+      types: [...new Set(records.map((record) => record.predicateType).filter(Boolean))],
+    };
+  }
+  return {
+    published: true,
+    match,
+    subjectDigest: wanted,
+    repository: match.repository,
+    gitCommit: match.gitCommit,
+    workflowPath: match.workflowPath,
+    predicateType: match.predicateType,
+    found: match.subjects,
+    types: [SLSA_PROVENANCE_V1],
+  };
 }
 
 function findGitCommit(value) {
@@ -44,29 +121,30 @@ function findGitCommit(value) {
   return null;
 }
 
-export function readAttestation(payload) {
+export function readAttestation(payload, digest) {
   const list = Array.isArray(payload?.attestations) ? payload.attestations : [];
   if (list.length === 0) return { published: false };
-  for (const entry of list) {
-    const encoded = entry?.bundle?.dsseEnvelope?.payload;
-    if (typeof encoded !== 'string' || !encoded) continue;
-    let statement;
-    try {
-      statement = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
-    } catch {
-      continue;
-    }
-    const hex = statement?.subject?.[0]?.digest?.sha256;
-    const subjectDigest = typeof hex === 'string' && /^[0-9a-f]{64}$/.test(hex) ? `sha256:${hex}` : null;
-    const repository = statement?.predicate?.buildDefinition?.externalParameters?.workflow?.repository;
+  const records = list.map((entry) => (entry?.bundle ? bundleStatement(entry.bundle) : null)).filter(Boolean);
+  if (records.length === 0) return { published: true, subjectDigest: null, repository: null, gitCommit: null };
+  const selected = selectProvenance(records, digest ?? records.find((record) => record.subjects[0])?.subjects[0]);
+  if (!selected.match) {
     return {
       published: true,
-      subjectDigest,
-      repository: typeof repository === 'string' ? repository : null,
-      gitCommit: findGitCommit(statement),
+      subjectDigest: null,
+      repository: null,
+      gitCommit: null,
+      predicateType: selected.types[0] ?? '',
+      workflowPath: '',
     };
   }
-  return { published: true, subjectDigest: null, repository: null, gitCommit: null };
+  return {
+    published: true,
+    subjectDigest: selected.subjectDigest,
+    repository: selected.repository,
+    gitCommit: selected.gitCommit,
+    predicateType: selected.predicateType,
+    workflowPath: selected.workflowPath,
+  };
 }
 
 function githubHeaders(token) {
@@ -182,8 +260,15 @@ async function registryDigest(pin, fetchImpl) {
       `${pin.name}: could not read ${pin.image}:${version}. expected an image manifest, found HTTP ${manifest.status}.`
     );
   }
-  await manifest.arrayBuffer().catch(() => null);
-  return manifest.headers.get('docker-content-digest');
+  const bytes = Buffer.from(await manifest.arrayBuffer());
+  const hashed = `sha256:${sha256(bytes)}`;
+  const header = (manifest.headers.get('docker-content-digest') || '').toLowerCase();
+  if (header !== hashed) {
+    throw new ReportError(
+      `${pin.name}: image digest mismatch for ${pin.image}. expected ${header || 'a docker-content-digest header'}, found ${hashed}.`
+    );
+  }
+  return hashed;
 }
 
 async function loadSums(pin, release, token, fetchImpl) {
@@ -198,8 +283,8 @@ async function loadSums(pin, release, token, fetchImpl) {
   return parseSha256Sums(await response.text());
 }
 
-async function hashTarball(pin, fetchImpl) {
-  const url = `https://codeload.github.com/${pin.repository}/tar.gz/refs/tags/${encodeURIComponent(pin.tag)}`;
+async function hashTarball(pin, commit, fetchImpl) {
+  const url = `https://codeload.github.com/${pin.repository}/tar.gz/${commit}`;
   const response = await fetchImpl(url);
   if (!response.ok) {
     throw new ReportError(
@@ -207,6 +292,15 @@ async function hashTarball(pin, fetchImpl) {
     );
   }
   return `sha256:${await hashStream(response, pin.name)}`;
+}
+
+export async function openAttestations(list, digest, fetchImpl) {
+  const records = [];
+  for (const entry of list) {
+    const record = await entryStatement(entry, fetchImpl);
+    if (record) records.push(record);
+  }
+  return selectProvenance(records, digest);
 }
 
 async function loadAttestation(pin, digest, api, token, fetchImpl) {
@@ -218,13 +312,42 @@ async function loadAttestation(pin, digest, api, token, fetchImpl) {
       `${pin.name}: attestation request failed. expected HTTP 200 or HTTP 404, found HTTP ${response.status}.`
     );
   }
-  const attestation = readAttestation(body);
-  if (attestation.published !== true) {
+  const list = Array.isArray(body?.attestations) ? body.attestations : [];
+  if (list.length === 0) {
     throw new ReportError(
       `${pin.name}: attestation request failed. expected HTTP 200 with an attestation or HTTP 404, found HTTP 200 with no attestation.`
     );
   }
-  return { ...attestation, status: 200 };
+  let selected;
+  try {
+    selected = await openAttestations(list, digest, fetchImpl);
+  } catch (error) {
+    throw new ReportError(`${pin.name}: attestation bundle could not be read. ${error.message}`);
+  }
+  if (!selected.match) {
+    if (!selected.types.includes(SLSA_PROVENANCE_V1)) {
+      throw new ReportError(
+        `${pin.name}: attestation predicate mismatch. expected ${SLSA_PROVENANCE_V1}, found ${selected.types.join(', ') || 'none'}.`
+      );
+    }
+    throw new ReportError(
+      `${pin.name}: attestation digest mismatch. expected subject ${digest}, found subject ${selected.found.join(', ') || 'none'}.`
+    );
+  }
+  if (!sameRepository(selected.repository, pin.repository)) {
+    throw new ReportError(
+      `${pin.name}: attestation source repository mismatch. expected ${pin.repository}, found ${selected.repository || 'none'}.`
+    );
+  }
+  return {
+    published: true,
+    status: 200,
+    subjectDigest: selected.subjectDigest,
+    repository: normaliseRepository(selected.repository),
+    gitCommit: selected.gitCommit,
+    workflowPath: selected.workflowPath,
+    predicateType: selected.predicateType,
+  };
 }
 
 export async function resolvePin(pin, { token = '', api = 'https://api.github.com', fetch: fetchImpl }) {
@@ -262,8 +385,8 @@ export async function resolvePin(pin, { token = '', api = 'https://api.github.co
   if (pin.kind === 'image') {
     publishedDigest = imageDigestFromBody(release.body, pin.image);
     imageDigest = await registryDigest(pin, fetchImpl);
-  } else if ((pin.paths ?? []).length === 0) {
-    sourceDigest = await hashTarball(pin, fetchImpl);
+  } else if ((pin.paths ?? []).length === 0 && tagCommit) {
+    sourceDigest = await hashTarball(pin, tagCommit, fetchImpl);
     const publishedSource = sums['source.tar.gz'] ?? sums.SOURCE ?? null;
     if (publishedSource) publishedDigest = `sha256:${publishedSource}`;
   }

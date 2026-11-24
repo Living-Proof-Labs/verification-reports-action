@@ -144,6 +144,13 @@ function spliceMarked(text, section) {
   return `${text.replace(/\s*$/, '\n')}${block}`;
 }
 
+function splicePlain(text, section) {
+  const heading = '## Pinned inputs\n';
+  const start = text.indexOf(heading);
+  const base = start === -1 ? text : text.slice(0, start);
+  return `${base.replace(/\s*$/, '\n')}${section}`;
+}
+
 function spliceHtml(text, section) {
   const pattern = /<section id="pinned-inputs">[\s\S]*?<\/section>\n?/;
   if (pattern.test(text)) return text.replace(pattern, section);
@@ -158,10 +165,10 @@ export function stampReportInputs(directory, inputs) {
   report.inputs = inputs;
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
   const markdown = pinnedInputsText(inputs);
-  for (const name of ['report.md', 'report.txt']) {
-    const file = path.join(directory, name);
-    writeFileSync(file, spliceMarked(readFileSync(file, 'utf8'), markdown), 'utf8');
-  }
+  const markdownFile = path.join(directory, 'report.md');
+  writeFileSync(markdownFile, spliceMarked(readFileSync(markdownFile, 'utf8'), markdown), 'utf8');
+  const textFile = path.join(directory, 'report.txt');
+  writeFileSync(textFile, splicePlain(readFileSync(textFile, 'utf8'), markdown), 'utf8');
   const htmlFile = path.join(directory, 'report.html');
   writeFileSync(htmlFile, spliceHtml(readFileSync(htmlFile, 'utf8'), pinnedInputsHtml(inputs)), 'utf8');
 }

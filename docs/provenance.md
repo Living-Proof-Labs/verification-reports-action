@@ -2,7 +2,7 @@
 
 # Pinned inputs and provenance
 
-The plan job in [`.github/workflows/report.yml`](../.github/workflows/report.yml) resolves every input from its release tag before a trial starts. `walk-hallway` and `scenario` need that job. When a check fails, the plan step exits and those jobs do not run. Collect requires a successful plan whose provenance results are `passed`, and it does not write a report otherwise.
+The plan job in [`.github/workflows/report.yml`](../.github/workflows/report.yml) resolves every input from its release tag before a trial starts. `walk-hallway` and `scenario` need that job. When a check fails, the plan step exits and those jobs do not run. Collect requires a successful plan whose provenance statuses are `verified`, `not-published`, `resolved`, or `fixture`, and it does not write a report otherwise.
 
 ## Inputs
 
@@ -33,7 +33,7 @@ The capability-verifier `uses:` lines stay a full commit SHA. GitHub rejects an 
 
 ## Tag bump
 
-The lock's commit, file sha256, and image digest are not expected values. Changing one `tag` is enough. The definition sha256 in the lock still has to match the definition file, so the tag Renovate edits is the lock's `tag`, not a copy of that tag inside the definition. This repository does not run a lock generator after the bump.
+For now, bumping a tag also means updating that input's commit, digest, and file sha256 in the lock to the values the tag resolves to. A tag-only edit fails before `plan.json` is written. The tag-only Renovate bump is a follow-up: `capability-verifier` `scenario.yml` will take the resolved commits and digests as inputs, and `assertLockAgrees` in `src/provenance.mjs` can then be removed.
 
 Fixture definitions under `tests/fixtures/robot/verifications/`, when this repository calls its own workflow, skip the network and record `status: fixture`. They are not a robot release. A robot repository's definitions are checked.
 
@@ -56,6 +56,6 @@ Each input's `status` is one of:
 
 A missing Release and a tag that does not peel are failures. They are not stored as `not-published`.
 
-Source pins hash the codeload tag archive. A pin with more than one file hashes a synthetic digest of those file hashes. Those subjects are not what a published attestation names, so the lookup returns HTTP 404 and the pin stays `not-published` until a later change uses a subject the release actually publishes. Image digests and a single file's sha256 can match.
+Source pins hash the codeload archive of the peeled commit. A pin with more than one file hashes a synthetic digest of those file hashes. Those subjects are not what a published attestation names, so the lookup returns HTTP 404 and the pin stays `not-published` until a later change uses a subject the release actually publishes. Image digests and a single file's sha256 can match.
 
 The plan step sets `GITHUB_TOKEN` from `github.token`. `contents: read` covers the release, tag, and attestation reads. That token is sent only to `api.github.com`. The codeload archive and the registry token request do not receive it.
