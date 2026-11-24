@@ -7,6 +7,7 @@ import test from 'node:test';
 import { VERIFIER_WORKFLOW_SHA, VERIFIER_WORKFLOW_TAG } from '../src/definitions.mjs';
 import { imageDigestFromBody } from '../src/github-provenance.mjs';
 import { writePlan } from '../src/plan.mjs';
+import { resolvePin } from '../src/github-provenance.mjs';
 import { checkPin, collectPins, resolvedTrialInputs } from '../src/provenance.mjs';
 
 const OTHER = '1111111111111111111111111111111111111111';
@@ -344,3 +345,208 @@ test('a one-line verifier tag edit is what the plan passes, and the lock file is
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+const CORNER_PARAMETERS = 'specs/scenarios/walk-corner-left/parameters.json';
+const HALLWAY_PARAMETERS = 'specs/scenarios/walk-hallway/parameters.json';
+const CORNER_HASH = 'ab'.repeat(32);
+const HALLWAY_HASH = 'cd'.repeat(32);
+
+function specsReadyLock() {
+  const lock = dropPassedFields(realLock());
+  lock.releases.verifier.tag = VERIFIER_WORKFLOW_TAG;
+  delete lock.releases.specs.files[CORNER_PARAMETERS];
+  return lock;
+}
+
+function specsEvidence(specs, hashes) {
+  const files = {};
+  for (const path of specs.paths) {
+    const hash = hashes[path];
+    files[path] = { published: hash, found: hash };
+  }
+  return {
+    releaseFound: true,
+    tagCommit: specs.lockRaw.commit,
+    publishedCommit: null,
+    files,
+    imageDigest: null,
+    publishedDigest: null,
+    sourceDigest: null,
+    attestation: { published: false, status: 404 },
+  };
+}
+
+test('a robot path of parameters.json is accepted when the scenario file hash matches', () => {
+  const lock = specsReadyLock();
+  lock.sources.parameters = { path: 'parameters.json', sha256: CORNER_HASH };
+  const specs = collectPins(item(lock)).find((pin) => pin.name === 'robot-capability-specs');
+  assert.equal(specs.paths.includes(CORNER_PARAMETERS), true);
+  assert.equal(specs.paths.includes('parameters.json'), false);
+  const description = lock.releases.specs.files['specs/scenarios/walk-corner-left/description.json'];
+  const record = checkPin(
+    specs,
+    specsEvidence(specs, {
+      [CORNER_PARAMETERS]: CORNER_HASH,
+      'specs/scenarios/walk-corner-left/description.json': description,
+    })
+  );
+  assert.equal(record.status, 'resolved');
+});
+
+test("another scenario's parameters file is refused", () => {
+  const lock = specsReadyLock();
+  lock.sources.parameters = { path: HALLWAY_PARAMETERS, sha256: HALLWAY_HASH };
+  const specs = collectPins(item(lock)).find((pin) => pin.name === 'robot-capability-specs');
+  assert.equal(specs.paths.includes(CORNER_PARAMETERS), true);
+  assert.equal(specs.paths.includes(HALLWAY_PARAMETERS), false);
+  const description = lock.releases.specs.files['specs/scenarios/walk-corner-left/description.json'];
+  assert.throws(
+    () =>
+      checkPin(
+        specs,
+        specsEvidence(specs, {
+          [CORNER_PARAMETERS]: CORNER_HASH,
+          'specs/scenarios/walk-corner-left/description.json': description,
+        })
+      ),
+    new RegExp(`sources\\.parameters\\.sha256 differs from the resolved tag\\. expected ${CORNER_HASH}, found ${HALLWAY_HASH}`)
+  );
+});
+
+test('a non-string sources.parameters.sha256 is refused', () => {
+  const lock = specsReadyLock();
+  lock.sources.parameters = { path: 'parameters.json', sha256: 12345 };
+  assert.throws(
+    () => collectPins(item(lock)),
+    /robot-capability-specs: sources\.parameters\.sha256 is not a string/
+  );
+});
+
+test('null is refused for each dropped lock field', () => {
+  const fields = [
+    ['releases.verifier.commit', (lock) => { lock.releases.verifier.commit = null; }, /releases\.verifier\.commit is refused/],
+    ['releases.verifier.image', (lock) => { lock.releases.verifier.image = null; }, /releases\.verifier\.image is refused/],
+    ['releases.verifier.digest', (lock) => { lock.releases.verifier.digest = null; }, /releases\.verifier\.digest is refused/],
+    ['releases.reporter.image', (lock) => { lock.releases.reporter.image = null; }, /releases\.reporter\.image is refused/],
+    ['releases.reporter.digest', (lock) => { lock.releases.reporter.digest = null; }, /releases\.reporter\.digest is refused/],
+    [
+      'evaluators.livingproof-evaluator-scenario.commit',
+      (lock) => { lock.evaluators['livingproof-evaluator-scenario'].commit = null; },
+      /evaluators\.livingproof-evaluator-scenario\.commit is refused/,
+    ],
+  ];
+  for (const [label, set, pattern] of fields) {
+    const lock = dropPassedFields(realLock());
+    lock.releases.verifier.tag = VERIFIER_WORKFLOW_TAG;
+    set(lock);
+    assert.throws(() => collectPins(item(lock)), pattern, label);
+  }
+});
+
+test('a null image digest is refused before a record is returned', () => {
+  const lock = dropPassedFields(realLock());
+  lock.releases.verifier.tag = VERIFIER_WORKFLOW_TAG;
+  const verifier = collectPins(item(lock)).find((pin) => pin.name === 'capability-verifier');
+  assert.throws(
+    () =>
+      checkPin(verifier, {
+        releaseFound: true,
+        tagCommit: VERIFIER_WORKFLOW_SHA,
+        publishedCommit: null,
+        files: {},
+        imageDigest: null,
+        publishedDigest: null,
+        sourceDigest: null,
+        attestation: { published: false, status: 404 },
+      }),
+    /capability-verifier: digest is missing/
+  );
+});
+
+function trialRecords() {
+  return [
+    { name: 'capability-verifier', tag: 'v2.12.0', commit: 'a'.repeat(40), digest: `sha256:${'ab'.repeat(32)}` },
+    { name: 'livingproof-capability-report', tag: 'v3.15.4', commit: 'b'.repeat(40), digest: `sha256:${'cd'.repeat(32)}` },
+    { name: 'livingproof-evaluator-scenario', tag: 'v1.5.3', commit: 'c'.repeat(40), digest: `sha256:${'ef'.repeat(32)}` },
+  ];
+}
+
+test('resolved trial inputs refuse a verifier image with trailing bytes or uppercase hex', () => {
+  const trailing = trialRecords().map((record) =>
+    record.name === 'capability-verifier' ? { ...record, digest: `sha256:${'ab'.repeat(32)}trailing` } : record
+  );
+  assert.throws(() => resolvedTrialInputs(trailing), /verifier-image is not a resolved image ref/);
+  const uppercase = trialRecords().map((record) =>
+    record.name === 'capability-verifier' ? { ...record, digest: `sha256:${'AB'.repeat(32)}` } : record
+  );
+  assert.throws(() => resolvedTrialInputs(uppercase), /verifier-image is not a resolved image ref/);
+});
+
+test('resolved trial inputs refuse each missing record on its own', () => {
+  for (const name of ['capability-verifier', 'livingproof-capability-report', 'livingproof-evaluator-scenario']) {
+    const records = trialRecords().filter((record) => record.name !== name);
+    assert.throws(() => resolvedTrialInputs(records), new RegExp(`resolved pins are missing ${name}`));
+  }
+});
+
+function respond(status, body) {
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    headers: { get: () => null },
+    json: async () => body,
+    text: async () => '',
+    arrayBuffer: async () => new Uint8Array(),
+    body: null,
+  };
+}
+
+async function peel(refStatus, refBody) {
+  const pin = {
+    name: 'robot-capability-specs',
+    repository: 'Living-Proof-Labs/robot-capability-specs',
+    tag: 'v3.1.0',
+    kind: 'files',
+    paths: ['specs/scenarios/walk-corner-left/description.json'],
+    image: '',
+  };
+  return resolvePin(pin, {
+    token: '',
+    api: 'https://api.github.com',
+    fetch: async (url) => {
+      if (url.includes('/releases/tags/')) {
+        return respond(200, { tag_name: 'v3.1.0', target_commitish: 'main', body: '', assets: [] });
+      }
+      if (url.includes('/git/ref/tags/')) return respond(refStatus, refBody);
+      if (url.includes('/git/tags/')) return respond(200, { object: { type: 'tag', sha: 'e'.repeat(40) } });
+      if (url.includes('/contents/')) {
+        return respond(200, { encoding: 'base64', content: Buffer.from('x').toString('base64') });
+      }
+      if (url.includes('/attestations/')) return respond(404, {});
+      return respond(500, { message: url });
+    },
+  });
+}
+
+test('a deleted tag and a non-commit tag object do not become the resolved commit', async () => {
+  const deleted = await peel(404, { object: { type: 'commit', sha: 'c'.repeat(40) } });
+  assert.equal(deleted.tagCommit, null);
+  for (const type of ['tree', 'blob', 'tag']) {
+    const odd = await peel(200, { object: { type, sha: 'd'.repeat(40) } });
+    assert.equal(odd.tagCommit, null, type);
+  }
+});
+
+for (const variant of [
+  "sources.parameters.path with a '..' segment",
+  'sources.parameters.path with a leading slash',
+  'sources.parameters.path with a backslash',
+  'sources.parameters.path with an empty segment',
+  'sources.parameters.path percent-encoded %2e',
+  'sources.parameters.path percent-encoded %2f',
+  'sources.parameters.path percent-encoded %5c',
+  'sources.parameters.path percent-encoding decoded repeatedly',
+  'a contents request stays under /repos/<owner>/<repo>/contents/',
+]) {
+  test(variant, { skip: 'pending shared validator (Rivet)' }, () => {});
+}

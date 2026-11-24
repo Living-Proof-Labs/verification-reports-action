@@ -10,7 +10,7 @@ The plan job in [`.github/workflows/report.yml`](../.github/workflows/report.yml
 | --- | --- | --- |
 | capability-verifier | `releases.verifier` | Release, tag commit, workflow pin, image digest, attestation. `commit`, `image`, and `digest` in the lock are refused. |
 | livingproof-sim-mujoco | `releases.runner` | Release, tag commit, source archive sha256, attestation. `commit`, when present, must equal the peeled tag. |
-| robot-capability-specs | `releases.specs` | Release, tag commit, each `files` sha256, `sources.parameters.sha256`, attestation. `commit` must equal the peeled tag. Each `files` entry and `sources.parameters.sha256`, when present, must equal the file at that tag. |
+| robot-capability-specs | `releases.specs` | Release, tag commit, each `files` sha256, `sources.parameters.sha256`, attestation. `commit` must equal the peeled tag. Each `files` entry must equal that file at the tag. `sources.parameters.sha256`, when present, must equal `specs/scenarios/<scenario id>/parameters.json` at the specs commit. `sources.parameters.path` is the robot destination and is not the file that is hashed. |
 | livingproof-worlds | `world` | Release, tag commit, `worlds/<id>/<version>/world.json` sha256, attestation. `commit`, when present, must equal the peeled tag. `world.sha256` and `sources.world.sha256`, when present, must equal that file. |
 | livingproof-evaluator-scenario | `evaluators.livingproof-evaluator-scenario` | Release, tag commit, source archive sha256, attestation. `commit` in the lock is refused. |
 | livingproof-evaluator-run | `evaluators.livingproof-evaluator-run` | Release, tag commit, source archive sha256, attestation. `commit`, when present, must equal the peeled tag. |
@@ -43,7 +43,7 @@ These fields stay, because v2.12.0 still reads them and has no input for them. A
 - `sources.parameters.sha256`
 - `releases.reporter.commit`
 
-`repin --check` requires a commit on every `releases.*` entry, including the runner, the specs, and the reporter. `fetch_hallway_specs.py` checks out `releases.specs.commit` and, when `world.commit` is present, `world.commit`. `sources.parameters` and `sources.world` are fetched at those commits. A runner, specs, or world tag edit that leaves the old commit or hashes in the lock is refused before a trial. The runner tag must also still match the robot `pyproject.toml` source, which `repin --check` compares with `releases.runner.tag`.
+`repin --check` requires a commit on every `releases.*` entry, including the runner, the specs, and the reporter. `fetch_hallway_specs.py` checks out `releases.specs.commit` and, when `world.commit` is present, `world.commit`. `sources.world` is fetched at the world commit. `sources.parameters.sha256` is compared with `specs/scenarios/<scenario id>/parameters.json` at the specs commit, the same file capability-verifier fetches. The lock's `sources.parameters.path` is only where that file is written in the robot repository. A runner, specs, or world tag edit that leaves the old commit or hashes in the lock is refused before a trial. The runner tag must also still match the robot `pyproject.toml` source, which `repin --check` compares with `releases.runner.tag`.
 
 Fixture definitions under `tests/fixtures/robot/verifications/`, when this repository calls its own workflow, skip the network and record `status: fixture`. They are not a robot release. A robot repository's definitions are checked.
 

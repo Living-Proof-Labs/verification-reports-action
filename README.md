@@ -36,7 +36,11 @@ These fields stay in the lock. capability-verifier v2.12.0 still reads them, and
 - `sources.parameters.sha256`
 - `releases.reporter.commit`
 
-A one-line edit of the runner, specs, or world tag that leaves the old commit or hashes in place is refused. `releases.reporter.commit` stays for the same reason: v2.12.0 does not take a reporter commit input, and `repin --check` still requires that commit.
+A one-line edit of the runner, specs, or world tag that leaves the old commit or hashes in place is refused. `releases.reporter.commit` stays for the same reason: v2.12.0 does not take a reporter commit input, and `repin --check` still requires that commit. `sources.parameters.sha256` is the hash of `specs/scenarios/<scenario id>/parameters.json` at the specs commit. `sources.parameters.path` is the path in the robot repository and is not hashed.
+
+## Migration
+
+A lock that still has any of the six refused fields, or a verifier tag other than the capability-verifier release this action calls, is refused before a trial. Drop those six fields and set `releases.verifier.tag` to that release (`v2.12.0` for the pin in this change). The kept commit and hash fields stay as they are.
 
 `report.json` and `run.json` each record `inputs`: repository, tag, commit, digest, and `status` for every pin. The same status line is written into `report.md`, `report.html`, and `report.txt` under "Pinned inputs", as `name: status (meaning)`.
 

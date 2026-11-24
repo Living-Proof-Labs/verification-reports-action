@@ -51,6 +51,7 @@ const SPECS = [
     read: (lock, sources) =>
       fromRelease(lock.releases?.specs, sources?.releases?.specs, true, {
         sourceParameters: lock.sources?.parameters ?? null,
+        scenario: lock.scenario,
       }),
   },
   {
@@ -138,8 +139,8 @@ function fromRelease(lockEntry, tomlEntry, withFiles = false, options = {}) {
   if (withFiles && raw.files && typeof raw.files === 'object' && !Array.isArray(raw.files)) {
     for (const path of Object.keys(raw.files)) files[path] = true;
   }
-  const parameterPath = options.sourceParameters?.path;
-  if (withFiles && typeof parameterPath === 'string' && parameterPath) files[parameterPath] = true;
+  const parameters = parametersBinding(options.sourceParameters, options.scenario, withFiles);
+  if (parameters.file) files[parameters.file] = true;
   return {
     repository,
     tag,
@@ -147,9 +148,30 @@ function fromRelease(lockEntry, tomlEntry, withFiles = false, options = {}) {
     files,
     lockRaw: raw,
     definitionRaw: lockRaw(tomlEntry),
-    sourceParameters:
-      options.sourceParameters && typeof options.sourceParameters === 'object' ? options.sourceParameters : null,
+    sourceParameters: parameters.entry,
+    parametersFile: parameters.file,
   };
+}
+
+function scenarioParametersFile(scenario) {
+  if (typeof scenario !== 'string' || scenario.length === 0) return null;
+  const id = scenario.split('@', 1)[0];
+  if (id.length === 0) return null;
+  return `specs/scenarios/${id}/parameters.json`;
+}
+
+function parametersBinding(entry, scenario, withFiles) {
+  if (!withFiles || !entry || typeof entry !== 'object') return { entry: null, file: null };
+  if (entry.sha256 !== undefined && entry.sha256 !== null) {
+    assertLockString('robot-capability-specs', 'sources.parameters.sha256', entry.sha256, FIELD_FORM.sha256);
+  }
+  const file = scenarioParametersFile(scenario);
+  if (!file) {
+    throw new ReportError(
+      'robot-capability-specs: scenario is missing. expected a scenario id so sources.parameters.sha256 can be checked against specs/scenarios/<id>/parameters.json, found none.'
+    );
+  }
+  return { entry, file };
 }
 
 function fromWorld(lockWorld, tomlWorld, sourceWorld) {
@@ -231,6 +253,7 @@ function requirePin(spec, raw) {
     lockRaw: raw.lockRaw,
     sourceWorld: raw.sourceWorld ?? null,
     sourceParameters: raw.sourceParameters ?? null,
+    parametersFile: raw.parametersFile ?? null,
     repository: spec.expectedRepository,
   };
 }
@@ -413,8 +436,14 @@ export function resolvedTrialInputs(records) {
   const verifier = byName.get('capability-verifier');
   const reporter = byName.get('livingproof-capability-report');
   const evaluator = byName.get('livingproof-evaluator-scenario');
-  if (!verifier || !reporter || !evaluator) {
-    throw new ReportError('resolved pins are missing, so no trial can start.');
+  if (!verifier) {
+    throw new ReportError('resolved pins are missing capability-verifier, so no trial can start.');
+  }
+  if (!reporter) {
+    throw new ReportError('resolved pins are missing livingproof-capability-report, so no trial can start.');
+  }
+  if (!evaluator) {
+    throw new ReportError('resolved pins are missing livingproof-evaluator-scenario, so no trial can start.');
   }
   if (!SHA.test(verifier.commit)) {
     throw new ReportError(
@@ -481,8 +510,7 @@ export function assertLockAgrees(pin, resolved) {
   }
   const parametersSha = pin.sourceParameters?.sha256;
   if (pin.lockField === 'releases.specs' && typeof parametersSha === 'string') {
-    const parameterPath = typeof pin.sourceParameters.path === 'string' ? pin.sourceParameters.path : '';
-    const found = resolved.files?.[parameterPath] || '';
+    const found = resolved.files?.[pin.parametersFile] || '';
     if (parametersSha !== found) disagree(pin, 'sources.parameters.sha256', found || 'the file sha256', parametersSha);
   }
 }
