@@ -891,7 +891,10 @@ test('dot segments in a repository are rejected before a URL is built', () => {
   for (const repository of ['../..', 'Living-Proof-Labs/..', './capability-verifier', 'foo/']) {
     const lock = sampleLock();
     lock.releases.runner.repository = repository;
-    assert.throws(() => collectPins(item(lock)), /livingproof-sim-mujoco: repository is not OWNER\/NAME/);
+    assert.throws(
+      () => collectPins(item(lock)),
+      /livingproof-sim-mujoco: (repository is not OWNER\/NAME|releases\.runner\.repository is not the expected form)/
+    );
   }
 });
 
@@ -1240,9 +1243,218 @@ test('a bundle_url redirect is refused and the other host is not requested', asy
   assert.deepEqual(seen, [bundle]);
 });
 
+function lockEntry(lock, parts) {
+  let cursor = lock;
+  for (const part of parts) cursor = cursor[part];
+  return cursor;
+}
+
+test('a lock repository that differs from the definition is refused', async () => {
+  const fields = [
+    [['releases', 'verifier'], 'Living-Proof-Labs/capability-verifier', 'capability-verifier', 'v2.11.4'],
+    [['releases', 'reporter'], 'Living-Proof-Labs/livingproof-capability-report', 'livingproof-capability-report', 'v3.15.4'],
+    [['releases', 'runner'], 'Living-Proof-Labs/livingproof-sim-mujoco', 'livingproof-sim-mujoco', 'v3.7.4'],
+    [['releases', 'specs'], 'Living-Proof-Labs/robot-capability-specs', 'robot-capability-specs', 'v3.1.0'],
+    [['evaluators', 'livingproof-evaluator-scenario'], 'Living-Proof-Labs/livingproof-evaluator-scenario', 'livingproof-evaluator-scenario', 'v1.5.3'],
+    [['evaluators', 'livingproof-evaluator-run'], 'Living-Proof-Labs/livingproof-evaluator-run', 'livingproof-evaluator-run', 'v1.8.6'],
+    [['world'], 'Living-Proof-Labs/livingproof-worlds', 'livingproof-worlds', 'v1.4.0'],
+  ];
+  for (const [parts, repository, repoName, tag] of fields) {
+    const lock = sampleLock();
+    lockEntry(lock, parts).repository = `Evil-Org/${repoName}`;
+    const source = { repository, tag, id: 'hallway-corner', version: '0.2.0' };
+    const sources = parts[0] === 'world'
+      ? { world: source }
+      : parts[0] === 'evaluators'
+        ? { evaluators: { [parts[1]]: source } }
+        : { releases: { [parts[1]]: source } };
+    const input = parts[0] === 'evaluators' ? parts[1] : repoName === 'livingproof-worlds' ? 'livingproof-worlds' : parts[0] === 'world' ? 'livingproof-worlds' : (
+      parts[1] === 'verifier' ? 'capability-verifier'
+        : parts[1] === 'reporter' ? 'livingproof-capability-report'
+          : parts[1] === 'runner' ? 'livingproof-sim-mujoco'
+            : 'robot-capability-specs'
+    );
+    await assert.rejects(
+      () => assertPinnedInputs(item(lock, sources), client()),
+      (error) => {
+        assert.match(error.message, new RegExp(`^${input}: `));
+        assert.match(error.message, /\.repository differs from the definition/);
+        assert.match(error.message, new RegExp(`expected ${repository.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+        assert.match(error.message, new RegExp(`found Evil-Org/${repoName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+        return true;
+      }
+    );
+  }
+  const lock = sampleLock();
+  lock.releases.verifier.repository = 'living-proof-labs/capability-verifier';
+  lock.evaluators['livingproof-evaluator-scenario'].repository = 'LIVING-PROOF-LABS/livingproof-evaluator-scenario';
+  const records = await assertPinnedInputs(
+    item(lock, {
+      releases: { verifier: { repository: 'Living-Proof-Labs/capability-verifier', tag: 'v2.11.4' } },
+      evaluators: {
+        'livingproof-evaluator-scenario': {
+          repository: 'Living-Proof-Labs/livingproof-evaluator-scenario',
+          tag: 'v1.5.3',
+        },
+      },
+    }),
+    client()
+  );
+  assert.equal(records.find((record) => record.name === 'capability-verifier').repository, 'Living-Proof-Labs/capability-verifier');
+  assert.equal(
+    records.find((record) => record.name === 'livingproof-evaluator-scenario').repository,
+    'Living-Proof-Labs/livingproof-evaluator-scenario'
+  );
+});
+
+test('missing, non-string, and empty lock fields are refused', async () => {
+  const fields = [
+    [['releases', 'verifier'], 'repository', 'capability-verifier'],
+    [['releases', 'verifier'], 'tag', 'capability-verifier'],
+    [['releases', 'verifier'], 'commit', 'capability-verifier'],
+    [['releases', 'verifier'], 'image', 'capability-verifier'],
+    [['releases', 'verifier'], 'digest', 'capability-verifier'],
+    [['releases', 'reporter'], 'repository', 'livingproof-capability-report'],
+    [['releases', 'reporter'], 'tag', 'livingproof-capability-report'],
+    [['releases', 'reporter'], 'commit', 'livingproof-capability-report'],
+    [['releases', 'reporter'], 'image', 'livingproof-capability-report'],
+    [['releases', 'reporter'], 'digest', 'livingproof-capability-report'],
+    [['releases', 'runner'], 'repository', 'livingproof-sim-mujoco'],
+    [['releases', 'runner'], 'tag', 'livingproof-sim-mujoco'],
+    [['releases', 'runner'], 'commit', 'livingproof-sim-mujoco'],
+    [['releases', 'specs'], 'repository', 'robot-capability-specs'],
+    [['releases', 'specs'], 'tag', 'robot-capability-specs'],
+    [['releases', 'specs'], 'commit', 'robot-capability-specs'],
+    [['evaluators', 'livingproof-evaluator-scenario'], 'repository', 'livingproof-evaluator-scenario'],
+    [['evaluators', 'livingproof-evaluator-scenario'], 'tag', 'livingproof-evaluator-scenario'],
+    [['evaluators', 'livingproof-evaluator-scenario'], 'commit', 'livingproof-evaluator-scenario'],
+    [['evaluators', 'livingproof-evaluator-run'], 'repository', 'livingproof-evaluator-run'],
+    [['evaluators', 'livingproof-evaluator-run'], 'tag', 'livingproof-evaluator-run'],
+    [['evaluators', 'livingproof-evaluator-run'], 'commit', 'livingproof-evaluator-run'],
+    [['world'], 'repository', 'livingproof-worlds'],
+    [['world'], 'tag', 'livingproof-worlds'],
+    [['world'], 'commit', 'livingproof-worlds'],
+    [['world'], 'sha256', 'livingproof-worlds'],
+  ];
+  for (const [parts, field, input] of fields) {
+    for (const [kind, value] of [['missing', undefined], ['wrong-type', 12345], ['empty', '']]) {
+      const lock = sampleLock();
+      const entry = lockEntry(lock, parts);
+      if (kind === 'missing') delete entry[field];
+      else entry[field] = value;
+      await assert.rejects(
+        () => assertPinnedInputs(item(lock), client()),
+        new RegExp(`${input}: .*\\.${field} is (missing|not a string|empty)`)
+      );
+    }
+  }
+  for (const [kind, value] of [['missing', undefined], ['wrong-type', 12345], ['empty', '']]) {
+    const lock = sampleLock();
+    const file = 'specs/scenarios/walk-corner-left/description.json';
+    if (kind === 'missing') lock.releases.specs.files = {};
+    else lock.releases.specs.files[file] = value;
+    await assert.rejects(
+      () => assertPinnedInputs(item(lock), client()),
+      /robot-capability-specs: releases\.specs\.files/
+    );
+  }
+});
+
+test('a lock value with surrounding whitespace is refused without trimming', async () => {
+  const paddedCommit = sampleLock();
+  paddedCommit.releases.verifier.commit = `${COMMIT}\n`;
+  await assert.rejects(
+    () => assertPinnedInputs(item(paddedCommit), client()),
+    new RegExp(`capability-verifier: releases\\.verifier\\.commit has surrounding whitespace\\. expected a 40-character commit, found ${JSON.stringify(`${COMMIT}\n`).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
+  );
+  const paddedRepo = sampleLock();
+  paddedRepo.evaluators['livingproof-evaluator-scenario'].repository = ' Living-Proof-Labs/livingproof-evaluator-scenario';
+  await assert.rejects(
+    () => assertPinnedInputs(item(paddedRepo), client()),
+    /livingproof-evaluator-scenario: evaluators\.livingproof-evaluator-scenario\.repository has surrounding whitespace/
+  );
+});
+
+test('an attestation whose subject digest differs is not selected', async () => {
+  const wanted = `sha256:${'ab'.repeat(32)}`;
+  const statement = {
+    predicateType: 'https://slsa.dev/provenance/v1',
+    subject: [{ name: 'other', digest: { sha256: 'cd'.repeat(32) } }],
+    predicate: {
+      buildDefinition: {
+        externalParameters: {
+          workflow: { repository: 'https://github.com/cli/cli', path: '.github/workflows/release.yml' },
+        },
+        resolvedDependencies: [{ digest: { gitCommit: COMMIT } }],
+      },
+    },
+  };
+  const selected = await openAttestations(
+    [{ bundle: { dsseEnvelope: { payload: Buffer.from(JSON.stringify(statement)).toString('base64') } } }],
+    wanted,
+    async () => {
+      throw new Error('inline bundles are not fetched');
+    },
+    'cli/cli'
+  );
+  assert.equal(selected.match, null);
+  assert.match(selected.error, /subject sha256:cd/);
+  assert.doesNotMatch(selected.error ?? '', /verified/);
+});
+
+test('a bundle fetch failure includes the underlying cause', async () => {
+  const url = 'https://tmaproduction.blob.core.windows.net/attestations/a.sn';
+  await assert.rejects(
+    () =>
+      openAttestations(
+        [{ bundle: null, bundle_url: url }],
+        `sha256:${'ab'.repeat(32)}`,
+        async () => {
+          throw new TypeError('fetch failed', { cause: new Error('unexpected redirect') });
+        },
+        'cli/cli'
+      ),
+    (error) => {
+      assert.match(error.message, /fetch failed/);
+      assert.match(error.message, /unexpected redirect/);
+      assert.match(error.message, /tmaproduction\.blob\.core\.windows\.net/);
+      return true;
+    }
+  );
+});
+
+test('a bundle_url download times out', async () => {
+  const url = 'https://tmaproduction.blob.core.windows.net/attestations/a.sn';
+  await assert.rejects(
+    () =>
+      openAttestations(
+        [{ bundle: null, bundle_url: url }],
+        `sha256:${'ab'.repeat(32)}`,
+        async (_url, options) => {
+          assert.equal(options.redirect, 'error');
+          assert.equal(options.headers?.Authorization, undefined);
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('signal did not abort')), 1000);
+            options.signal.addEventListener('abort', () => {
+              clearTimeout(timer);
+              const aborted = new Error('The operation was aborted due to timeout');
+              aborted.name = 'TimeoutError';
+              reject(aborted);
+            });
+          });
+        },
+        'cli/cli',
+        { timeoutMs: 20 }
+      ),
+    new RegExp(`bundle_url timed out\\. ${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} exceeded 20 ms`)
+  );
+});
+
 test('README says a tag bump also updates the lock commit and digest', () => {
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   assert.match(readme, /bumping a tag also means updating that input's commit and digest/);
+  assert.match(readme, /verification-reports-action\/issues\/15/);
+  assert.match(readme, /capability-verifier\/issues\/244/);
   assert.doesNotMatch(readme, /needs no hand relock/);
   assert.match(readme, /No `report\.json` is written/);
   assert.match(readme, /livingproof-evaluator-run/);

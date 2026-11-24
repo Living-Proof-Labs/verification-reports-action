@@ -33,7 +33,7 @@ The capability-verifier `uses:` lines stay a full commit SHA. GitHub rejects an 
 
 ## Tag bump
 
-For now, bumping a tag also means updating that input's commit, digest, and file sha256 in the lock to the values the tag resolves to. A tag-only edit fails before `plan.json` is written. The tag-only Renovate bump is a follow-up: `capability-verifier` `scenario.yml` will take the resolved commits and digests as inputs, and `assertLockAgrees` in `src/provenance.mjs` can then be removed.
+For now, bumping a tag also means updating that input's commit, digest, and file sha256 in the lock to the values the tag resolves to. A tag-only edit fails before `plan.json` is written. The tag-only Renovate bump is a follow-up, tracked in [va#15](https://github.com/Living-Proof-Labs/verification-reports-action/issues/15) and [cv#244](https://github.com/Living-Proof-Labs/capability-verifier/issues/244): `capability-verifier` `scenario.yml` will take the resolved commits and digests as inputs, and `assertLockAgrees` in `src/provenance.mjs` can then be removed.
 
 Fixture definitions under `tests/fixtures/robot/verifications/`, when this repository calls its own workflow, skip the network and record `status: fixture`. They are not a robot release. A robot repository's definitions are checked.
 
@@ -58,4 +58,4 @@ A missing Release and a tag that does not peel are failures. They are not stored
 
 Source pins hash the codeload archive of the peeled commit. A pin with more than one file hashes a synthetic digest of those file hashes. Those subjects are not what a published attestation names, so the lookup returns HTTP 404 and the pin stays `not-published` until a later change uses a subject the release actually publishes. Image digests and a single file's sha256 can match.
 
-The plan step sets `GITHUB_TOKEN` from `github.token`. `contents: read` covers the release, tag, and attestation reads. That token is sent only to `api.github.com`. The codeload archive and the registry token request do not receive it. A `bundle_url` is fetched only from `https://tmaproduction.blob.core.windows.net`, with no token and with redirects refused, and the body is capped at 16 MiB.
+The plan step sets `GITHUB_TOKEN` from `github.token`. `contents: read` covers the release, tag, and attestation reads. That token is sent only to `api.github.com`. The codeload archive and the registry token request do not receive it. A `bundle_url` is fetched only from `https://tmaproduction.blob.core.windows.net`, with no token, with redirects refused, with a 30 second timeout, and with the body capped at 16 MiB.

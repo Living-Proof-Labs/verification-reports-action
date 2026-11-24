@@ -5,10 +5,12 @@ import { normaliseRepository, sameRepository, subjectDigest } from './provenance
 import { decodeMaybeSnappy } from './snappy.mjs';
 
 export const MAX_BUNDLE_BYTES = 16 * 1024 * 1024;
+export const BUNDLE_TIMEOUT_MS = 30_000;
 
 // GitHub's attestations API returns bundle_url on this host. The download is
-// https only, sends no Authorization header, refuses redirects, and stops
-// after MAX_BUNDLE_BYTES. redirect: 'error' means a 3xx cannot leave this host.
+// https only, sends no Authorization header, refuses redirects, aborts after
+// BUNDLE_TIMEOUT_MS, and stops after MAX_BUNDLE_BYTES. redirect: 'error'
+// means a 3xx cannot leave this host.
 export const BUNDLE_HOSTS = ['tmaproduction.blob.core.windows.net'];
 
 export function assertBundleUrl(value) {
@@ -119,17 +121,27 @@ function bundleStatement(bundle) {
   }
 }
 
-async function fetchBundle(url, fetchImpl) {
+function causedMessage(error) {
+  const message = error?.message || String(error);
+  const cause = error?.cause?.message;
+  if (typeof cause === 'string' && cause && !message.includes(cause)) return `${message}: ${cause}`;
+  return message;
+}
+
+async function fetchBundle(url, fetchImpl, timeoutMs = BUNDLE_TIMEOUT_MS) {
   assertBundleUrl(url);
   let response;
   try {
-    response = await fetchImpl(url, { redirect: 'error' });
+    response = await fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
   } catch (error) {
-    const message = error?.message || String(error);
-    if (/redirect/i.test(message)) {
-      throw new Error(`bundle_url redirected. ${url} refused a redirect.`);
+    const detail = causedMessage(error);
+    if (error?.name === 'TimeoutError' || error?.name === 'AbortError' || /timeout|aborted/i.test(detail)) {
+      throw new Error(`bundle_url timed out. ${url} exceeded ${timeoutMs} ms. ${detail}`);
     }
-    throw error;
+    if (/redirect/i.test(detail)) {
+      throw new Error(`bundle_url redirected. ${url} refused a redirect. ${detail}`);
+    }
+    throw new Error(`bundle_url could not be fetched. ${url} failed. ${detail}`);
   }
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers?.get?.('location');
@@ -142,10 +154,10 @@ async function fetchBundle(url, fetchImpl) {
   return readBoundedBody(response);
 }
 
-async function entryStatement(entry, fetchImpl) {
+async function entryStatement(entry, fetchImpl, timeoutMs) {
   let bundle = entry?.bundle;
   if (!bundle && typeof entry?.bundle_url === 'string' && entry.bundle_url) {
-    const bytes = await fetchBundle(entry.bundle_url, fetchImpl);
+    const bytes = await fetchBundle(entry.bundle_url, fetchImpl, timeoutMs);
     bundle = JSON.parse(decodeMaybeSnappy(bytes).toString('utf8'));
   }
   return bundle ? bundleStatement(bundle) : null;
@@ -397,10 +409,11 @@ async function hashTarball(pin, commit, fetchImpl) {
   return `sha256:${await hashStream(response, pin.name)}`;
 }
 
-export async function openAttestations(list, digest, fetchImpl, repository = '') {
+export async function openAttestations(list, digest, fetchImpl, repository = '', options = {}) {
+  const timeoutMs = options.timeoutMs ?? BUNDLE_TIMEOUT_MS;
   const records = [];
   for (const entry of list) {
-    const record = await entryStatement(entry, fetchImpl);
+    const record = await entryStatement(entry, fetchImpl, timeoutMs);
     if (record) records.push(record);
   }
   return selectProvenance(records, digest, repository);

@@ -78,28 +78,36 @@ function text(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function lockRaw(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return { repository: undefined, tag: undefined, commit: undefined, image: undefined, digest: undefined, sha256: undefined, files: undefined };
+  }
+  return {
+    repository: entry.repository,
+    tag: entry.tag,
+    commit: entry.commit,
+    image: entry.image,
+    digest: entry.digest,
+    sha256: entry.sha256,
+    files: entry.files,
+  };
+}
+
 function fromRelease(lockEntry, tomlEntry, withFiles = false) {
   const repository = text(tomlEntry?.repository) || text(lockEntry?.repository);
   const tag = text(tomlEntry?.tag) || text(lockEntry?.tag);
   if (!repository && !tag && !lockEntry && !tomlEntry) return null;
   const files = {};
-  const lockFiles = {};
-  if (withFiles && lockEntry?.files && typeof lockEntry.files === 'object' && !Array.isArray(lockEntry.files)) {
-    for (const [path, hash] of Object.entries(lockEntry.files)) {
-      files[path] = true;
-      if (typeof hash === 'string') lockFiles[path] = hash.trim().toLowerCase();
-    }
+  const raw = lockRaw(lockEntry);
+  if (withFiles && raw.files && typeof raw.files === 'object' && !Array.isArray(raw.files)) {
+    for (const path of Object.keys(raw.files)) files[path] = true;
   }
   return {
     repository,
     tag,
     image: text(lockEntry?.image),
     files,
-    lockCommit: text(lockEntry?.commit),
-    lockDigest: text(lockEntry?.digest),
-    lockSha256: text(lockEntry?.sha256).toLowerCase(),
-    lockImage: text(lockEntry?.image),
-    lockFiles,
+    lockRaw: raw,
   };
 }
 
@@ -120,11 +128,7 @@ function fromWorld(lockWorld, tomlWorld) {
     files,
     worldId: id,
     worldVersion: version,
-    lockCommit: text(lockWorld?.commit),
-    lockDigest: text(lockWorld?.digest),
-    lockSha256: text(lockWorld?.sha256).toLowerCase(),
-    lockImage: text(lockWorld?.image),
-    lockFiles: {},
+    lockRaw: lockRaw(lockWorld),
   };
 }
 
@@ -134,6 +138,8 @@ function requirePin(spec, raw) {
       `${spec.name}: pin is missing. expected a repository and a vX.Y.Z tag, found no pin.`
     );
   }
+  const image = spec.defaultImage || '';
+  assertConsumedLock(spec, raw.repository, raw.tag, image, raw.lockRaw);
   const segments = raw.repository.split('/');
   if (
     !REPOSITORY.test(raw.repository) ||
@@ -149,12 +155,6 @@ function requirePin(spec, raw) {
       `${spec.name}: tag is not a release tag. expected a vX.Y.Z tag, found ${JSON.stringify(raw.tag)}.`
     );
   }
-  if (raw.image && raw.image !== spec.defaultImage) {
-    throw new ReportError(
-      `${spec.name}: ${spec.lockField}.image name is not the default. expected ${spec.defaultImage || 'no image'}, found ${raw.image}.`
-    );
-  }
-  const image = spec.defaultImage || '';
   if (spec.kind === 'image' && !image.startsWith('ghcr.io/living-proof-labs/')) {
     throw new ReportError(
       `${spec.name}: ${spec.lockField}.image name is not the default. expected a ghcr.io/living-proof-labs image, found ${JSON.stringify(image)}.`
@@ -174,12 +174,79 @@ function requirePin(spec, raw) {
     image,
     paths: Object.keys(raw.files).sort(),
     lockField: spec.lockField,
-    lockCommit: raw.lockCommit || '',
-    lockDigest: raw.lockDigest || '',
-    lockSha256: raw.lockSha256 || '',
-    lockImage: raw.lockImage || '',
-    lockFiles: raw.lockFiles || {},
+    lockRaw: raw.lockRaw,
   };
+}
+
+const FIELD_FORM = {
+  repository: { pattern: REPOSITORY, expected: 'an OWNER/NAME repository' },
+  tag: { pattern: TAG, expected: 'a vX.Y.Z tag' },
+  commit: { pattern: SHA, expected: 'a 40-character commit' },
+  image: { pattern: null, expected: 'the default image name' },
+  digest: { pattern: /^(?:sha256:)?[0-9a-f]{64}$/, expected: 'a sha256 digest' },
+  sha256: { pattern: HEX64, expected: 'a 64-character sha256' },
+};
+
+function consumedFieldNames(spec) {
+  const names = ['repository', 'tag', 'commit'];
+  if (spec.kind === 'image') names.push('image', 'digest');
+  if (spec.name === 'livingproof-worlds') names.push('sha256');
+  return names;
+}
+
+function assertLockString(name, field, value, form) {
+  if (value === undefined || value === null) {
+    throw new ReportError(`${name}: ${field} is missing. expected ${form.expected}, found none.`);
+  }
+  if (typeof value !== 'string') {
+    throw new ReportError(`${name}: ${field} is not a string. expected ${form.expected}, found ${JSON.stringify(value)}.`);
+  }
+  if (value === '') {
+    throw new ReportError(`${name}: ${field} is empty. expected ${form.expected}, found empty.`);
+  }
+  if (value !== value.trim()) {
+    throw new ReportError(`${name}: ${field} has surrounding whitespace. expected ${form.expected}, found ${JSON.stringify(value)}.`);
+  }
+  if (form.pattern && !form.pattern.test(value)) {
+    throw new ReportError(`${name}: ${field} is not the expected form. expected ${form.expected}, found ${JSON.stringify(value)}.`);
+  }
+}
+
+function assertConsumedLock(spec, repository, tag, image, raw) {
+  const values = raw ?? {};
+  for (const key of consumedFieldNames(spec)) {
+    const field = `${spec.lockField}.${key}`;
+    assertLockString(spec.name, field, values[key], FIELD_FORM[key]);
+  }
+  if (!sameRepository(values.repository, repository)) {
+    throw new ReportError(
+      `${spec.name}: ${spec.lockField}.repository differs from the definition. expected ${repository}, found ${values.repository}.`
+    );
+  }
+  if (values.tag !== tag) {
+    throw new ReportError(
+      `${spec.name}: ${spec.lockField}.tag differs from the definition. expected ${tag}, found ${values.tag}.`
+    );
+  }
+  if (spec.kind === 'image' && values.image !== image) {
+    throw new ReportError(
+      `${spec.name}: ${spec.lockField}.image name is not the default. expected ${image}, found ${values.image}.`
+    );
+  }
+  if (spec.kind !== 'image' && values.image !== undefined && values.image !== null && values.image !== '') {
+    throw new ReportError(
+      `${spec.name}: ${spec.lockField}.image name is not the default. expected no image, found ${JSON.stringify(values.image)}.`
+    );
+  }
+  const files = values.files;
+  if (spec.kind === 'files' && spec.name === 'robot-capability-specs') {
+    if (!files || typeof files !== 'object' || Array.isArray(files) || Object.keys(files).length === 0) {
+      throw new ReportError(`${spec.name}: ${spec.lockField}.files is missing. expected file sha256 values, found none.`);
+    }
+    for (const [path, hash] of Object.entries(files)) {
+      assertLockString(spec.name, `${spec.lockField}.files[${path}]`, hash, FIELD_FORM.sha256);
+    }
+  }
 }
 
 export function normaliseRepository(value) {
@@ -202,39 +269,33 @@ export function sameRepository(left, right) {
  * into capability-verifier and stops reading them from the lock.
  */
 export function assertLockAgrees(pin, resolved) {
-  if (pin.lockCommit && pin.lockCommit !== resolved.commit) {
+  const raw = pin.lockRaw ?? {};
+  if (raw.commit !== resolved.commit) {
     throw new ReportError(
-      `${pin.name}: ${pin.lockField}.commit differs from the resolved tag. expected ${resolved.commit}, found ${pin.lockCommit}.`
+      `${pin.name}: ${pin.lockField}.commit differs from the resolved tag. expected ${resolved.commit}, found ${raw.commit}.`
     );
   }
-  if (pin.lockDigest && asDigest(pin.lockDigest) !== resolved.digest) {
+  if (pin.kind === 'image' && asDigest(raw.digest) !== resolved.digest) {
     throw new ReportError(
-      `${pin.name}: ${pin.lockField}.digest differs from the resolved tag. expected ${resolved.digest}, found ${pin.lockDigest}.`
+      `${pin.name}: ${pin.lockField}.digest differs from the resolved tag. expected ${resolved.digest}, found ${raw.digest}.`
     );
   }
-  const fileHash = (resolved.digest || '').replace(/^sha256:/, '');
-  if (pin.lockSha256 && pin.lockSha256 !== fileHash) {
-    throw new ReportError(
-      `${pin.name}: ${pin.lockField}.sha256 differs from the resolved tag. expected ${fileHash}, found ${pin.lockSha256}.`
-    );
-  }
-  for (const [path, locked] of Object.entries(pin.lockFiles)) {
-    const found = resolved.files?.[path] || '';
-    if (locked !== found) {
+  if (typeof raw.sha256 === 'string') {
+    const fileHash = (resolved.digest || '').replace(/^sha256:/, '');
+    if (raw.sha256 !== fileHash) {
       throw new ReportError(
-        `${pin.name}: ${pin.lockField}.files[${path}] differs from the resolved tag. expected ${found || 'the file sha256'}, found ${locked}.`
+        `${pin.name}: ${pin.lockField}.sha256 differs from the resolved tag. expected ${fileHash}, found ${raw.sha256}.`
       );
     }
   }
-  if (pin.kind === 'image' && pin.lockImage) {
-    const version = pin.tag.replace(/^v/, '');
-    const expected = `${pin.image}:${version}@${resolved.digest}`;
-    const foundDigest = asDigest(pin.lockDigest) || resolved.digest;
-    const found = `${pin.lockImage}:${version}@${foundDigest}`;
-    if (found !== expected) {
-      throw new ReportError(
-        `${pin.name}: ${pin.lockField}.image differs from the resolved tag. expected ${expected}, found ${found}.`
-      );
+  if (raw.files && typeof raw.files === 'object') {
+    for (const [path, locked] of Object.entries(raw.files)) {
+      const found = resolved.files?.[path] || '';
+      if (locked !== found) {
+        throw new ReportError(
+          `${pin.name}: ${pin.lockField}.files[${path}] differs from the resolved tag. expected ${found || 'the file sha256'}, found ${locked}.`
+        );
+      }
     }
   }
 }
