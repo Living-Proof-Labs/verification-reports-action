@@ -2,15 +2,22 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { matrixFor, planDefinitions } from './definitions.mjs';
+import { githubProvenanceClient } from './github-provenance.mjs';
 import { writeGithubOutput } from './github-output.mjs';
+import { assertPinnedInputs, fixtureProvenance } from './provenance.mjs';
 
-export function writePlan(env = process.env, root = process.cwd()) {
+export async function writePlan(env = process.env, root = process.cwd(), client = null) {
   const inputs = {
     definitions: env.INPUT_DEFINITIONS,
     repository: env.INPUT_REPOSITORY,
     ref: env.INPUT_REF,
   };
   const plan = planDefinitions(inputs, env, root);
+  const resolver = client ?? githubProvenanceClient(env);
+  for (const item of plan.definitions) {
+    if (item.execution === 'fixture') item.provenance = fixtureProvenance(item);
+    else item.provenance = await assertPinnedInputs(item, resolver);
+  }
   const serialised = {
     robot: plan.robot,
     definitions: plan.definitions.map((item) => ({
@@ -26,6 +33,8 @@ export function writePlan(env = process.env, root = process.cwd()) {
       artifactPrefix: item.artifactPrefix,
       workflow: item.workflow,
       lock: item.lock,
+      sources: item.sources ?? null,
+      provenance: item.provenance,
     })),
   };
   const planPath = env.INPUT_PLAN_PATH || path.join(root, 'artifacts', 'verification-plan', 'plan.json');
@@ -49,7 +58,7 @@ export function writePlan(env = process.env, root = process.cwd()) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   try {
-    const result = writePlan();
+    const result = await writePlan();
     console.log(
       `Planned ${result.plan.definitions.length} definition(s) for ${result.plan.robot.repository}@${result.plan.robot.ref}`
     );

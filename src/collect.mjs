@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { ReportError } from './definitions.mjs';
 import { assembleVerifierDefinition, mergeFixtureArtifacts } from './assemble.mjs';
+import { assertRecordsPassed } from './provenance.mjs';
 import { writeGithubOutput } from './github-output.mjs';
 import { gradeMap, outputsFromGrades } from './report.mjs';
 
@@ -13,6 +14,9 @@ export function collectReports(env = process.env, root = process.cwd()) {
     throw new ReportError('collect requires INPUT_PLAN_PATH and INPUT_OUTPUT_DIR');
   }
   const plan = JSON.parse(readFileSync(planPath, 'utf8'));
+  for (const item of plan.definitions) {
+    if (item.execution === 'capability-verifier') assertRecordsPassed(item);
+  }
   const version = (env.INPUT_VERSION ?? '').trim();
   rmSync(outputDir, { recursive: true, force: true });
   mkdirSync(outputDir, { recursive: true });

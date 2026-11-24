@@ -1,0 +1,9 @@
+{
+  "repository": "Living-Proof-Labs/robot-capability-specs",
+  "tag": "v2.3.0",
+  "target_commitish": "main",
+  "tagCommit": "57317e617014a6df97bb7fba9d92a890af8d42e5",
+  "tagObjectType": "commit",
+  "changelogCommit": "bf121d14926dd1714e3c0b22271a0d0024324021",
+  "body": "## [2.3.0](https://github.com/Living-Proof-Labs/robot-capability-specs/compare/v2.2.3...v2.3.0) (2026-11-15)\n\n### feat\n\n* add the walk-corner scenario and declare supported scenarios in the robot manifest ([#51](https://github.com/Living-Proof-Labs/robot-capability-specs/issues/51)) ([57317e6](https://github.com/Living-Proof-Labs/robot-capability-specs/commit/57317e617014a6df97bb7fba9d92a890af8d42e5))\n* add the walk-corner scenario and the route-follower command ([7ee5cf3](https://github.com/Living-Proof-Labs/robot-capability-specs/commit/7ee5cf322022262b0f0f4cb92afa3dbd29bedd26)), closes [#40](https://github.com/Living-Proof-Labs/robot-capability-specs/issues/40)\n* make walk-corner outcome-only and declare supported scenarios in the robot manifest ([d4b847e](https://github.com/Living-Proof-Labs/robot-capability-specs/commit/d4b847eafa87f81a1c9114d49afdd6e64cf54361))\n\n### test\n\n* add Vera review checks for walk-corner and scenario support ([75dacdc](https://github.com/Living-Proof-Labs/robot-capability-specs/commit/75dacdc0935e7e7148beb34bf632b3821c0ebf88))\n* pin the hallway-corner fixture to livingproof-worlds v1.3.0 ([bf121d1](https://github.com/Living-Proof-Labs/robot-capability-specs/commit/bf121d14926dd1714e3c0b22271a0d0024324021))\n"
+}

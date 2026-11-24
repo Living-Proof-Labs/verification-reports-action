@@ -16,6 +16,29 @@ The caller's token must be able to read the workflow repository. Plan, fixture, 
 
 A robot `FAIL` or `INSUFFICIENT_EVIDENCE` is a successful run. `status` is `ok` when the report was written. `grade` is the robot grade for a single result, and `grades` is a JSON map of `definition/configuration` to grade. The files are uploaded as the `verification-report` artifact. Callers download that artifact; the files are not left in the caller job's workspace.
 
+## Pinned inputs
+
+Before any trial, the plan job resolves each input from its release tag and refuses the run when the check fails. The message names the input and the expected and found values. No `report.json` is written, and `walk-hallway` and `scenario` do not start, because both need the plan job. The inputs are capability-verifier, livingproof-sim-mujoco, robot-capability-specs, the livingproof-worlds world, livingproof-evaluator-scenario, livingproof-evaluator-run, and livingproof-capability-report together with its image.
+
+The tag is the pin people edit. For now, bumping a tag also means updating that input's commit and digest in the lock to the values the tag resolves to. The plan refuses, before it writes `plan.json`, when a lock commit, digest, or sha256 differs from the resolved tag, and when an image name is not the default `ghcr.io/living-proof-labs/…` image. A tag-only edit is a follow-up, tracked in [va#15](https://github.com/Living-Proof-Labs/verification-reports-action/issues/15) and [cv#244](https://github.com/Living-Proof-Labs/capability-verifier/issues/244): `capability-verifier` `scenario.yml` will take the resolved commits and digests as inputs, and those lock fields can then be dropped.
+
+`report.json` and `run.json` each record `inputs`: repository, tag, commit, digest, and `status` for every pin. The same status line is written into `report.md`, `report.html`, and `report.txt` under "Pinned inputs", as `name: status (meaning)`.
+
+| Status | Meaning |
+| --- | --- |
+| `verified` | An attestation was published and its subject digest, source repository, and commit all matched. |
+| `not-published` | The attestations API returned HTTP 404. The commit was checked against the release instead. |
+| `resolved` | No attestation was published and the release named no commit. The peeled tag is what the report records. |
+| `fixture` | This repository's own fixture. The release was not checked. |
+
+`verified` is the status that means the attestation matched. The other three stay visible so a reader can tell a verified pin from one that was not. A published attestation that does not match the digest, the source repository, or the commit fails the run and writes no report. Any attestations response other than HTTP 200 or HTTP 404 fails the run. A missing GitHub Release, or a tag that does not peel to a commit, fails the run as well. That 404 is not recorded as `not-published`.
+
+`status: resolved` can sit beside `attestation: not-published` on the same input. The attestation field means the attestations API returned HTTP 404. `resolved` means the release also named no commit, so the report records the peeled tag. That pin is not verified. `status: not-published` with the same attestation field means HTTP 404 as well, and the commit was checked against the release.
+
+Source pins (livingproof-sim-mujoco and both evaluators) use the sha256 of the codeload archive of the peeled commit as the digest they ask GitHub to attest. A specs pin with more than one file uses a synthetic sha256 of those file hashes. Neither value is a subject a real attestation names, so those pins stay `not-published` until a later change asks for a subject the release actually publishes. An image pin uses the registry digest, and a single-file pin uses that file's sha256. Those can match.
+
+The plan step passes `GITHUB_TOKEN` from `github.token` so the release, tag, and attestation reads are authenticated. `contents: read` is enough. The token is sent only to `api.github.com`. The check rules are in [docs/provenance.md](docs/provenance.md).
+
 ## Example
 
 ```yaml
@@ -63,7 +86,7 @@ Replace `<commit>` and `vX.Y.Z` with the published release. The definition files
 | `grade` | The robot grade when there is one result, otherwise the `grades` JSON map. |
 | `grades` | JSON map of `definition/configuration` to robot grade. |
 
-For each definition and configuration the artifact contains `report.html`, `report.md`, `report.json`, `report.txt`, `SHA256SUMS` and `run.json`, plus `evidence/` with the trial observations and any MCAP or video the run recorded. `run.json` records the tested commit, which is the caller SHA, and the lock's declared robot under `declared_robot`.
+For each definition and configuration the artifact contains `report.html`, `report.md`, `report.json`, `report.txt`, `SHA256SUMS` and `run.json`, plus `evidence/` with the trial observations and any MCAP or video the run recorded. `run.json` records the tested commit, which is the caller SHA, the lock's declared robot under `declared_robot`, and each pinned input under `inputs`. `report.json` records the same `inputs`.
 
 ## Reports section step (`site/action.yml`)
 
