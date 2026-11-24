@@ -1157,7 +1157,8 @@ test('bundle_url is https on the attestation host and the body is capped', async
         [{ bundle: null, bundle_url: 'https://tmaproduction.blob.core.windows.net/a.sn' }],
         digest,
         async (url, options) => {
-          assert.equal(options, undefined);
+          assert.equal(options?.redirect, 'error');
+          assert.equal(options?.headers?.Authorization, undefined);
           return {
             ok: true,
             status: 200,
@@ -1207,6 +1208,36 @@ test('bundle_url is https on the attestation host and the body is capped', async
       ),
     new RegExp(`bundle_url exceeded ${MAX_BUNDLE_BYTES} bytes`)
   );
+});
+
+test('a bundle_url redirect is refused and the other host is not requested', async () => {
+  const digest = `sha256:${'ab'.repeat(32)}`;
+  const bundle = 'https://tmaproduction.blob.core.windows.net/attestations/a.sn';
+  const other = 'https://evil.example/stolen.sn';
+  const seen = [];
+  await assert.rejects(
+    () =>
+      openAttestations(
+        [{ bundle: null, bundle_url: bundle }],
+        digest,
+        async (url, options) => {
+          seen.push(url);
+          assert.equal(options?.redirect, 'error');
+          assert.equal(options?.headers?.Authorization, undefined);
+          return {
+            ok: false,
+            status: 302,
+            headers: { get: (name) => (name.toLowerCase() === 'location' ? other : null) },
+          };
+        },
+        'cli/cli'
+      ),
+    (error) => {
+      assert.equal(error.message, `bundle_url redirected. ${bundle} returned HTTP 302 to ${other}.`);
+      return true;
+    }
+  );
+  assert.deepEqual(seen, [bundle]);
 });
 
 test('README says a tag bump also updates the lock commit and digest', () => {

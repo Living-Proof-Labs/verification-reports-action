@@ -7,7 +7,8 @@ import { decodeMaybeSnappy } from './snappy.mjs';
 export const MAX_BUNDLE_BYTES = 16 * 1024 * 1024;
 
 // GitHub's attestations API returns bundle_url on this host. The download is
-// https only, and it is not given the GitHub token.
+// https only, sends no Authorization header, refuses redirects, and stops
+// after MAX_BUNDLE_BYTES. redirect: 'error' means a 3xx cannot leave this host.
 export const BUNDLE_HOSTS = ['tmaproduction.blob.core.windows.net'];
 
 export function assertBundleUrl(value) {
@@ -118,15 +119,33 @@ function bundleStatement(bundle) {
   }
 }
 
+async function fetchBundle(url, fetchImpl) {
+  assertBundleUrl(url);
+  let response;
+  try {
+    response = await fetchImpl(url, { redirect: 'error' });
+  } catch (error) {
+    const message = error?.message || String(error);
+    if (/redirect/i.test(message)) {
+      throw new Error(`bundle_url redirected. ${url} refused a redirect.`);
+    }
+    throw error;
+  }
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers?.get?.('location');
+    const target = location ? ` to ${location}` : '';
+    throw new Error(`bundle_url redirected. ${url} returned HTTP ${response.status}${target}.`);
+  }
+  if (!response.ok) {
+    throw new Error(`bundle_url returned HTTP ${response.status}`);
+  }
+  return readBoundedBody(response);
+}
+
 async function entryStatement(entry, fetchImpl) {
   let bundle = entry?.bundle;
   if (!bundle && typeof entry?.bundle_url === 'string' && entry.bundle_url) {
-    assertBundleUrl(entry.bundle_url);
-    const response = await fetchImpl(entry.bundle_url);
-    if (!response.ok) {
-      throw new Error(`bundle_url returned HTTP ${response.status}`);
-    }
-    const bytes = await readBoundedBody(response);
+    const bytes = await fetchBundle(entry.bundle_url, fetchImpl);
     bundle = JSON.parse(decodeMaybeSnappy(bytes).toString('utf8'));
   }
   return bundle ? bundleStatement(bundle) : null;
