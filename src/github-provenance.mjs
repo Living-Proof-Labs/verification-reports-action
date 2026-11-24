@@ -4,6 +4,61 @@ import { ReportError, sha256 } from './definitions.mjs';
 import { normaliseRepository, sameRepository, subjectDigest } from './provenance.mjs';
 import { decodeMaybeSnappy } from './snappy.mjs';
 
+export const MAX_BUNDLE_BYTES = 16 * 1024 * 1024;
+
+// GitHub's attestations API returns bundle_url on this host. The download is
+// https only, and it is not given the GitHub token.
+export const BUNDLE_HOSTS = ['tmaproduction.blob.core.windows.net'];
+
+export function assertBundleUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`bundle_url is not a URL. found ${value}`);
+  }
+  if (url.protocol !== 'https:') {
+    throw new Error(`bundle_url must be https. found ${url.protocol.replace(':', '')}`);
+  }
+  if (!BUNDLE_HOSTS.includes(url.hostname)) {
+    throw new Error(
+      `bundle_url host is not allowed. expected ${BUNDLE_HOSTS.join(' or ')}, found ${url.hostname}`
+    );
+  }
+  return url;
+}
+
+async function readBoundedBody(response, limit = MAX_BUNDLE_BYTES) {
+  const header = response.headers?.get?.('content-length');
+  if (header != null && header !== '') {
+    if (!/^\d{1,10}$/.test(header) || Number(header) > limit) {
+      throw new Error(`bundle_url content-length ${header} exceeds ${limit} bytes`);
+    }
+  }
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    throw new Error('bundle_url body is not a stream');
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const size = value?.byteLength ?? value?.length ?? 0;
+      total += size;
+      if (total > limit) {
+        await reader.cancel();
+        throw new Error(`bundle_url exceeded ${limit} bytes`);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock?.();
+  }
+  return Buffer.concat(chunks, total);
+}
+
 const SHA = /^[0-9a-f]{40}$/;
 const DOWNLOAD_LIMIT = 128 * 1024 * 1024;
 
@@ -66,11 +121,12 @@ function bundleStatement(bundle) {
 async function entryStatement(entry, fetchImpl) {
   let bundle = entry?.bundle;
   if (!bundle && typeof entry?.bundle_url === 'string' && entry.bundle_url) {
+    assertBundleUrl(entry.bundle_url);
     const response = await fetchImpl(entry.bundle_url);
     if (!response.ok) {
       throw new Error(`bundle_url returned HTTP ${response.status}`);
     }
-    const bytes = Buffer.from(await response.arrayBuffer());
+    const bytes = await readBoundedBody(response);
     bundle = JSON.parse(decodeMaybeSnappy(bytes).toString('utf8'));
   }
   return bundle ? bundleStatement(bundle) : null;
@@ -86,14 +142,41 @@ export async function readAttestationEntries(payload, digest, fetchImpl = global
   return selectProvenance(records, digest);
 }
 
-export function selectProvenance(records, digest) {
+function rejectionReasons(record, digest, repository) {
+  const reasons = [];
+  if (record.predicateType !== SLSA_PROVENANCE_V1) {
+    reasons.push(`predicate ${record.predicateType || 'none'}`);
+  }
+  if (!record.subjects.includes(digest)) {
+    reasons.push(`subject ${record.subjects.join(' ') || 'none'}`);
+  }
+  if (repository && !sameRepository(record.repository, repository)) {
+    reasons.push(`repository ${record.repository || 'none'}`);
+  }
+  return reasons;
+}
+
+export function selectProvenance(records, digest, repository = '') {
   const wanted = typeof digest === 'string' ? digest.toLowerCase() : '';
-  const slsa = records.filter((record) => record.predicateType === SLSA_PROVENANCE_V1);
-  const match = slsa.find((record) => record.subjects.includes(wanted));
+  const reasons = [];
+  let match = null;
+  records.forEach((record, index) => {
+    if (match) return;
+    const rejected = rejectionReasons(record, wanted, repository);
+    if (rejected.length === 0) {
+      match = record;
+      return;
+    }
+    reasons.push(`entry ${index}: ${rejected.join(', ')}`);
+  });
   if (!match) {
+    const slsa = records.filter((record) => record.predicateType === SLSA_PROVENANCE_V1);
+    const source = repository || 'the source repository';
     return {
       published: records.length > 0,
       match: null,
+      reasons,
+      error: `attestation did not match. expected subject ${wanted} from ${source}. ${reasons.join('; ')}.`,
       found: slsa.flatMap((record) => record.subjects),
       types: [...new Set(records.map((record) => record.predicateType).filter(Boolean))],
     };
@@ -101,6 +184,7 @@ export function selectProvenance(records, digest) {
   return {
     published: true,
     match,
+    reasons,
     subjectDigest: wanted,
     repository: match.repository,
     gitCommit: match.gitCommit,
@@ -294,13 +378,13 @@ async function hashTarball(pin, commit, fetchImpl) {
   return `sha256:${await hashStream(response, pin.name)}`;
 }
 
-export async function openAttestations(list, digest, fetchImpl) {
+export async function openAttestations(list, digest, fetchImpl, repository = '') {
   const records = [];
   for (const entry of list) {
     const record = await entryStatement(entry, fetchImpl);
     if (record) records.push(record);
   }
-  return selectProvenance(records, digest);
+  return selectProvenance(records, digest, repository);
 }
 
 async function loadAttestation(pin, digest, api, token, fetchImpl) {
@@ -320,24 +404,12 @@ async function loadAttestation(pin, digest, api, token, fetchImpl) {
   }
   let selected;
   try {
-    selected = await openAttestations(list, digest, fetchImpl);
+    selected = await openAttestations(list, digest, fetchImpl, pin.repository);
   } catch (error) {
     throw new ReportError(`${pin.name}: attestation bundle could not be read. ${error.message}`);
   }
   if (!selected.match) {
-    if (!selected.types.includes(SLSA_PROVENANCE_V1)) {
-      throw new ReportError(
-        `${pin.name}: attestation predicate mismatch. expected ${SLSA_PROVENANCE_V1}, found ${selected.types.join(', ') || 'none'}.`
-      );
-    }
-    throw new ReportError(
-      `${pin.name}: attestation digest mismatch. expected subject ${digest}, found subject ${selected.found.join(', ') || 'none'}.`
-    );
-  }
-  if (!sameRepository(selected.repository, pin.repository)) {
-    throw new ReportError(
-      `${pin.name}: attestation source repository mismatch. expected ${pin.repository}, found ${selected.repository || 'none'}.`
-    );
+    throw new ReportError(`${pin.name}: ${selected.error}`);
   }
   return {
     published: true,

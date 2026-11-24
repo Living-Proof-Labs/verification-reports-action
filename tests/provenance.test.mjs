@@ -8,6 +8,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { VERIFIER_WORKFLOW_SHA } from '../src/definitions.mjs';
 import {
+  MAX_BUNDLE_BYTES,
   imageDigestFromBody,
   openAttestations,
   parseSha256Sums,
@@ -962,6 +963,45 @@ test('the image digest is the hash of the manifest bytes', async () => {
   );
 });
 
+function byteStream(bytes, headers = {}) {
+  const payload = Buffer.from(bytes);
+  let sent = false;
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: (name) => headers[name.toLowerCase()] ?? null },
+    body: {
+      getReader() {
+        return {
+          async read() {
+            if (sent) return { done: true, value: undefined };
+            sent = true;
+            return { done: false, value: payload };
+          },
+          async cancel() {},
+          releaseLock() {},
+        };
+      },
+    },
+  };
+}
+
+function attestationEntry(repository, digestHex, workflow = '.github/workflows/release.yml') {
+  const statement = {
+    predicateType: 'https://slsa.dev/provenance/v1',
+    subject: [{ name: 'artifact', digest: { sha256: digestHex } }],
+    predicate: {
+      buildDefinition: {
+        externalParameters: { workflow: { repository, path: workflow } },
+        resolvedDependencies: [{ digest: { gitCommit: COMMIT } }],
+      },
+    },
+  };
+  return {
+    bundle: { dsseEnvelope: { payload: Buffer.from(JSON.stringify(statement)).toString('base64') } },
+  };
+}
+
 test('a captured cli/cli attestation verifies from bundle_url after a foreign entry', async () => {
   const digest = 'sha256:4835dbdbdcf8ba8bcb69515da797375d2eb955f824ebe686df8df07876a69fe8';
   const releaseBytes = readFileSync(new URL('./fixtures/attestations/cli-release.sn', import.meta.url));
@@ -971,15 +1011,16 @@ test('a captured cli/cli attestation verifies from bundle_url after a foreign en
   const fetches = [];
   const selected = await openAttestations(
     [
-      { bundle: null, bundle_url: 'https://example.test/cli-release.sn' },
-      { bundle: null, bundle_url: 'https://example.test/cli-slsa.sn' },
+      { bundle: null, bundle_url: 'https://tmaproduction.blob.core.windows.net/attestations/cli-release.sn' },
+      { bundle: null, bundle_url: 'https://tmaproduction.blob.core.windows.net/attestations/cli-slsa.sn' },
     ],
     digest,
-    async (url, options = {}) => {
-      fetches.push({ url, authorization: options.headers?.Authorization ?? null });
+    async (url, options) => {
+      fetches.push({ url, authorization: options?.headers?.Authorization ?? null });
       const body = url.endsWith('cli-release.sn') ? releaseBytes : slsaBytes;
-      return { ok: true, status: 200, arrayBuffer: async () => body };
-    }
+      return byteStream(body);
+    },
+    'cli/cli'
   );
   assert.equal(fetches.length, 2);
   assert.equal(fetches.every((call) => call.authorization === null), true);
@@ -1041,6 +1082,131 @@ test('a captured cli/cli attestation verifies from bundle_url after a foreign en
   assert.equal(atIndexOne.subjectDigest, second);
   assert.equal(atIndexOne.repository, 'living-proof-labs/robot-capability-specs');
   assert.equal(atIndexOne.workflowPath, '.github/workflows/build.yml');
+});
+
+test('a later attestation matches when the first entry is a different repository', async () => {
+  const digestHex = 'ab'.repeat(32);
+  const digest = `sha256:${digestHex}`;
+  const selected = await openAttestations(
+    [
+      attestationEntry('https://github.com/other/other', digestHex, '.github/workflows/foreign.yml'),
+      attestationEntry('https://github.com/cli/cli', digestHex, '.github/workflows/deployment.yml'),
+    ],
+    digest,
+    async () => {
+      throw new Error('inline bundles are not fetched');
+    },
+    'cli/cli'
+  );
+  assert.equal(selected.repository, 'cli/cli');
+  assert.equal(selected.subjectDigest, digest);
+  assert.equal(selected.workflowPath, '.github/workflows/deployment.yml');
+  assert.match(selected.reasons.join('; '), /entry 0:.*repository other\/other/);
+  assert.doesNotMatch(selected.reasons.join('; '), /entry 1/);
+
+  const missed = await openAttestations(
+    [
+      attestationEntry('https://github.com/other/other', digestHex),
+      attestationEntry('https://github.com/also/wrong', digestHex),
+    ],
+    digest,
+    async () => {
+      throw new Error('inline bundles are not fetched');
+    },
+    'cli/cli'
+  );
+  assert.equal(missed.match, null);
+  assert.match(missed.error, /entry 0:.*repository other\/other/);
+  assert.match(missed.error, /entry 1:.*repository also\/wrong/);
+});
+
+test('bundle_url is https on the attestation host and the body is capped', async () => {
+  const digest = `sha256:${'ab'.repeat(32)}`;
+  let calls = 0;
+  await assert.rejects(
+    () =>
+      openAttestations(
+        [{ bundle: null, bundle_url: 'http://tmaproduction.blob.core.windows.net/a.sn' }],
+        digest,
+        async () => {
+          calls += 1;
+          throw new Error('fetched');
+        },
+        'cli/cli'
+      ),
+    /bundle_url must be https/
+  );
+  await assert.rejects(
+    () =>
+      openAttestations(
+        [{ bundle: null, bundle_url: 'https://evil.example/a.sn' }],
+        digest,
+        async () => {
+          calls += 1;
+          throw new Error('fetched');
+        },
+        'cli/cli'
+      ),
+    /bundle_url host is not allowed\. expected tmaproduction\.blob\.core\.windows\.net, found evil\.example/
+  );
+  assert.equal(calls, 0);
+  let reads = 0;
+  await assert.rejects(
+    () =>
+      openAttestations(
+        [{ bundle: null, bundle_url: 'https://tmaproduction.blob.core.windows.net/a.sn' }],
+        digest,
+        async (url, options) => {
+          assert.equal(options, undefined);
+          return {
+            ok: true,
+            status: 200,
+            headers: { get: (name) => (name.toLowerCase() === 'content-length' ? String(MAX_BUNDLE_BYTES + 1) : null) },
+            body: {
+              getReader() {
+                return {
+                  async read() {
+                    reads += 1;
+                    throw new Error('body was read');
+                  },
+                };
+              },
+            },
+          };
+        },
+        'cli/cli'
+      ),
+    new RegExp(`bundle_url content-length ${MAX_BUNDLE_BYTES + 1} exceeds ${MAX_BUNDLE_BYTES} bytes`)
+  );
+  assert.equal(reads, 0);
+  await assert.rejects(
+    () =>
+      openAttestations(
+        [{ bundle: null, bundle_url: 'https://tmaproduction.blob.core.windows.net/a.sn' }],
+        digest,
+        async () => ({
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          body: {
+            getReader() {
+              let sent = false;
+              return {
+                async read() {
+                  if (sent) return { done: true, value: undefined };
+                  sent = true;
+                  return { done: false, value: { byteLength: MAX_BUNDLE_BYTES + 1 } };
+                },
+                async cancel() {},
+                releaseLock() {},
+              };
+            },
+          },
+        }),
+        'cli/cli'
+      ),
+    new RegExp(`bundle_url exceeded ${MAX_BUNDLE_BYTES} bytes`)
+  );
 });
 
 test('README says a tag bump also updates the lock commit and digest', () => {
