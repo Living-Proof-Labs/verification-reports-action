@@ -54,7 +54,7 @@ const SPECS = [
     expectedRepository: 'Living-Proof-Labs/livingproof-worlds',
     kind: 'files',
     fields: { repository: 'required', tag: 'required', commit: 'optional', sha256: 'optional' },
-    read: (lock, sources) => fromWorld(lock.world, sources?.world),
+    read: (lock, sources) => fromWorld(lock.world, sources?.world, lock.sources?.world),
   },
   {
     name: 'livingproof-evaluator-scenario',
@@ -79,7 +79,9 @@ const SPECS = [
     read: (lock, sources) =>
       fromRelease(
         lock.evaluators?.['livingproof-evaluator-run'],
-        sources?.evaluators?.['livingproof-evaluator-run']
+        sources?.evaluators?.['livingproof-evaluator-run'],
+        false,
+        { ignoreDefinitionWithoutLock: true }
       ),
   },
   {
@@ -114,9 +116,11 @@ function lockRaw(entry) {
   };
 }
 
-function fromRelease(lockEntry, tomlEntry, withFiles = false) {
-  const repository = text(tomlEntry?.repository) || text(lockEntry?.repository);
-  const tag = text(tomlEntry?.tag) || text(lockEntry?.tag);
+function fromRelease(lockEntry, tomlEntry, withFiles = false, options = {}) {
+  const lockOmitsPin = lockEntry == null || (lockEntry.repository == null && lockEntry.tag == null);
+  const useDefinition = !(options.ignoreDefinitionWithoutLock && lockOmitsPin);
+  const repository = (useDefinition ? text(tomlEntry?.repository) : '') || text(lockEntry?.repository);
+  const tag = (useDefinition ? text(tomlEntry?.tag) : '') || text(lockEntry?.tag);
   if (!repository && !tag && !lockEntry && !tomlEntry) return null;
   const files = {};
   const raw = lockRaw(lockEntry);
@@ -133,7 +137,7 @@ function fromRelease(lockEntry, tomlEntry, withFiles = false) {
   };
 }
 
-function fromWorld(lockWorld, tomlWorld) {
+function fromWorld(lockWorld, tomlWorld, sourceWorld) {
   const repository = text(tomlWorld?.repository) || text(lockWorld?.repository);
   const tag = text(tomlWorld?.tag) || text(lockWorld?.tag);
   const id = text(tomlWorld?.id) || text(lockWorld?.id);
@@ -152,6 +156,7 @@ function fromWorld(lockWorld, tomlWorld) {
     worldVersion: version,
     lockRaw: lockRaw(lockWorld),
     definitionRaw: lockRaw(tomlWorld),
+    sourceWorld: sourceWorld && typeof sourceWorld === 'object' ? sourceWorld : null,
   };
 }
 
@@ -174,7 +179,7 @@ function requirePin(spec, raw) {
   const image = spec.defaultImage || '';
   if (!raw.repository && spec.defaultRepository) raw.repository = spec.defaultRepository;
   if (!raw.tag && spec.defaultTag) raw.tag = spec.defaultTag;
-  assertConsumedLock(spec, raw.repository, raw.tag, image, raw.lockRaw, raw.definitionRaw);
+  assertConsumedLock(spec, raw.repository, raw.tag, image, raw.lockRaw, raw.definitionRaw, raw.sourceWorld);
   const segments = raw.repository.split('/');
   if (
     !REPOSITORY.test(raw.repository) ||
@@ -204,12 +209,13 @@ function requirePin(spec, raw) {
     name: spec.name,
     kind: spec.kind,
     workflow: Boolean(spec.workflow),
-    repository: raw.repository,
     tag: raw.tag,
     image,
     paths: Object.keys(raw.files).sort(),
     lockField: spec.lockField,
     lockRaw: raw.lockRaw,
+    sourceWorld: raw.sourceWorld ?? null,
+    repository: spec.expectedRepository,
   };
 }
 
@@ -247,7 +253,7 @@ function assertExpectedRepository(spec, value, where) {
   );
 }
 
-function assertConsumedLock(spec, repository, tag, image, raw, definition) {
+function assertConsumedLock(spec, repository, tag, image, raw, definition, sourceWorld) {
   const values = raw ?? {};
   const defined = definition ?? {};
   if (defined.repository !== undefined && defined.repository !== null) {
@@ -256,6 +262,19 @@ function assertConsumedLock(spec, repository, tag, image, raw, definition) {
   }
   if (defined.tag !== undefined && defined.tag !== null) {
     assertLockString(spec.name, `${spec.lockField}.tag`, defined.tag, FIELD_FORM.tag);
+  }
+  const lockOmitsPin = values.repository == null && values.tag == null;
+  if (spec.defaultTag && lockOmitsPin) {
+    if (defined.tag != null && defined.tag !== spec.defaultTag) {
+      throw new ReportError(
+        `${spec.name}: ${spec.lockField}.tag is not what scenario.yml runs. expected ${spec.defaultTag}, found ${defined.tag}.`
+      );
+    }
+    if (defined.repository != null && !sameRepository(defined.repository, spec.expectedRepository)) {
+      throw new ReportError(
+        `${spec.name}: ${spec.lockField}.repository is not what scenario.yml runs. expected ${spec.expectedRepository}, found ${defined.repository}.`
+      );
+    }
   }
   for (const [key, rule] of Object.entries(spec.fields)) {
     if (key === 'files') continue;
@@ -290,6 +309,17 @@ function assertConsumedLock(spec, repository, tag, image, raw, definition) {
     );
   }
   const files = values.files;
+  if (spec.name === 'livingproof-worlds') {
+    const hasSha = values.sha256 !== undefined && values.sha256 !== null && values.sha256 !== '';
+    const sourceSha = sourceWorld && typeof sourceWorld === 'object' ? sourceWorld.sha256 : undefined;
+    const hasSource = sourceSha !== undefined && sourceSha !== null && sourceSha !== '';
+    if (!hasSha && !hasSource) {
+      throw new ReportError(
+        `${spec.name}: world is unbound. expected world.sha256 or sources.world, found neither.`
+      );
+    }
+    if (hasSource) assertLockString(spec.name, 'sources.world.sha256', sourceSha, FIELD_FORM.sha256);
+  }
   if (files !== undefined && files !== null && spec.fields.files) {
     if (typeof files !== 'object' || Array.isArray(files)) {
       throw new ReportError(
@@ -333,13 +363,17 @@ export function assertLockAgrees(pin, resolved) {
       `${pin.name}: ${pin.lockField}.digest differs from the resolved tag. expected ${resolved.digest}, found ${raw.digest}.`
     );
   }
-  if (typeof raw.sha256 === 'string') {
-    const fileHash = (resolved.digest || '').replace(/^sha256:/, '');
-    if (raw.sha256 !== fileHash) {
-      throw new ReportError(
-        `${pin.name}: ${pin.lockField}.sha256 differs from the resolved tag. expected ${fileHash}, found ${raw.sha256}.`
-      );
-    }
+  const fileHash = (resolved.digest || '').replace(/^sha256:/, '');
+  if (typeof raw.sha256 === 'string' && raw.sha256 !== fileHash) {
+    throw new ReportError(
+      `${pin.name}: ${pin.lockField}.sha256 differs from the resolved tag. expected ${fileHash}, found ${raw.sha256}.`
+    );
+  }
+  const sourceSha = pin.sourceWorld?.sha256;
+  if (typeof sourceSha === 'string' && sourceSha !== fileHash) {
+    throw new ReportError(
+      `${pin.name}: sources.world.sha256 differs from the resolved tag. expected ${fileHash}, found ${sourceSha}.`
+    );
   }
   if (raw.files && typeof raw.files === 'object') {
     for (const [path, locked] of Object.entries(raw.files)) {

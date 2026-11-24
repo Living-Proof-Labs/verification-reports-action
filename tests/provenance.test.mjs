@@ -700,7 +700,7 @@ test('release notes yield the tag commit and not the image digest', () => {
     '([0c00c388c693012392da0c1cd391046c752e9b3c](https://github.com/Living-Proof-Labs/capability-verifier/commit/0c00c388c693012392da0c1cd391046c752e9b3c))',
     '`ghcr.io/living-proof-labs/capability-verifier-hallway:2.11.4@sha256:c76f1d53914b6ba4f364ccb906d9580153e300f6160c6c7ed169e3d7e4456209`',
   ].join('\n');
-  assert.equal(publishedCommitFromRelease({ target_commitish: 'main', body }, { published: false }), COMMIT);
+  assert.equal(publishedCommitFromRelease({ target_commitish: 'main', body }), null);
   assert.equal(
     imageDigestFromBody(body, 'ghcr.io/living-proof-labs/capability-verifier-hallway'),
     'sha256:c76f1d53914b6ba4f364ccb906d9580153e300f6160c6c7ed169e3d7e4456209'
@@ -729,7 +729,8 @@ test('release notes yield the tag commit and not the image digest', () => {
   assert.equal(attestation.gitCommit, COMMIT);
   assert.equal(attestation.subjectDigest, IMAGE);
   assert.equal(attestation.repository, 'Living-Proof-Labs/capability-verifier');
-  assert.equal(publishedCommitFromRelease({ target_commitish: 'main', body }, attestation), COMMIT);
+  assert.equal(publishedCommitFromRelease({ target_commitish: 'main', body }), null);
+  assert.equal(publishedCommitFromRelease({ target_commitish: COMMIT, body }), COMMIT);
   assert.deepEqual(parseSha256Sums(`${FILE_HASH}  worlds/hallway-corner/0.2.0/world.json\n`), {
     'worlds/hallway-corner/0.2.0/world.json': FILE_HASH,
   });
@@ -785,7 +786,7 @@ test('the GitHub client resolves a release, peels a tag, and does not send the t
   });
   assert.equal(evidence.releaseFound, true);
   assert.equal(evidence.tagCommit, COMMIT);
-  assert.equal(evidence.publishedCommit, COMMIT);
+  assert.equal(evidence.publishedCommit, null);
   assert.equal(evidence.files[pin.paths[0]].found, fileHash);
   assert.equal(evidence.files[pin.paths[0]].published, fileHash);
   assert.deepEqual(evidence.attestation, { published: false, status: 404 });
@@ -1287,10 +1288,10 @@ test('a repository other than the expected one is refused', async () => {
   lock.releases.verifier.repository = 'living-proof-labs/capability-verifier';
   lock.evaluators['livingproof-evaluator-scenario'].repository = 'LIVING-PROOF-LABS/livingproof-evaluator-scenario';
   const records = await assertPinnedInputs(item(lock), client());
-  assert.equal(records.find((record) => record.name === 'capability-verifier').repository, 'living-proof-labs/capability-verifier');
+  assert.equal(records.find((record) => record.name === 'capability-verifier').repository, 'Living-Proof-Labs/capability-verifier');
   assert.equal(
     records.find((record) => record.name === 'livingproof-evaluator-scenario').repository,
-    'LIVING-PROOF-LABS/livingproof-evaluator-scenario'
+    'Living-Proof-Labs/livingproof-evaluator-scenario'
   );
 });
 
@@ -1345,7 +1346,6 @@ test('a tag-only evaluator-run lock passes', async () => {
   delete lock.evaluators['livingproof-evaluator-run'].commit;
   delete lock.releases.runner.commit;
   delete lock.world.commit;
-  delete lock.world.sha256;
   delete lock.releases.specs.files;
   const records = await assertPinnedInputs(item(lock), client());
   const evaluatorRun = records.find((record) => record.name === 'livingproof-evaluator-run');
@@ -1370,7 +1370,6 @@ test('a present optional lock field must still be valid', async () => {
     [['evaluators', 'livingproof-evaluator-run'], 'repository', 'livingproof-evaluator-run'],
     [['releases', 'runner'], 'commit', 'livingproof-sim-mujoco'],
     [['world'], 'commit', 'livingproof-worlds'],
-    [['world'], 'sha256', 'livingproof-worlds'],
   ];
   for (const [parts, field, input] of optional) {
     const absent = sampleLock();
@@ -1386,6 +1385,125 @@ test('a present optional lock field must still be valid', async () => {
       );
     }
   }
+});
+
+test('a definition cannot steer the evaluator-run default', async () => {
+  const lock = sampleLock();
+  delete lock.evaluators['livingproof-evaluator-run'];
+  const steered = {
+    evaluators: {
+      'livingproof-evaluator-run': {
+        repository: 'Living-Proof-Labs/livingproof-evaluator-run',
+        tag: 'v1.8.11',
+      },
+    },
+  };
+  await assert.rejects(
+    () => assertPinnedInputs(item(lock, steered), client()),
+    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.tag is not what scenario\.yml runs\. expected v1\.5\.0, found v1\.8\.11/
+  );
+  const matched = await assertPinnedInputs(
+    item(lock, {
+      evaluators: {
+        'livingproof-evaluator-run': {
+          repository: 'Living-Proof-Labs/livingproof-evaluator-run',
+          tag: 'v1.5.0',
+        },
+      },
+    }),
+    client()
+  );
+  const record = matched.find((entry) => entry.name === 'livingproof-evaluator-run');
+  assert.equal(record.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
+  assert.equal(record.tag, 'v1.5.0');
+  assert.equal(record.commit, COMMIT);
+});
+
+test('a world with neither sha256 nor sources.world is unbound', async () => {
+  const lock = sampleLock();
+  delete lock.world.sha256;
+  await assert.rejects(
+    () => assertPinnedInputs(item(lock), client()),
+    /livingproof-worlds: world is unbound\. expected world\.sha256 or sources\.world, found neither/
+  );
+  lock.sources = {
+    world: { path: 'worlds/hallway-corner/0.2.0/world.json', sha256: FILE_HASH },
+  };
+  const bound = await assertPinnedInputs(item(lock), client());
+  assert.equal(bound.find((record) => record.name === 'livingproof-worlds').status, 'not-published');
+  lock.sources.world.sha256 = 'ff'.repeat(32);
+  await assert.rejects(
+    () => assertPinnedInputs(item(lock), client()),
+    /livingproof-worlds: sources\.world\.sha256 differs from the resolved tag/
+  );
+});
+
+test('changelog SHAs are not the published commit and an annotated tag peels to the commit', async () => {
+  const changelog = [OTHER, 'ab'.repeat(20), COMMIT]
+    .map((sha) => `([${sha}](https://github.com/Living-Proof-Labs/livingproof-worlds/commit/${sha}))`)
+    .join('\n');
+  assert.equal(publishedCommitFromRelease({ target_commitish: 'main', body: changelog }), null);
+  assert.equal(publishedCommitFromRelease({ target_commitish: COMMIT, body: changelog }), COMMIT);
+  const pin = collectPins(item()).find((entry) => entry.name === 'livingproof-sim-mujoco');
+  const annotated = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const inner = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  function respond(status, body, headers = {}) {
+    return {
+      status,
+      ok: status >= 200 && status < 300,
+      headers: { get: (name) => headers[name.toLowerCase()] ?? null },
+      json: async () => body,
+      text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
+      arrayBuffer: async () => new Uint8Array(),
+      body: null,
+    };
+  }
+  const seen = [];
+  const evidence = await resolvePin(pin, {
+    token: '',
+    api: 'https://api.github.com',
+    fetch: async (url) => {
+      seen.push(url);
+      if (url.includes('/releases/tags/')) {
+        return respond(200, { tag_name: pin.tag, target_commitish: 'main', body: changelog, assets: [] });
+      }
+      if (url.endsWith(`/git/ref/tags/${pin.tag}`)) {
+        return respond(200, { object: { type: 'tag', sha: annotated } });
+      }
+      if (url.endsWith(`/git/tags/${annotated}`)) {
+        return respond(200, { object: { type: 'tag', sha: inner } });
+      }
+      if (url.endsWith(`/git/tags/${inner}`)) {
+        return respond(200, { object: { type: 'commit', sha: COMMIT } });
+      }
+      if (url.includes('/attestations/')) return respond(404, { message: 'Not Found' });
+      if (url.startsWith('https://codeload.github.com/')) return respond(200, '', {});
+      return respond(500, { message: url });
+    },
+  });
+  assert.equal(evidence.tagCommit, COMMIT);
+  assert.equal(evidence.publishedCommit, null);
+  assert.equal(seen.filter((url) => url.includes('/git/tags/')).length, 2);
+  const record = checkPin(pin, evidence);
+  assert.equal(record.commit, COMMIT);
+  assert.equal(record.status, 'resolved');
+  await assert.rejects(
+    () =>
+      resolvePin(pin, {
+        token: '',
+        api: 'https://api.github.com',
+        fetch: async (url) => {
+          if (url.includes('/releases/tags/')) {
+            return respond(200, { tag_name: pin.tag, target_commitish: OTHER, body: changelog, assets: [] });
+          }
+          if (url.includes('/git/ref/tags/')) return respond(200, { object: { type: 'commit', sha: COMMIT } });
+          if (url.includes('/attestations/')) return respond(404, {});
+          if (url.startsWith('https://codeload.github.com/')) return respond(200, '');
+          return respond(500, {});
+        },
+      }).then((found) => checkPin(pin, found)),
+    new RegExp(`livingproof-sim-mujoco: tag ${pin.tag} moved\\. expected commit ${OTHER}, found commit ${COMMIT}`)
+  );
 });
 
 test('a lock value with surrounding whitespace is refused without trimming', async () => {

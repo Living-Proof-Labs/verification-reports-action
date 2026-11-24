@@ -65,12 +65,10 @@ async function readBoundedBody(response, limit = MAX_BUNDLE_BYTES) {
 const SHA = /^[0-9a-f]{40}$/;
 const DOWNLOAD_LIMIT = 128 * 1024 * 1024;
 
+/** A full SHA in target_commitish, or null. Release-note changelog SHAs are not commits. */
 export function publishedCommitFromRelease(release) {
-  const target = typeof release?.target_commitish === 'string' ? release.target_commitish : '';
-  if (SHA.test(target)) return target;
-  const body = typeof release?.body === 'string' ? release.body : '';
-  const found = [...body.matchAll(/(?<![0-9a-f])([0-9a-f]{40})(?![0-9a-f])/g)].map((match) => match[1]);
-  return found.length > 0 ? found[found.length - 1] : null;
+  const target = typeof release?.target_commitish === 'string' ? release.target_commitish.trim() : '';
+  return SHA.test(target) ? target : null;
 }
 
 export function parseSha256Sums(text) {
