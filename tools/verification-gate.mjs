@@ -6,7 +6,7 @@
 // and only when .github/workflows/verify.yml already skips it.
 import { pathToFileURL } from 'node:url';
 
-export const verificationJobs = ['verify', 'version', 'action-smoke', 'action-smoke-check'];
+export const verificationJobs = ['verify', 'version', 'action-smoke', 'action-smoke-check', 'site-smoke'];
 
 export function versionRuns(event, baseRef = '') {
   return event === 'push' || (event === 'pull_request' && baseRef === 'main');

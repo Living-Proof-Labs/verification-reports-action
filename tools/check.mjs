@@ -8,16 +8,26 @@ const requiredFiles = [
   'README.md',
   'Taskfile.yml',
   'action.yml',
+  'site/action.yml',
   'docs/decisions/0001-composite-vs-reusable-workflow.md',
   'docs/provenance.md',
   '.github/workflows/report.yml',
   'package.json',
+  'pyproject.toml',
+  'uv.lock',
   'renovate.json',
   'src/run.mjs',
   'src/plan.mjs',
   'src/collect.mjs',
   'src/fixture-run.mjs',
+  'src/reports_site.py',
+  'src/site_action.py',
+  'tools/site_fixture.py',
   'tests/action.test.mjs',
+  'tests/collect.test.mjs',
+  'tests/site-action.test.mjs',
+  'tests/workflows.test.mjs',
+  'tests/test_site.py',
   'tests/fixtures/robot/verifications/fixture-hallway.toml',
   'tests/fixtures/robot/verifications/fixture-scenario.toml',
 ];
@@ -28,10 +38,12 @@ for (const file of requiredFiles) {
   }
 }
 
-const actionYml = readFileSync('action.yml', 'utf8');
-for (const key of ['name:', 'description:', 'inputs:', 'outputs:', 'runs:', 'using: composite']) {
-  if (!actionYml.includes(key)) {
-    throw new Error(`action.yml is missing required field: ${key}`);
+for (const actionPath of ['action.yml', 'site/action.yml']) {
+  const actionYml = readFileSync(actionPath, 'utf8');
+  for (const key of ['name:', 'description:', 'inputs:', 'outputs:', 'runs:', 'using: composite']) {
+    if (!actionYml.includes(key)) {
+      throw new Error(`${actionPath} is missing required field: ${key}`);
+    }
   }
 }
 
@@ -42,4 +54,6 @@ for (const directory of ['src', 'tests', 'tools']) {
   }
 }
 
-console.log('Static checks passed: repository files, action.yml metadata, and JavaScript syntax are valid.');
+console.log(
+  'Static checks passed: repository files, action metadata, and JavaScript syntax are valid.'
+);
