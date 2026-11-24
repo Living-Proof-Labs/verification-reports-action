@@ -393,6 +393,25 @@ test('a robot path of parameters.json is accepted when the scenario file hash ma
   assert.equal(record.status, 'resolved');
 });
 
+test("path parameters.json with another scenario's hash is refused", () => {
+  const lock = specsReadyLock();
+  lock.sources.parameters = { path: 'parameters.json', sha256: HALLWAY_HASH };
+  const specs = collectPins(item(lock)).find((pin) => pin.name === 'robot-capability-specs');
+  assert.equal(specs.parametersFile, CORNER_PARAMETERS);
+  const description = lock.releases.specs.files['specs/scenarios/walk-corner-left/description.json'];
+  assert.throws(
+    () =>
+      checkPin(
+        specs,
+        specsEvidence(specs, {
+          [CORNER_PARAMETERS]: CORNER_HASH,
+          'specs/scenarios/walk-corner-left/description.json': description,
+        })
+      ),
+    new RegExp(`sources\\.parameters\\.sha256 differs from the resolved tag\\. expected ${CORNER_HASH}, found ${HALLWAY_HASH}`)
+  );
+});
+
 test("another scenario's parameters file is refused", () => {
   const lock = specsReadyLock();
   lock.sources.parameters = { path: HALLWAY_PARAMETERS, sha256: HALLWAY_HASH };
@@ -480,6 +499,74 @@ test('resolved trial inputs refuse a verifier image with trailing bytes or upper
     record.name === 'capability-verifier' ? { ...record, digest: `sha256:${'AB'.repeat(32)}` } : record
   );
   assert.throws(() => resolvedTrialInputs(uppercase), /verifier-image is not a resolved image ref/);
+});
+
+test('resolved trial inputs refuse a reporter image with trailing bytes or uppercase hex', () => {
+  const trailing = trialRecords().map((record) =>
+    record.name === 'livingproof-capability-report'
+      ? { ...record, digest: `sha256:${'cd'.repeat(32)}trailing` }
+      : record
+  );
+  assert.throws(() => resolvedTrialInputs(trailing), /reporter-image is not a resolved image ref/);
+  const uppercase = trialRecords().map((record) =>
+    record.name === 'livingproof-capability-report'
+      ? { ...record, digest: `sha256:${'CD'.repeat(32)}` }
+      : record
+  );
+  assert.throws(() => resolvedTrialInputs(uppercase), /reporter-image is not a resolved image ref/);
+});
+
+test('a malformed sha256 string is refused at every FIELD_FORM.sha256 check', () => {
+  const short = 'ab'.repeat(31);
+  const upper = 'AB'.repeat(32);
+  const nonHex = 'g'.repeat(64);
+  const long = 'a'.repeat(65);
+  const cases = [
+    ['sources.parameters.sha256 short', () => {
+      const lock = specsReadyLock();
+      lock.sources.parameters = { path: 'parameters.json', sha256: short };
+      collectPins(item(lock));
+    }, /sources\.parameters\.sha256 is not the expected form/],
+    ['sources.parameters.sha256 uppercase', () => {
+      const lock = specsReadyLock();
+      lock.sources.parameters = { path: 'parameters.json', sha256: upper };
+      collectPins(item(lock));
+    }, /sources\.parameters\.sha256 is not the expected form/],
+    ['sources.parameters.sha256 non-hex', () => {
+      const lock = specsReadyLock();
+      lock.sources.parameters = { path: 'parameters.json', sha256: nonHex };
+      collectPins(item(lock));
+    }, /sources\.parameters\.sha256 is not the expected form/],
+    ['sources.parameters.sha256 65 characters', () => {
+      const lock = specsReadyLock();
+      lock.sources.parameters = { path: 'parameters.json', sha256: long };
+      collectPins(item(lock));
+    }, /sources\.parameters\.sha256 is not the expected form/],
+    ['world.sha256 uppercase', () => {
+      const lock = specsReadyLock();
+      lock.world.sha256 = upper;
+      collectPins(item(lock));
+    }, /world\.sha256 is not the expected form/],
+    ['sources.world.sha256 short', () => {
+      const lock = specsReadyLock();
+      lock.sources.world.sha256 = short;
+      collectPins(item(lock));
+    }, /sources\.world\.sha256 is not the expected form/],
+    ['releases.specs.files non-hex', () => {
+      const lock = specsReadyLock();
+      lock.releases.specs.files['specs/scenarios/walk-corner-left/description.json'] = nonHex;
+      collectPins(item(lock));
+    }, /releases\.specs\.files\[specs\/scenarios\/walk-corner-left\/description\.json\] is not the expected form/],
+    ['releases.specs.files 65 characters', () => {
+      const lock = specsReadyLock();
+      const file = 'specs/scenarios/walk-corner-left/description.json';
+      lock.releases.specs.files[file] = long;
+      collectPins(item(lock));
+    }, /releases\.specs\.files\[specs\/scenarios\/walk-corner-left\/description\.json\] is not the expected form/],
+  ];
+  for (const [label, run, pattern] of cases) {
+    assert.throws(run, pattern, label);
+  }
 });
 
 test('resolved trial inputs refuse each missing record on its own', () => {
