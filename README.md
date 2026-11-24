@@ -125,7 +125,7 @@ Use `Living-Proof-Labs/verification-reports-action/site` after downloading the `
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
 | `runs-dir` | Yes | — | Directory of per-scenario run folders (`report.{html,json,md,txt}`, `SHA256SUMS`, `run.json`). |
-| `output-dir` | No | `reports` | Destination path for the static `reports/` tree (for example `artifacts/docs/html/reports`). It is resolved inside `GITHUB_WORKSPACE`, with symlinks followed. Paths that escape the workspace, name the workspace root, or contain `..` or `.git` are refused. |
+| `output-dir` | No | `reports` | Destination path for the static `reports/` tree (for example `artifacts/docs/html/reports`). It is resolved inside `GITHUB_WORKSPACE`, with symlinks followed. Paths that escape the workspace, name the workspace root, or contain `..`, `.git` or a control character are refused. |
 | `evidence-retention-days` | No | `7` | Days to retain copied MCAP, video, and media files before pruning. |
 | `restore-history` | No | `auto` | Restore earlier runs from the last deployed Pages artifact (`auto`, `true`, or `false`). |
 | `site-url` | No | empty | Optional live documentation URL checked when no Pages artifact is listed. |

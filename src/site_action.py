@@ -44,6 +44,10 @@ def _parse_positive_int(name: str, raw: str, default: int) -> int:
     return int(text)
 
 
+def _has_control_character(value: str) -> bool:
+    return any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+
+
 def _validate_output_dir(raw: str, workspace: str) -> tuple[str, Path]:
     """Return `(as_given, resolved)` for an output-dir that stays inside the workspace.
 
@@ -51,8 +55,11 @@ def _validate_output_dir(raw: str, workspace: str) -> tuple[str, Path]:
     the check never silently turns off. Symlinks are resolved before the containment
     check, so a link inside the workspace that points elsewhere is refused.
     """
+    if _has_control_character(raw):
+        # A newline here would also forge extra lines in GITHUB_OUTPUT.
+        raise site_tool.SiteError("output-dir must not contain control characters.")
     cleaned = raw.strip()
-    if not cleaned or "\x00" in cleaned or "\\" in cleaned:
+    if not cleaned or "\\" in cleaned:
         raise site_tool.SiteError("output-dir must be a non-empty relative directory path.")
     candidate = Path(cleaned)
     if ".." in candidate.parts or ".git" in candidate.parts or cleaned in {".", "./"}:
@@ -76,6 +83,8 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
             "runs-dir must be a non-empty path to the directory of per-scenario run folders."
         )
     raw_output_input = env_map.get("INPUT_OUTPUT_DIR")
+    if raw_output_input is not None and _has_control_character(raw_output_input):
+        raise site_tool.SiteError("output-dir must not contain control characters.")
     if raw_output_input is not None and not raw_output_input.strip():
         raise site_tool.SiteError("output-dir must be a non-empty directory path.")
     output_dir_raw = (raw_output_input or "reports").strip()
@@ -145,11 +154,15 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         raise site_tool.SiteError("Generated reports/ check failed: " + "; ".join(issues))
 
     marker = site_tool.read_json_object(reports_dir / site_tool.MARKER)
+    if _has_control_character(env_map.get("INPUT_ARTIFACT_NAME") or ""):
+        raise site_tool.SiteError("artifact-name must not contain control characters.")
     artifact_name = (env_map.get("INPUT_ARTIFACT_NAME") or "").strip()
     if not artifact_name:
         run_id_part = (env_map.get("GITHUB_RUN_ID") or "local").strip()
         attempt_part = (env_map.get("GITHUB_RUN_ATTEMPT") or "1").strip()
         artifact_name = f"verification-reports-site-{run_id_part}-{attempt_part}"
+    if _has_control_character(artifact_name):
+        raise site_tool.SiteError("artifact-name must not contain control characters.")
 
     outputs = {
         "reports-dir": output_dir_given,

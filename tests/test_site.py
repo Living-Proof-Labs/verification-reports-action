@@ -1511,3 +1511,77 @@ def test_output_dir_symlink_to_a_parent_of_the_workspace_is_refused(tmp_path: Pa
             }
         )
     assert not (tmp_path / "escaped").exists()
+
+
+# ---------------------------------------------------------------- Vera's PR 16 findings (Rivet)
+
+
+@pytest.mark.parametrize(
+    ("value", "allowed"),
+    [
+        # Characters main's SITE_PATH allows. Gemini's split had dropped the apostrophe.
+        ("evidence/a'b.html", True),
+        ("evidence/trial's-video.mp4", True),
+        ("evidence/a~b!c$d&e(f)g*h+i,j;k=l@m%20n-o_p.q", True),
+        ("evidence/seed-1/trials.mcap", True),
+        # Characters main refuses. Gemini's split had added the colon.
+        ("evidence/a:b", False),
+        ("a:b", False),
+        ("evidence/a b.html", False),
+        ('evidence/a"b.html', False),
+        ("evidence/a<b>.html", False),
+        ("evidence/a\\b.html", False),
+        ("", False),
+        ("x" * 241, False),
+    ],
+)
+def test_site_path_charset_matches_main(value: str, allowed: bool):
+    import reports_common
+
+    # Reverting the SITE_PATH fix (dropping ' or adding :) fails this table.
+    assert (reports_common.SITE_PATH.fullmatch(value) is not None) is allowed
+    assert (reports_common.site_path(value) == value) is allowed
+
+
+@pytest.mark.parametrize(
+    "value", ["a\x01b", "evidence/\x00x", "https://example.com/\x7f", "x\x1fy"]
+)
+def test_safe_href_refuses_control_characters_that_urlsplit_keeps(value: str):
+    import reports_render
+
+    # urlsplit strips tab and newline itself. These survive it, so only safe_href's own
+    # control-character check refuses them. Removing that check fails this test.
+    assert reports_render.safe_href(value) is None
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("INPUT_OUTPUT_DIR", "docs/reports\nartifact-only=false"),
+        ("INPUT_OUTPUT_DIR", "docs/reports\r"),
+        ("INPUT_OUTPUT_DIR", "docs/\x00reports"),
+        ("INPUT_OUTPUT_DIR", "docs/\x1breports"),
+        ("INPUT_ARTIFACT_NAME", "site\nreports-dir=/etc"),
+        ("INPUT_ARTIFACT_NAME", "site\n"),
+    ],
+)
+def test_site_action_refuses_control_characters_before_writing_github_output(
+    tmp_path: Path, name: str, value: str
+):
+    runs_in = tmp_path / "runs"
+    site_fixture.write(runs_in, run_id="8", created="2026-11-23T03:00:00Z")
+    gh_out = tmp_path / "github_output.txt"
+    env = {
+        "INPUT_RUNS_DIR": str(runs_in),
+        "INPUT_OUTPUT_DIR": "docs/reports",
+        "INPUT_RESTORE_HISTORY": "false",
+        "INPUT_UPLOAD_ARTIFACT": "false",
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_WORKSPACE": str(tmp_path),
+        "GITHUB_OUTPUT": str(gh_out),
+    }
+    env[name] = value
+    # Removing the control-character check lets the newline forge a GITHUB_OUTPUT line.
+    with pytest.raises(site_tool.SiteError, match="control characters"):
+        site_action.run_site_action(env)
+    assert not gh_out.exists()
