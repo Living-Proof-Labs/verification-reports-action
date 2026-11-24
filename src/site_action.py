@@ -111,6 +111,17 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
     should_restore = restore_mode == "true" or (restore_mode == "auto" and not is_pr)
     should_upload = upload_mode == "true" or (upload_mode == "auto" and is_pr)
 
+    raw_artifact_name = env_map.get("INPUT_ARTIFACT_NAME") or ""
+    if _has_control_character(raw_artifact_name):
+        raise site_tool.SiteError("artifact-name must not contain control characters.")
+    artifact_name = raw_artifact_name.strip()
+    if not artifact_name:
+        run_id_part = (env_map.get("GITHUB_RUN_ID") or "local").strip()
+        attempt_part = (env_map.get("GITHUB_RUN_ATTEMPT") or "1").strip()
+        artifact_name = f"verification-reports-site-{run_id_part}-{attempt_part}"
+    if _has_control_character(artifact_name):
+        raise site_tool.SiteError("artifact-name must not contain control characters.")
+
     runs_dir = Path(runs_dir_raw)
 
     if should_restore:
@@ -154,15 +165,6 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         raise site_tool.SiteError("Generated reports/ check failed: " + "; ".join(issues))
 
     marker = site_tool.read_json_object(reports_dir / site_tool.MARKER)
-    if _has_control_character(env_map.get("INPUT_ARTIFACT_NAME") or ""):
-        raise site_tool.SiteError("artifact-name must not contain control characters.")
-    artifact_name = (env_map.get("INPUT_ARTIFACT_NAME") or "").strip()
-    if not artifact_name:
-        run_id_part = (env_map.get("GITHUB_RUN_ID") or "local").strip()
-        attempt_part = (env_map.get("GITHUB_RUN_ATTEMPT") or "1").strip()
-        artifact_name = f"verification-reports-site-{run_id_part}-{attempt_part}"
-    if _has_control_character(artifact_name):
-        raise site_tool.SiteError("artifact-name must not contain control characters.")
 
     outputs = {
         "reports-dir": output_dir_given,

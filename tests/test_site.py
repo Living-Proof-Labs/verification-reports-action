@@ -1387,6 +1387,10 @@ def test_theme_switch_markup_matches_the_packaged_styles(tmp_path: Path):
     ("value", "expected"),
     [
         ("https://github.com/x/y", "https://github.com/x/y"),
+        (
+            "https://docs.livingprooflabs.com:8443/path",
+            "https://docs.livingprooflabs.com:8443/path",
+        ),
         ("../runs/1/", "../runs/1/"),
         ("#summary", "#summary"),
         ("javascript:alert(1)", None),
@@ -1398,6 +1402,12 @@ def test_theme_switch_markup_matches_the_packaged_styles(tmp_path: Path):
         ("//evil.example/x", None),
         ("https:evil", None),
         ("https://[::1", None),
+        ("https://user:pass@example.com/", None),
+        ("https://user@example.com/", None),
+        ("https://exa mple.com/", None),
+        ("https://exa\tmple.com/", None),
+        ("https://-bad.example/", None),
+        ("https://example.com:99999/", None),
         ("a\\b", None),
         ("", None),
         (None, None),
@@ -1581,7 +1591,75 @@ def test_site_action_refuses_control_characters_before_writing_github_output(
         "GITHUB_OUTPUT": str(gh_out),
     }
     env[name] = value
-    # Removing the control-character check lets the newline forge a GITHUB_OUTPUT line.
+    # Removing the control-character check lets the newline forge a GITHUB_OUTPUT line,
+    # and validating artifact-name after build() would still write to docs/reports.
     with pytest.raises(site_tool.SiteError, match="control characters"):
         site_action.run_site_action(env)
+    assert not (tmp_path / "docs/reports").exists()
     assert not gh_out.exists()
+
+
+@pytest.mark.parametrize(
+    ("value", "allowed"),
+    [
+        ("evidence/a'b.html", True),
+        ("evidence/a~b!c$d&e(f)g*h+i,j;k=l@m%20n-o_p.q", True),
+        ("%2e%2e%2f", False),
+        ("%2E%2E/", False),
+        ("evidence/%2e%2e/secret", False),
+        ("a/./b", False),
+        ("./a", False),
+        ("a/.", False),
+        ("evidence/%2e/b", False),
+        ("evidence/a%00b", False),
+        ("evidence/a%01b", False),
+        ("evidence/a%1fb", False),
+        ("evidence/a%7fb", False),
+    ],
+)
+def test_site_path_refuses_encoded_traversal_dot_segments_and_encoded_controls(
+    value: str, allowed: bool
+):
+    import reports_common
+
+    assert (reports_common.site_path(value) == value) is allowed
+
+
+def test_forged_run_folder_with_recomputed_sha256sums_neutralizes_hostile_report_html(
+    tmp_path: Path,
+):
+    runs_in = tmp_path / "in"
+    hostile_html = (
+        "<!doctype html><html><body><main>"
+        "<script>alert(1)</script>"
+        "<img src='https://example.com/ok.png' onerror='alert(2)'>"
+        "<a href='javascript:alert(3)'>js</a>"
+        "<a href='javascript&#58;alert(4)'>ent</a>"
+        "<a href='http://insecure.example/x'>http</a>"
+        "<a href='https://github.com/Living-Proof-Labs/example'>safe</a>"
+        "</main></body></html>\n"
+    )
+    folder = _make_run_folder(runs_in, "hallway", run_id="909", html_override=hostile_html)
+    # Recompute SHA256SUMS as a forged run folder would.
+    (folder / "SHA256SUMS").write_text(
+        "".join(
+            f"{hashlib.sha256((folder / n).read_bytes()).hexdigest()}  {n}\n"
+            for n in site_tool.REPORT_FILES
+        ),
+        encoding="utf-8",
+    )
+
+    reports_dir = tmp_path / "reports"
+    site_tool.build(reports_dir, runs_in)
+
+    run_dir = reports_dir / "unitree-g1/stock-mujoco-hallway/runs/909"
+    for name in ("index.html", "report.html"):
+        published = (run_dir / name).read_text(encoding="utf-8")
+        assert "<script" not in published.lower()
+        assert "onerror=" not in published.lower()
+        assert "javascript:" not in published.lower()
+        assert "javascript&#58;" not in published.lower()
+        assert "http://insecure.example" not in published.lower()
+        assert "https://github.com/Living-Proof-Labs/example" in published
+
+    subprocess.run(["sha256sum", "-c", "SHA256SUMS"], cwd=run_dir, check=True, capture_output=True)

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import html
+import ipaddress
 import re
 import urllib.parse
 from pathlib import Path
@@ -97,6 +98,33 @@ def load_open_js() -> str:
     return _load_asset("open.js", "// SPDX-License-Identifier: Apache-2.0")
 
 
+_SAFE_HOST = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.?"
+)
+
+
+def _valid_https_netloc(parsed: urllib.parse.SplitResult) -> bool:
+    netloc = parsed.netloc
+    if not netloc or "@" in netloc or any(ch.isspace() for ch in netloc):
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    try:
+        _ = parsed.port
+        hostname = parsed.hostname
+    except ValueError:
+        return False
+    if not hostname:
+        return False
+    if netloc.startswith("["):
+        try:
+            ipaddress.ip_address(hostname)
+        except ValueError:
+            return False
+        return True
+    return _SAFE_HOST.fullmatch(hostname) is not None
+
+
 def safe_href(value: object) -> str | None:
     """Allow only https:// URLs and relative links; reject javascript:, data:, http:, //."""
     if not isinstance(value, str):
@@ -111,7 +139,7 @@ def safe_href(value: object) -> str | None:
     except ValueError:
         return None
     if parsed.scheme:
-        if parsed.scheme.lower() != "https" or not parsed.netloc:
+        if parsed.scheme.lower() != "https" or not _valid_https_netloc(parsed):
             return None
         return cleaned
     if parsed.netloc:

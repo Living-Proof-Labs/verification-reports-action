@@ -1097,7 +1097,7 @@ def publish_report_files(
         if isinstance(report, dict) and strip_actions_links(report):
             report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if html_text:
-        cleaned_html = strip_actions_text(html_text)
+        cleaned_html = scrub_unsafe_html(strip_actions_text(html_text))
         if expired:
             cleaned_html = scrub_expired_evidence_html(cleaned_html, days)
         (folder / "report.html").write_text(cleaned_html, encoding="utf-8")
@@ -1110,6 +1110,32 @@ def publish_report_files(
         if cleaned != text:
             path.write_text(cleaned, encoding="utf-8")
     write_published_checksums(folder)
+
+
+_SCRIPT_ELEMENT = re.compile(r"<script\b[^>]*>.*?</script\s*>", re.S | re.I)
+_HTML_TAG = re.compile(r"<[A-Za-z][^>]*>")
+_EVENT_HANDLER_ATTR = re.compile(r"""\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)""", re.I)
+_URL_ATTR = re.compile(
+    r"""\s+\b(?:href|src|action|formaction)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""",
+    re.I,
+)
+
+
+def scrub_unsafe_html(text: str) -> str:
+    """Neutralize <script>, inline event handlers, and unsafe href/src URLs in report.html."""
+    text = _SCRIPT_ELEMENT.sub("", text)
+
+    def clean_url_attr(match: re.Match) -> str:
+        raw = next((g for g in match.groups() if g is not None), "")
+        if safe_href(html.unescape(raw)) is None:
+            return ""
+        return match.group(0)
+
+    def clean_tag(match: re.Match) -> str:
+        tag = _EVENT_HANDLER_ATTR.sub("", match.group(0))
+        return _URL_ATTR.sub(clean_url_attr, tag)
+
+    return _HTML_TAG.sub(clean_tag, text)
 
 
 def scrub_expired_evidence_html(text: str, days: int) -> str:
@@ -1160,6 +1186,7 @@ def scrub_reporter_html(text: str, record: dict, *, trial: bool, expired: bool, 
     text = ACTIONS_ANCHOR.sub(unwrap, text)
     text = ACTIONS_URL.sub("", text)
     text = ARTIFACT_WORD.sub("", text)
+    text = scrub_unsafe_html(text)
     if expired:
         text = scrub_expired_evidence_html(text, days)
     return text
