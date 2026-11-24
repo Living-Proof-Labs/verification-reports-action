@@ -13,9 +13,23 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path, PurePosixPath
 
+from reports_common import (
+    ARTIFACT_WORD,
+    COMMIT_SHA,
+    EVALUATOR_ANCHOR,
+    MARKED_INTEGRITY_STATUSES,
+    RELEASE_TAG,
+    SiteError,
+    _plain_label,
+    _require_single_robot,
+    _stamp,
+    _stored_text,
+    listing_path,
+    site_path,
+)
 from reports_render import (
     ARCHIVED_REPORTS_URL,
     DOCS_HOME_URL,
@@ -36,7 +50,6 @@ from reports_restore import (
     DEFAULT_PAGES_JOBS,
     MARKER,
     PAGES_ARTIFACT,
-    SiteError,
     deployed_pages_artifact,
     extract_pages_reports,
     live_history,
@@ -78,7 +91,6 @@ ACTIONS_ANCHOR = re.compile(
     r"<a\s[^>]*?href=(['\"])([^'\"<>]*/actions/[^'\"<>]*)\1[^>]*>(.*?)</a>", re.S | re.I
 )
 ACTIONS_URL = re.compile(r"https://github\.com/\S*?/actions/\S*", re.I)
-ARTIFACT_WORD = re.compile(r"artifacts?", re.I)
 EVIDENCE_ANCHOR = re.compile(
     r"<a\s[^>]*?href=(['\"])(evidence/[^'\"<>]+)\1[^>]*>(.*?)</a>", re.S | re.I
 )
@@ -104,10 +116,7 @@ MEDIA_SUFFIXES = {
 }
 VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
 
-SITE_PATH = re.compile(r"[A-Za-z0-9._~!$&()*+,;=:@%/-]{1,240}".replace(":@", ":@"))
 SEED_LABEL = re.compile(r"^seed (?=\d)")
-RELEASE_TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
-COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
 
 
 # ---------------------------------------------------------------- validation & outcomes
@@ -115,12 +124,6 @@ COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
 
 def _text(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
-
-
-def _stored_text(value: object) -> str | None:
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
 
 
 def read_json_object(path: Path) -> dict:
@@ -373,15 +376,6 @@ def release_tag(commit: str, git_dir: Path | None = None) -> str | None:
     return max(found, key=lambda name: tuple(map(int, name[1:].split(".")))) if found else None
 
 
-def _stamp(value: str) -> datetime:
-    try:
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    except (TypeError, ValueError) as error:
-        raise SiteError(
-            f"Unexpected timestamp {value!r}; expected UTC ISO-8601 YYYY-MM-DDTHH:MM:SSZ"
-        ) from error
-
-
 def _robot_slug_from_record(record: dict, where: Path) -> str:
     explicit = _stored_text(record.get("robot_slug") or record.get("robot_id"))
     if explicit is not None:
@@ -544,9 +538,6 @@ def _finding_summary(findings: list, descriptor: dict) -> str | None:
 
 
 INCONCLUSIVE_COPY = "Not graded: no check applied to this run."
-EVALUATOR_ANCHOR = "#summary"
-ANCHOR_REPORTER = (3, 14, 0)
-_REPORTER_TAG = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
 
 
 def failing_evaluators(report: object) -> list[dict]:
@@ -595,9 +586,6 @@ def failing_evaluators(report: object) -> list[dict]:
         elif "summary" not in seen[ev_id] and summary is not None:
             seen[ev_id]["summary"] = summary
     return list(seen.values())
-
-
-MARKED_INTEGRITY_STATUSES = ("ERROR", "INCONCLUSIVE")
 
 
 def integrity_markers(report: object) -> list[dict]:
@@ -830,16 +818,6 @@ def runs(reports_dir: Path) -> dict[tuple[str, str], list[dict]]:
     return found
 
 
-def _require_single_robot(robots: set[str]) -> str | None:
-    if len(robots) > 1:
-        names = ", ".join(sorted(robots))
-        raise SiteError(
-            f"Expected runs for one robot per site, found multiple robots: {names}. "
-            "Each robot repository publishes only its own verification reports."
-        )
-    return next(iter(robots), None)
-
-
 def add_run_folder(
     reports_dir: Path,
     source: Path,
@@ -946,37 +924,6 @@ def prune_expired_evidence(reports_dir: Path, now: str, days: int) -> tuple[list
             if KEPT_FOR_COPY.search(text) or 'href="evidence/' in text or "href='evidence/" in text:
                 affected.add(run_folder)
     return removed, affected
-
-
-def site_path(value: object) -> str | None:
-    if not isinstance(value, str) or not SITE_PATH.fullmatch(value):
-        return None
-    if (
-        "://" in value
-        or value.startswith(("/", "\\"))
-        or ".." in value.split("/")
-        or ":" in value
-        or "/actions/" in value.lower()
-        or ARTIFACT_WORD.search(value)
-    ):
-        return None
-    return value
-
-
-def _plain_label(value: object) -> str:
-    text = value if isinstance(value, str) else ""
-    cleaned = ARTIFACT_WORD.sub("", text).strip(" .:-")
-    if not cleaned or re.search(r"[\[\]()|`<>\n]", cleaned) or len(cleaned) > 80:
-        return "evidence"
-    return cleaned
-
-
-def listing_path(record: dict) -> str | None:
-    name = (record.get("artifact") or {}).get("name") or _stored_text(record.get("name"))
-    if not (record.get("preserved") and len(record.get("files") or []) > 1 and name):
-        return None
-    safe_name = re.sub(r"[^A-Za-z0-9._-]", "-", str(name))
-    return f"evidence/{safe_name}.html"
 
 
 def link_path(record: dict, *, expired: bool) -> str | None:

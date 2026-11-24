@@ -3,14 +3,18 @@
 
 from __future__ import annotations
 
+import ast
 import email.message
 import hashlib
 import io
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tarfile
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -994,6 +998,7 @@ def test_site_action_pull_request_builds_artifact_only_without_restoring(
             "INPUT_UPLOAD_ARTIFACT": "auto",
             "GITHUB_EVENT_NAME": "pull_request",
             "GITHUB_RUN_ID": "999",
+            "GITHUB_WORKSPACE": str(tmp_path),
             "GITHUB_RUN_ATTEMPT": "1",
             "GITHUB_OUTPUT": str(gh_out),
         }
@@ -1031,6 +1036,7 @@ def test_site_action_main_push_restores_history_and_skips_pr_upload_by_default(
             "GITHUB_EVENT_NAME": "push",
             "GITHUB_REPOSITORY": REPO,
             "GITHUB_RUN_ID": "500",
+            "GITHUB_WORKSPACE": str(tmp_path),
             "GITHUB_TOKEN": "tok",
         }
     )
@@ -1197,6 +1203,7 @@ def test_site_action_restores_only_from_the_calling_repository(
             "GITHUB_EVENT_NAME": "push",
             "GITHUB_REPOSITORY": REPO,
             "GITHUB_RUN_ID": "501",
+            "GITHUB_WORKSPACE": str(tmp_path),
         }
     )
     assert seen == [REPO]
@@ -1323,3 +1330,184 @@ def test_site_action_constrains_output_dir_to_github_workspace_and_ignores_input
     assert (
         workspace / "docs/reports/unitree-g1/stock-mujoco-hallway/runs/77/evidence/trials.mcap"
     ).is_file()
+
+
+# ---------------------------------------------------------------- va#14 takeover checks (Rivet)
+
+ROOT = Path(__file__).resolve().parents[1]
+REPORT_MODULES = ("reports_site", "reports_render", "reports_restore", "reports_common")
+
+
+def _top_level_names(path: Path) -> set[str]:
+    names: set[str] = set()
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+
+def test_split_modules_define_each_top_level_name_once():
+    # The split was cut by line ranges; a second, drifted copy of a helper (as with
+    # _require_single_robot, _stamp, SITE_PATH) must not come back.
+    seen: dict[str, str] = {}
+    for module in REPORT_MODULES:
+        for name in _top_level_names(ROOT / "src" / f"{module}.py") - {"__all__"}:
+            assert name not in seen, f"{name} is defined in both {seen[name]} and {module}"
+            seen[name] = module
+
+
+def test_generated_site_matches_the_golden_bytes():
+    import site_golden
+
+    expected = (ROOT / "tests/fixtures/site-golden/SHA256SUMS").read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory() as tmp:
+        actual = site_golden.digests(site_golden.build_golden_site(Path(tmp)))
+    assert actual == expected
+
+
+def test_theme_switch_markup_matches_the_packaged_styles(tmp_path: Path):
+    runs_in = tmp_path / "in"
+    site_fixture.write(runs_in, run_id="1", created="2026-11-20T06:00:00Z")
+    site_tool.build(tmp_path / "reports", runs_in)
+    index_html = (tmp_path / "reports/index.html").read_text(encoding="utf-8")
+    css = (tmp_path / "reports/styles.css").read_text(encoding="utf-8")
+    assert '<fieldset class="theme">' in index_html
+    for selector in (".theme label", "#theme-light:checked", "#theme-dark:checked"):
+        assert selector in css
+    for element_id in ("theme-system", "theme-light", "theme-dark"):
+        assert f'id="{element_id}"' in index_html
+    assert "DM Sans" not in css and "fonts.g" not in index_html
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("https://github.com/x/y", "https://github.com/x/y"),
+        ("../runs/1/", "../runs/1/"),
+        ("#summary", "#summary"),
+        ("javascript:alert(1)", None),
+        ("  JAVASCRIPT:alert(1)", None),
+        ("java\nscript:alert(1)", None),
+        ("vbscript:x", None),
+        ("data:text/html,x", None),
+        ("http://example.com/", None),
+        ("//evil.example/x", None),
+        ("https:evil", None),
+        ("https://[::1", None),
+        ("a\\b", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_safe_href_allows_only_https_and_relative_links(value, expected):
+    import reports_render
+
+    assert reports_render.safe_href(value) == expected
+
+
+def test_packaged_assets_require_their_license_header(tmp_path: Path, monkeypatch):
+    import reports_render
+
+    (tmp_path / "styles.css").write_text(":root {}\n", encoding="utf-8")
+    monkeypatch.setattr(reports_render, "ASSETS_DIR", tmp_path)
+    with pytest.raises(site_tool.SiteError, match="license header"):
+        reports_render.load_styles_css()
+
+
+def test_site_action_from_another_checkout_loads_assets_from_the_action_path(tmp_path: Path):
+    # Mirrors `uses: Living-Proof-Labs/verification-reports-action/site@<sha>`: the runner
+    # unpacks the action somewhere else and runs it with the caller's workspace as cwd.
+    action = tmp_path / "_actions/verification-reports-action/sha"
+    for part in ("src", "tools", "site"):
+        shutil.copytree(ROOT / part, action / part, ignore=shutil.ignore_patterns("__pycache__"))
+    workspace = tmp_path / "caller"
+    workspace.mkdir()
+    site_fixture.write(
+        workspace / "verification-report", run_id="9", created="2026-11-20T06:00:00Z"
+    )
+    env = {
+        "PATH": os.environ["PATH"],
+        "INPUT_RUNS_DIR": "verification-report",
+        "INPUT_OUTPUT_DIR": "docs/html/reports",
+        "INPUT_RESTORE_HISTORY": "false",
+        "INPUT_UPLOAD_ARTIFACT": "false",
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_WORKSPACE": str(workspace),
+        "GITHUB_OUTPUT": str(tmp_path / "out.txt"),
+    }
+    subprocess.run(
+        [sys.executable, str(action / "site/../src/site_action.py")],
+        cwd=workspace,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    built = workspace / "docs/html/reports"
+    packaged = (action / "src/assets/styles.css").read_text(encoding="utf-8")
+    assert (built / "styles.css").read_text(encoding="utf-8") == packaged.split("\n", 1)[1]
+    packaged_js = (action / "src/assets/open.js").read_text(encoding="utf-8")
+    assert (built / "open.js").read_text(encoding="utf-8") == packaged_js.split("\n", 1)[1]
+    assert "reports-dir=docs/html/reports\n" in (tmp_path / "out.txt").read_text()
+
+
+def test_site_action_yml_runs_the_script_from_the_action_path():
+    text = (ROOT / "site/action.yml").read_text(encoding="utf-8")
+    assert "SITE_ACTION_PATH: ${{ github.action_path }}" in text
+    assert 'run: python3 "$SITE_ACTION_PATH/../src/site_action.py"' in text
+    assert "github.workspace" not in text
+
+
+def test_output_dir_is_resolved_in_the_workspace_not_the_cwd(tmp_path: Path, monkeypatch):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    runs_in = tmp_path / "runs"
+    site_fixture.write(runs_in, run_id="5", created="2026-11-23T03:00:00Z")
+    base = {
+        "INPUT_RUNS_DIR": str(runs_in),
+        "INPUT_RESTORE_HISTORY": "false",
+        "INPUT_UPLOAD_ARTIFACT": "false",
+        "GITHUB_EVENT_NAME": "push",
+    }
+    outputs = site_action.run_site_action(
+        base | {"INPUT_OUTPUT_DIR": "site/reports", "GITHUB_WORKSPACE": str(workspace)}
+    )
+    assert outputs["reports-dir"] == "site/reports"
+    assert (workspace / "site/reports/index.html").is_file()
+    assert not (elsewhere / "site").exists()
+
+    for bad in (".git/reports", "docs/.git/x", "./"):
+        with pytest.raises(site_tool.SiteError, match="output-dir"):
+            site_action.run_site_action(
+                base | {"INPUT_OUTPUT_DIR": bad, "GITHUB_WORKSPACE": str(workspace)}
+            )
+
+    # With GITHUB_WORKSPACE unset, the current directory is the boundary; the check stays on.
+    with pytest.raises(site_tool.SiteError, match="GITHUB_WORKSPACE"):
+        site_action.run_site_action(base | {"INPUT_OUTPUT_DIR": str(workspace / "reports")})
+
+
+def test_output_dir_symlink_to_a_parent_of_the_workspace_is_refused(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "up").symlink_to(tmp_path, target_is_directory=True)
+    runs_in = tmp_path / "runs"
+    site_fixture.write(runs_in, run_id="6", created="2026-11-23T03:00:00Z")
+    with pytest.raises(site_tool.SiteError, match="GITHUB_WORKSPACE"):
+        site_action.run_site_action(
+            {
+                "INPUT_RUNS_DIR": str(runs_in),
+                "INPUT_OUTPUT_DIR": "up/escaped",
+                "INPUT_RESTORE_HISTORY": "false",
+                "INPUT_UPLOAD_ARTIFACT": "false",
+                "GITHUB_WORKSPACE": str(workspace),
+            }
+        )
+    assert not (tmp_path / "escaped").exists()

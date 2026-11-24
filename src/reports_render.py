@@ -7,21 +7,28 @@ from __future__ import annotations
 import html
 import re
 import urllib.parse
-from datetime import datetime, timezone
 from pathlib import Path
+
+from reports_common import (
+    _REPORTER_TAG,
+    ANCHOR_REPORTER,
+    COMMIT_SHA,
+    EVALUATOR_ANCHOR,
+    MARKED_INTEGRITY_STATUSES,
+    SiteError,
+    _plain_label,
+    _require_single_robot,
+    _stamp,
+    _stored_text,
+    listing_path,
+    site_path,
+)
 
 ASSETS_DIR = Path(__file__).resolve().with_name("assets")
 DOCS_HOME_URL = "https://docs.livingprooflabs.com/"
 ARCHIVED_REPORTS_URL = (
     "https://docs.livingprooflabs.com/livingproof-verification/reports/index.html"
 )
-RELEASE_TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
-COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
-ARTIFACT_WORD = re.compile(r"artifacts?", re.I)
-EVALUATOR_ANCHOR = "#summary"
-ANCHOR_REPORTER = (3, 14, 0)
-_REPORTER_TAG = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
-MARKED_INTEGRITY_STATUSES = ("ERROR", "INCONCLUSIVE")
 _REPO_PATH = re.compile(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+")
 
 SITE_NAV_STYLES = """.site-nav {
@@ -54,16 +61,13 @@ _ROBOT_TITLES = {
     "unitree-g1": "Unitree G1",
     "unitree-go1": "Unitree Go1",
 }
-SITE_PATH = re.compile(r"[A-Za-z0-9._~!$&'()*+,;=@%/-]{1,240}")
 THEME_SWITCH = (
-    '<div class="theme-switch" role="group" aria-label="Theme">'
-    '<input type="radio" name="theme" id="theme-auto" checked>'
-    '<label for="theme-auto">Auto</label>'
-    '<input type="radio" name="theme" id="theme-light">'
-    '<label for="theme-light">Light</label>'
-    '<input type="radio" name="theme" id="theme-dark">'
-    '<label for="theme-dark">Dark</label>'
-    "</div>"
+    '<fieldset class="theme"><legend>Colour theme</legend>'
+    '<label><input type="radio" name="theme" id="theme-system" value="system" checked> '
+    "System</label>"
+    '<label><input type="radio" name="theme" id="theme-light" value="light"> Light</label>'
+    '<label><input type="radio" name="theme" id="theme-dark" value="dark"> Dark</label>'
+    "</fieldset>"
 )
 LISTING_STYLE = (
     "body{font-family:system-ui,sans-serif;margin:2rem auto;max-width:72rem;padding:0 1rem;"
@@ -72,12 +76,25 @@ LISTING_STYLE = (
 )
 
 
+def _load_asset(name: str, header: str) -> str:
+    """Read a packaged asset next to this module (the action checkout, never the caller's).
+
+    The source file starts with a license header line that is not part of the published
+    asset, so the generated site stays byte-identical to the pre-split output.
+    """
+    text = (ASSETS_DIR / name).read_text(encoding="utf-8")
+    first, sep, rest = text.partition("\n")
+    if first != header or not sep:
+        raise SiteError(f"{ASSETS_DIR / name}: missing the expected license header")
+    return rest
+
+
 def load_styles_css() -> str:
-    return (ASSETS_DIR / "styles.css").read_text(encoding="utf-8")
+    return _load_asset("styles.css", "/* SPDX-License-Identifier: Apache-2.0 */")
 
 
 def load_open_js() -> str:
-    return (ASSETS_DIR / "open.js").read_text(encoding="utf-8")
+    return _load_asset("open.js", "// SPDX-License-Identifier: Apache-2.0")
 
 
 def safe_href(value: object) -> str | None:
@@ -89,7 +106,10 @@ def safe_href(value: object) -> str | None:
     cleaned = value.strip()
     if not cleaned or "\\" in cleaned or cleaned.startswith("//"):
         return None
-    parsed = urllib.parse.urlsplit(cleaned)
+    try:
+        parsed = urllib.parse.urlsplit(cleaned)
+    except ValueError:
+        return None
     if parsed.scheme:
         if parsed.scheme.lower() != "https" or not parsed.netloc:
             return None
@@ -97,36 +117,6 @@ def safe_href(value: object) -> str | None:
     if parsed.netloc:
         return None
     return cleaned
-
-
-def _stored_text(value: object) -> str | None:
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
-
-
-def _stamp(value: str) -> datetime:
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-
-
-def _plain_label(value: object) -> str:
-    text = value if isinstance(value, str) else ""
-    cleaned = ARTIFACT_WORD.sub("", text).strip(" .:-")
-    if not cleaned or re.search(r"[\[\]()|`<>\n]", cleaned) or len(cleaned) > 80:
-        return "evidence"
-    return cleaned
-
-
-def _listing_path(record: dict) -> str | None:
-    name = (record.get("artifact") or {}).get("name") or _stored_text(record.get("name"))
-    if not (record.get("preserved") and len(record.get("files") or []) > 1 and name):
-        return None
-    safe_name = re.sub(r"[^A-Za-z0-9._-]", "-", str(name))
-    return f"evidence/{safe_name}.html"
-
-
-def _require_single_robot(robots: set[str]) -> str | None:
-    return next(iter(robots), None)
 
 
 def _evaluator_documents(report: object) -> list[dict]:
@@ -228,22 +218,9 @@ def a(url: str, text: str) -> str:
     return f'<a href="{html.escape(safe, quote=True)}">{html.escape(text)}</a>'
 
 
-def _is_safe_site_path(value: object) -> bool:
-    if not isinstance(value, str) or not SITE_PATH.fullmatch(value):
-        return False
-    return not (
-        "://" in value
-        or value.startswith(("/", "\\"))
-        or ".." in value.split("/")
-        or ":" in value
-        or "/actions/" in value.lower()
-        or ARTIFACT_WORD.search(value)
-    )
-
-
 def write_listing(folder: Path, record: dict, up: str) -> None:
-    path = _listing_path(record)
-    if path is None or not _is_safe_site_path(path):
+    path = listing_path(record)
+    if path is None or not site_path(path):
         return
     prefix = path.removesuffix(".html").removeprefix("evidence/") + "/"
     rows = "".join(

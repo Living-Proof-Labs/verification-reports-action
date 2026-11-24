@@ -17,6 +17,10 @@ import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from reports_common import (
+    SiteError,
+)
+
 PAGES_ARTIFACT = "github-pages"
 PAGES_ARTIFACT_PATTERN = re.compile(r"github-pages(?:-[A-Za-z0-9._-]+)?")
 ALLOWED_DEPLOY_EVENTS = frozenset(
@@ -36,10 +40,6 @@ LOOKUP_ATTEMPTS = 3
 LOOKUP_BACKOFF_BASE = 1.0
 _REDIRECTS = frozenset({301, 302, 303, 307, 308})
 _MAX_REDIRECTS = 5
-
-
-class SiteError(Exception):
-    """Raised when report validation, single-robot constraints, or history restore fails."""
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

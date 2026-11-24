@@ -44,29 +44,28 @@ def _parse_positive_int(name: str, raw: str, default: int) -> int:
     return int(text)
 
 
-def _validate_output_dir(raw: str, workspace: str) -> Path:
+def _validate_output_dir(raw: str, workspace: str) -> tuple[str, Path]:
+    """Return `(as_given, resolved)` for an output-dir that stays inside the workspace.
+
+    The workspace is GITHUB_WORKSPACE, or the current directory when it is unset, so
+    the check never silently turns off. Symlinks are resolved before the containment
+    check, so a link inside the workspace that points elsewhere is refused.
+    """
     cleaned = raw.strip()
     if not cleaned or "\x00" in cleaned or "\\" in cleaned:
         raise site_tool.SiteError("output-dir must be a non-empty relative directory path.")
     candidate = Path(cleaned)
-    if ".." in candidate.parts or cleaned == ".":
+    if ".." in candidate.parts or ".git" in candidate.parts or cleaned in {".", "./"}:
         raise site_tool.SiteError(
-            f"output-dir {raw!r} must not contain '..' or point to the workspace root."
+            f"output-dir {raw!r} must not contain '..' or '.git' or be the workspace root."
         )
-    if candidate.resolve() == Path("/"):
-        raise site_tool.SiteError("output-dir must not be the filesystem root.")
-    if workspace:
-        workspace_root = Path(workspace).resolve()
-        resolved = (
-            candidate.resolve()
-            if candidate.is_absolute()
-            else (workspace_root / candidate).resolve()
+    workspace_root = Path(workspace or os.getcwd()).resolve()
+    resolved = (candidate if candidate.is_absolute() else workspace_root / candidate).resolve()
+    if resolved == workspace_root or not resolved.is_relative_to(workspace_root):
+        raise site_tool.SiteError(
+            f"output-dir {raw!r} must stay inside GITHUB_WORKSPACE ({workspace_root})."
         )
-        if resolved == workspace_root or not resolved.is_relative_to(workspace_root):
-            raise site_tool.SiteError(
-                f"output-dir {raw!r} must stay inside GITHUB_WORKSPACE ({workspace_root})."
-            )
-    return candidate
+    return cleaned, resolved
 
 
 def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
@@ -81,7 +80,7 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         raise site_tool.SiteError("output-dir must be a non-empty directory path.")
     output_dir_raw = (raw_output_input or "reports").strip()
     workspace = (env_map.get("GITHUB_WORKSPACE") or "").strip()
-    reports_dir = _validate_output_dir(output_dir_raw, workspace)
+    output_dir_given, reports_dir = _validate_output_dir(output_dir_raw, workspace)
 
     retention_days = _parse_positive_int(
         "evidence-retention-days",
@@ -153,8 +152,8 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         artifact_name = f"verification-reports-site-{run_id_part}-{attempt_part}"
 
     outputs = {
-        "reports-dir": str(reports_dir),
-        "index-path": str(reports_dir / "index.html"),
+        "reports-dir": output_dir_given,
+        "index-path": str(Path(output_dir_given) / "index.html"),
         "runs-count": str(marker["runs"]),
         "artifact-only": "true" if artifact_only else "false",
         "should-upload-artifact": "true" if should_upload else "false",
