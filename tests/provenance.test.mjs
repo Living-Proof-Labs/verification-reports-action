@@ -893,7 +893,7 @@ test('dot segments in a repository are rejected before a URL is built', () => {
     lock.releases.runner.repository = repository;
     assert.throws(
       () => collectPins(item(lock)),
-      /livingproof-sim-mujoco: (repository is not OWNER\/NAME|releases\.runner\.repository is not the expected form)/
+      /livingproof-sim-mujoco: (repository is not OWNER\/NAME|releases\.runner\.repository is not the expected form|releases\.runner\.repository is not the expected repository)/
     );
   }
 });
@@ -1249,61 +1249,48 @@ function lockEntry(lock, parts) {
   return cursor;
 }
 
-test('a lock repository that differs from the definition is refused', async () => {
+test('a repository other than the expected one is refused', async () => {
   const fields = [
-    [['releases', 'verifier'], 'Living-Proof-Labs/capability-verifier', 'capability-verifier', 'v2.11.4'],
-    [['releases', 'reporter'], 'Living-Proof-Labs/livingproof-capability-report', 'livingproof-capability-report', 'v3.15.4'],
-    [['releases', 'runner'], 'Living-Proof-Labs/livingproof-sim-mujoco', 'livingproof-sim-mujoco', 'v3.7.4'],
-    [['releases', 'specs'], 'Living-Proof-Labs/robot-capability-specs', 'robot-capability-specs', 'v3.1.0'],
-    [['evaluators', 'livingproof-evaluator-scenario'], 'Living-Proof-Labs/livingproof-evaluator-scenario', 'livingproof-evaluator-scenario', 'v1.5.3'],
-    [['evaluators', 'livingproof-evaluator-run'], 'Living-Proof-Labs/livingproof-evaluator-run', 'livingproof-evaluator-run', 'v1.8.6'],
-    [['world'], 'Living-Proof-Labs/livingproof-worlds', 'livingproof-worlds', 'v1.4.0'],
+    [['releases', 'verifier'], 'Living-Proof-Labs/capability-verifier', 'capability-verifier'],
+    [['releases', 'reporter'], 'Living-Proof-Labs/livingproof-capability-report', 'livingproof-capability-report'],
+    [['releases', 'runner'], 'Living-Proof-Labs/livingproof-sim-mujoco', 'livingproof-sim-mujoco'],
+    [['releases', 'specs'], 'Living-Proof-Labs/robot-capability-specs', 'robot-capability-specs'],
+    [['evaluators', 'livingproof-evaluator-scenario'], 'Living-Proof-Labs/livingproof-evaluator-scenario', 'livingproof-evaluator-scenario'],
+    [['evaluators', 'livingproof-evaluator-run'], 'Living-Proof-Labs/livingproof-evaluator-run', 'livingproof-evaluator-run'],
+    [['world'], 'Living-Proof-Labs/livingproof-worlds', 'livingproof-worlds'],
   ];
-  for (const [parts, repository, repoName, tag] of fields) {
-    const lock = sampleLock();
-    lockEntry(lock, parts).repository = `Evil-Org/${repoName}`;
-    const source = { repository, tag, id: 'hallway-corner', version: '0.2.0' };
-    const sources = parts[0] === 'world'
-      ? { world: source }
-      : parts[0] === 'evaluators'
-        ? { evaluators: { [parts[1]]: source } }
-        : { releases: { [parts[1]]: source } };
-    const input = parts[0] === 'evaluators' ? parts[1] : repoName === 'livingproof-worlds' ? 'livingproof-worlds' : parts[0] === 'world' ? 'livingproof-worlds' : (
-      parts[1] === 'verifier' ? 'capability-verifier'
-        : parts[1] === 'reporter' ? 'livingproof-capability-report'
-          : parts[1] === 'runner' ? 'livingproof-sim-mujoco'
-            : 'robot-capability-specs'
-    );
-    await assert.rejects(
-      () => assertPinnedInputs(item(lock, sources), client()),
-      (error) => {
-        assert.match(error.message, new RegExp(`^${input}: `));
-        assert.match(error.message, /\.repository differs from the definition/);
-        assert.match(error.message, new RegExp(`expected ${repository.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-        assert.match(error.message, new RegExp(`found Evil-Org/${repoName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-        return true;
-      }
-    );
+  for (const [parts, repository, repoName] of fields) {
+    for (const found of [`Evil-Org/${repoName}`, 'Living-Proof-Labs/something-else']) {
+      const lock = sampleLock();
+      lockEntry(lock, parts).repository = found;
+      await assert.rejects(
+        () => assertPinnedInputs(item(lock), client()),
+        (error) => {
+          assert.match(error.message, /is not the expected repository/);
+          assert.match(error.message, new RegExp(`expected ${repository.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+          assert.match(error.message, new RegExp(`found ${found.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+          return true;
+        }
+      );
+    }
   }
+  const defined = sampleLock();
+  await assert.rejects(
+    () =>
+      assertPinnedInputs(
+        item(defined, { releases: { verifier: { repository: 'Evil-Org/capability-verifier', tag: 'v2.11.4' } } }),
+        client()
+      ),
+    /capability-verifier: releases\.verifier\.repository is not the expected repository\. expected Living-Proof-Labs\/capability-verifier, found Evil-Org\/capability-verifier/
+  );
   const lock = sampleLock();
   lock.releases.verifier.repository = 'living-proof-labs/capability-verifier';
   lock.evaluators['livingproof-evaluator-scenario'].repository = 'LIVING-PROOF-LABS/livingproof-evaluator-scenario';
-  const records = await assertPinnedInputs(
-    item(lock, {
-      releases: { verifier: { repository: 'Living-Proof-Labs/capability-verifier', tag: 'v2.11.4' } },
-      evaluators: {
-        'livingproof-evaluator-scenario': {
-          repository: 'Living-Proof-Labs/livingproof-evaluator-scenario',
-          tag: 'v1.5.3',
-        },
-      },
-    }),
-    client()
-  );
-  assert.equal(records.find((record) => record.name === 'capability-verifier').repository, 'Living-Proof-Labs/capability-verifier');
+  const records = await assertPinnedInputs(item(lock), client());
+  assert.equal(records.find((record) => record.name === 'capability-verifier').repository, 'living-proof-labs/capability-verifier');
   assert.equal(
     records.find((record) => record.name === 'livingproof-evaluator-scenario').repository,
-    'Living-Proof-Labs/livingproof-evaluator-scenario'
+    'LIVING-PROOF-LABS/livingproof-evaluator-scenario'
   );
 });
 
@@ -1321,20 +1308,14 @@ test('missing, non-string, and empty lock fields are refused', async () => {
     [['releases', 'reporter'], 'digest', 'livingproof-capability-report'],
     [['releases', 'runner'], 'repository', 'livingproof-sim-mujoco'],
     [['releases', 'runner'], 'tag', 'livingproof-sim-mujoco'],
-    [['releases', 'runner'], 'commit', 'livingproof-sim-mujoco'],
     [['releases', 'specs'], 'repository', 'robot-capability-specs'],
     [['releases', 'specs'], 'tag', 'robot-capability-specs'],
     [['releases', 'specs'], 'commit', 'robot-capability-specs'],
     [['evaluators', 'livingproof-evaluator-scenario'], 'repository', 'livingproof-evaluator-scenario'],
     [['evaluators', 'livingproof-evaluator-scenario'], 'tag', 'livingproof-evaluator-scenario'],
     [['evaluators', 'livingproof-evaluator-scenario'], 'commit', 'livingproof-evaluator-scenario'],
-    [['evaluators', 'livingproof-evaluator-run'], 'repository', 'livingproof-evaluator-run'],
-    [['evaluators', 'livingproof-evaluator-run'], 'tag', 'livingproof-evaluator-run'],
-    [['evaluators', 'livingproof-evaluator-run'], 'commit', 'livingproof-evaluator-run'],
     [['world'], 'repository', 'livingproof-worlds'],
     [['world'], 'tag', 'livingproof-worlds'],
-    [['world'], 'commit', 'livingproof-worlds'],
-    [['world'], 'sha256', 'livingproof-worlds'],
   ];
   for (const [parts, field, input] of fields) {
     for (const [kind, value] of [['missing', undefined], ['wrong-type', 12345], ['empty', '']]) {
@@ -1348,15 +1329,62 @@ test('missing, non-string, and empty lock fields are refused', async () => {
       );
     }
   }
-  for (const [kind, value] of [['missing', undefined], ['wrong-type', 12345], ['empty', '']]) {
+  const file = 'specs/scenarios/walk-corner-left/description.json';
+  for (const value of [12345, '']) {
     const lock = sampleLock();
-    const file = 'specs/scenarios/walk-corner-left/description.json';
-    if (kind === 'missing') lock.releases.specs.files = {};
-    else lock.releases.specs.files[file] = value;
+    lock.releases.specs.files[file] = value;
     await assert.rejects(
       () => assertPinnedInputs(item(lock), client()),
       /robot-capability-specs: releases\.specs\.files/
     );
+  }
+});
+
+test('a tag-only evaluator-run lock passes', async () => {
+  const lock = sampleLock();
+  delete lock.evaluators['livingproof-evaluator-run'].commit;
+  delete lock.releases.runner.commit;
+  delete lock.world.commit;
+  delete lock.world.sha256;
+  delete lock.releases.specs.files;
+  const records = await assertPinnedInputs(item(lock), client());
+  const evaluatorRun = records.find((record) => record.name === 'livingproof-evaluator-run');
+  assert.equal(evaluatorRun.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
+  assert.equal(evaluatorRun.tag, 'v1.8.6');
+  assert.equal(evaluatorRun.commit, COMMIT);
+  assert.equal(evaluatorRun.status, 'not-published');
+  assert.equal(records.find((record) => record.name === 'livingproof-sim-mujoco').status, 'not-published');
+  assert.equal(records.find((record) => record.name === 'livingproof-worlds').status, 'not-published');
+
+  delete lock.evaluators['livingproof-evaluator-run'].repository;
+  delete lock.evaluators['livingproof-evaluator-run'].tag;
+  const omitted = await assertPinnedInputs(item(lock), client());
+  const fallback = omitted.find((record) => record.name === 'livingproof-evaluator-run');
+  assert.equal(fallback.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
+  assert.equal(fallback.tag, 'v1.5.0');
+});
+
+test('a present optional lock field must still be valid', async () => {
+  const optional = [
+    [['evaluators', 'livingproof-evaluator-run'], 'commit', 'livingproof-evaluator-run'],
+    [['evaluators', 'livingproof-evaluator-run'], 'repository', 'livingproof-evaluator-run'],
+    [['releases', 'runner'], 'commit', 'livingproof-sim-mujoco'],
+    [['world'], 'commit', 'livingproof-worlds'],
+    [['world'], 'sha256', 'livingproof-worlds'],
+  ];
+  for (const [parts, field, input] of optional) {
+    const absent = sampleLock();
+    delete lockEntry(absent, parts)[field];
+    const records = await assertPinnedInputs(item(absent), client());
+    assert.equal(records.find((record) => record.name === input).status, 'not-published');
+    for (const value of [12345, '']) {
+      const lock = sampleLock();
+      lockEntry(lock, parts)[field] = value;
+      await assert.rejects(
+        () => assertPinnedInputs(item(lock), client()),
+        new RegExp(`${input}: .*\\.${field} is (not a string|empty)`)
+      );
+    }
   }
 });
 

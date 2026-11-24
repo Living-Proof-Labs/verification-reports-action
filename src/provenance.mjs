@@ -16,37 +16,52 @@ const REPORTER_IMAGE = 'ghcr.io/living-proof-labs/livingproof-capability-report'
  * When scenario.yml takes those resolved values as inputs, delete
  * assertLockAgrees and pass the resolved commit and image reference through.
  */
+/**
+ * required: scenario.yml at 0c00c388, or this action's resolver, reads the lock
+ * field and does not substitute a default. optional: absent is allowed; a
+ * present value must still be a valid untrimmed string and match.
+ */
 const SPECS = [
   {
     name: 'capability-verifier',
     lockField: 'releases.verifier',
+    expectedRepository: 'Living-Proof-Labs/capability-verifier',
     kind: 'image',
     workflow: true,
     defaultImage: VERIFIER_IMAGE,
+    fields: { repository: 'required', tag: 'required', commit: 'required', image: 'required', digest: 'required' },
     read: (lock, sources) => fromRelease(lock.releases?.verifier, sources?.releases?.verifier),
   },
   {
     name: 'livingproof-sim-mujoco',
     lockField: 'releases.runner',
+    expectedRepository: 'Living-Proof-Labs/livingproof-sim-mujoco',
     kind: 'source',
+    fields: { repository: 'required', tag: 'required', commit: 'optional' },
     read: (lock, sources) => fromRelease(lock.releases?.runner, sources?.releases?.runner),
   },
   {
     name: 'robot-capability-specs',
     lockField: 'releases.specs',
+    expectedRepository: 'Living-Proof-Labs/robot-capability-specs',
     kind: 'files',
+    fields: { repository: 'required', tag: 'required', commit: 'required', files: 'optional' },
     read: (lock, sources) => fromRelease(lock.releases?.specs, sources?.releases?.specs, true),
   },
   {
     name: 'livingproof-worlds',
     lockField: 'world',
+    expectedRepository: 'Living-Proof-Labs/livingproof-worlds',
     kind: 'files',
+    fields: { repository: 'required', tag: 'required', commit: 'optional', sha256: 'optional' },
     read: (lock, sources) => fromWorld(lock.world, sources?.world),
   },
   {
     name: 'livingproof-evaluator-scenario',
     lockField: 'evaluators.livingproof-evaluator-scenario',
+    expectedRepository: 'Living-Proof-Labs/livingproof-evaluator-scenario',
     kind: 'source',
+    fields: { repository: 'required', tag: 'required', commit: 'required' },
     read: (lock, sources) =>
       fromRelease(
         lock.evaluators?.['livingproof-evaluator-scenario'],
@@ -56,7 +71,11 @@ const SPECS = [
   {
     name: 'livingproof-evaluator-run',
     lockField: 'evaluators.livingproof-evaluator-run',
+    expectedRepository: 'Living-Proof-Labs/livingproof-evaluator-run',
+    defaultRepository: 'Living-Proof-Labs/livingproof-evaluator-run',
+    defaultTag: 'v1.5.0',
     kind: 'source',
+    fields: { repository: 'optional', tag: 'optional', commit: 'optional' },
     read: (lock, sources) =>
       fromRelease(
         lock.evaluators?.['livingproof-evaluator-run'],
@@ -66,8 +85,10 @@ const SPECS = [
   {
     name: 'livingproof-capability-report',
     lockField: 'releases.reporter',
+    expectedRepository: 'Living-Proof-Labs/livingproof-capability-report',
     kind: 'image',
     defaultImage: REPORTER_IMAGE,
+    fields: { repository: 'required', tag: 'required', commit: 'required', image: 'required', digest: 'required' },
     read: (lock, sources) => fromRelease(lock.releases?.reporter, sources?.releases?.reporter),
   },
 ];
@@ -108,6 +129,7 @@ function fromRelease(lockEntry, tomlEntry, withFiles = false) {
     image: text(lockEntry?.image),
     files,
     lockRaw: raw,
+    definitionRaw: lockRaw(tomlEntry),
   };
 }
 
@@ -129,17 +151,30 @@ function fromWorld(lockWorld, tomlWorld) {
     worldId: id,
     worldVersion: version,
     lockRaw: lockRaw(lockWorld),
+    definitionRaw: lockRaw(tomlWorld),
   };
 }
 
 function requirePin(spec, raw) {
   if (!raw) {
-    throw new ReportError(
-      `${spec.name}: pin is missing. expected a repository and a vX.Y.Z tag, found no pin.`
-    );
+    if (!spec.defaultRepository) {
+      throw new ReportError(
+        `${spec.name}: pin is missing. expected a repository and a vX.Y.Z tag, found no pin.`
+      );
+    }
+    raw = {
+      repository: '',
+      tag: '',
+      image: '',
+      files: {},
+      lockRaw: lockRaw(null),
+      definitionRaw: lockRaw(null),
+    };
   }
   const image = spec.defaultImage || '';
-  assertConsumedLock(spec, raw.repository, raw.tag, image, raw.lockRaw);
+  if (!raw.repository && spec.defaultRepository) raw.repository = spec.defaultRepository;
+  if (!raw.tag && spec.defaultTag) raw.tag = spec.defaultTag;
+  assertConsumedLock(spec, raw.repository, raw.tag, image, raw.lockRaw, raw.definitionRaw);
   const segments = raw.repository.split('/');
   if (
     !REPOSITORY.test(raw.repository) ||
@@ -187,13 +222,6 @@ const FIELD_FORM = {
   sha256: { pattern: HEX64, expected: 'a 64-character sha256' },
 };
 
-function consumedFieldNames(spec) {
-  const names = ['repository', 'tag', 'commit'];
-  if (spec.kind === 'image') names.push('image', 'digest');
-  if (spec.name === 'livingproof-worlds') names.push('sha256');
-  return names;
-}
-
 function assertLockString(name, field, value, form) {
   if (value === undefined || value === null) {
     throw new ReportError(`${name}: ${field} is missing. expected ${form.expected}, found none.`);
@@ -212,26 +240,49 @@ function assertLockString(name, field, value, form) {
   }
 }
 
-function assertConsumedLock(spec, repository, tag, image, raw) {
+function assertExpectedRepository(spec, value, where) {
+  if (sameRepository(value, spec.expectedRepository)) return;
+  throw new ReportError(
+    `${spec.name}: ${spec.lockField}.repository is not the expected repository. expected ${spec.expectedRepository}, found ${value}.`
+  );
+}
+
+function assertConsumedLock(spec, repository, tag, image, raw, definition) {
   const values = raw ?? {};
-  for (const key of consumedFieldNames(spec)) {
+  const defined = definition ?? {};
+  if (defined.repository !== undefined && defined.repository !== null) {
+    assertLockString(spec.name, `${spec.lockField}.repository`, defined.repository, FIELD_FORM.repository);
+    assertExpectedRepository(spec, defined.repository);
+  }
+  if (defined.tag !== undefined && defined.tag !== null) {
+    assertLockString(spec.name, `${spec.lockField}.tag`, defined.tag, FIELD_FORM.tag);
+  }
+  for (const [key, rule] of Object.entries(spec.fields)) {
+    if (key === 'files') continue;
     const field = `${spec.lockField}.${key}`;
-    assertLockString(spec.name, field, values[key], FIELD_FORM[key]);
+    const value = values[key];
+    const absent = value === undefined || value === null;
+    if (absent) {
+      if (rule === 'required') {
+        throw new ReportError(`${spec.name}: ${field} is missing. expected ${FIELD_FORM[key].expected}, found none.`);
+      }
+      continue;
+    }
+    assertLockString(spec.name, field, value, FIELD_FORM[key]);
+    if (key === 'repository') assertExpectedRepository(spec, value);
+    if (key === 'tag' && value !== tag) {
+      throw new ReportError(
+        `${spec.name}: ${field} differs from the definition. expected ${tag}, found ${value}.`
+      );
+    }
+    if (key === 'image' && value !== image) {
+      throw new ReportError(
+        `${spec.name}: ${field} name is not the default. expected ${image}, found ${value}.`
+      );
+    }
   }
-  if (!sameRepository(values.repository, repository)) {
-    throw new ReportError(
-      `${spec.name}: ${spec.lockField}.repository differs from the definition. expected ${repository}, found ${values.repository}.`
-    );
-  }
-  if (values.tag !== tag) {
-    throw new ReportError(
-      `${spec.name}: ${spec.lockField}.tag differs from the definition. expected ${tag}, found ${values.tag}.`
-    );
-  }
-  if (spec.kind === 'image' && values.image !== image) {
-    throw new ReportError(
-      `${spec.name}: ${spec.lockField}.image name is not the default. expected ${image}, found ${values.image}.`
-    );
+  if (!sameRepository(repository, spec.expectedRepository)) {
+    assertExpectedRepository(spec, repository);
   }
   if (spec.kind !== 'image' && values.image !== undefined && values.image !== null && values.image !== '') {
     throw new ReportError(
@@ -239,9 +290,11 @@ function assertConsumedLock(spec, repository, tag, image, raw) {
     );
   }
   const files = values.files;
-  if (spec.kind === 'files' && spec.name === 'robot-capability-specs') {
-    if (!files || typeof files !== 'object' || Array.isArray(files) || Object.keys(files).length === 0) {
-      throw new ReportError(`${spec.name}: ${spec.lockField}.files is missing. expected file sha256 values, found none.`);
+  if (files !== undefined && files !== null && spec.fields.files) {
+    if (typeof files !== 'object' || Array.isArray(files)) {
+      throw new ReportError(
+        `${spec.name}: ${spec.lockField}.files is not a string map. expected file sha256 values, found ${JSON.stringify(files)}.`
+      );
     }
     for (const [path, hash] of Object.entries(files)) {
       assertLockString(spec.name, `${spec.lockField}.files[${path}]`, hash, FIELD_FORM.sha256);
@@ -270,7 +323,7 @@ export function sameRepository(left, right) {
  */
 export function assertLockAgrees(pin, resolved) {
   const raw = pin.lockRaw ?? {};
-  if (raw.commit !== resolved.commit) {
+  if (raw.commit !== undefined && raw.commit !== null && raw.commit !== resolved.commit) {
     throw new ReportError(
       `${pin.name}: ${pin.lockField}.commit differs from the resolved tag. expected ${resolved.commit}, found ${raw.commit}.`
     );
