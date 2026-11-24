@@ -99,6 +99,11 @@ Use `Living-Proof-Labs/verification-reports-action/site` after downloading the `
 - `reports/<robot>/<variant>/runs/<run-id>/`: immutable per-run directory holding the scrubbed report pages, `run.json`, `SHA256SUMS`, grading inputs, and retained evidence.
 - `reports/site.json`: machine-readable publication marker.
 
+A run folder's `SHA256SUMS` can be recomputed by whoever wrote the folder, so the site checks what it publishes itself:
+
+- **Report pages**: each `report.html` and run `index.html` must fit an allowlist of the reporter's own markup, checked with an HTML parser. Allowed links are `https://` or relative, CSS may only embed fonts, and scripts must be the reporter's own, pinned by SHA-256. A page that fits is published byte for byte. Anything else fails the build, except an unknown reporter script, which is removed with a warning.
+- **Evidence**: files a browser would run, such as `.html`, `.htm`, `.xhtml`, `.svg`, `.xml` or `.js`, are not copied.
+
 ### History across deployments and pull-request runs
 
 - **Main deployments (`restore-history: auto`)**: restores earlier `reports/` runs from the calling repository's last successfully deployed GitHub Pages artifact (`github-pages` or `github-pages-*`) without committing run history to Git. Grant `actions: read` to the build job so it can list and download the previous Pages artifact.

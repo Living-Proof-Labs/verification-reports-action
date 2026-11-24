@@ -37,6 +37,7 @@ from reports_render import (
     _history_page_html,
     _index_page_html,
     _spec_repository_url,
+    checked_report_html,
     load_open_js,
     load_styles_css,
     redirect_page,
@@ -115,6 +116,22 @@ MEDIA_SUFFIXES = {
     ".webp",
 }
 VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
+# Evidence a browser would run as a page or script on the Pages origin. It is never copied.
+ACTIVE_EVIDENCE_SUFFIXES = {
+    ".html",
+    ".htm",
+    ".xhtml",
+    ".xht",
+    ".shtml",
+    ".svg",
+    ".svgz",
+    ".xml",
+    ".xsl",
+    ".xslt",
+    ".js",
+    ".mjs",
+    ".swf",
+}
 
 SEED_LABEL = re.compile(r"^seed (?=\d)")
 
@@ -630,6 +647,14 @@ def _infer_evidence_kind(path: Path) -> str:
     return "note"
 
 
+def _publishable_evidence(path: Path) -> bool:
+    if path.suffix.lower() not in ACTIVE_EVIDENCE_SUFFIXES:
+        return True
+    if path.suffix.lower() != ".html":  # .html was always skipped quietly
+        print(f"::warning::{path}: not publishing active-content evidence", file=sys.stderr)
+    return False
+
+
 def _copy_run_evidence(
     source: Path, destination: Path, stored_evidence: object
 ) -> list[dict] | None:
@@ -641,7 +666,7 @@ def _copy_run_evidence(
         for item in sorted(evidence_src.rglob("*")):
             if item.is_symlink():
                 raise SiteError(f"{source}: symlink inside evidence is not allowed ({item})")
-            if item.is_file() and item.suffix.lower() != ".html":
+            if item.is_file() and _publishable_evidence(item):
                 source_files.append(item)
 
     if isinstance(stored_evidence, list) and stored_evidence:
@@ -662,7 +687,11 @@ def _copy_run_evidence(
                 if any(p in ("", ".", "..") for p in parts):
                     raise SiteError(f"{source}: unsafe evidence file path {rel_str!r}")
                 candidate = source.joinpath(*parts)
-                if candidate.is_file() and not candidate.is_symlink():
+                if (
+                    candidate.is_file()
+                    and not candidate.is_symlink()
+                    and _publishable_evidence(candidate)
+                ):
                     resolved_files.append(candidate)
             if resolved_files:
                 size = sum(p.stat().st_size for p in resolved_files)
@@ -1097,9 +1126,10 @@ def publish_report_files(
         if isinstance(report, dict) and strip_actions_links(report):
             report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if html_text:
-        cleaned_html = scrub_unsafe_html(strip_actions_text(html_text))
+        cleaned_html = strip_actions_text(html_text)
         if expired:
             cleaned_html = scrub_expired_evidence_html(cleaned_html, days)
+        cleaned_html = checked_report_html(cleaned_html, str(folder / "report.html"))
         (folder / "report.html").write_text(cleaned_html, encoding="utf-8")
     for name in ("report.md", "report.txt"):
         path = folder / name
@@ -1110,32 +1140,6 @@ def publish_report_files(
         if cleaned != text:
             path.write_text(cleaned, encoding="utf-8")
     write_published_checksums(folder)
-
-
-_SCRIPT_ELEMENT = re.compile(r"<script\b[^>]*>.*?</script\s*>", re.S | re.I)
-_HTML_TAG = re.compile(r"<[A-Za-z][^>]*>")
-_EVENT_HANDLER_ATTR = re.compile(r"""\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)""", re.I)
-_URL_ATTR = re.compile(
-    r"""\s+\b(?:href|src|action|formaction)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""",
-    re.I,
-)
-
-
-def scrub_unsafe_html(text: str) -> str:
-    """Neutralize <script>, inline event handlers, and unsafe href/src URLs in report.html."""
-    text = _SCRIPT_ELEMENT.sub("", text)
-
-    def clean_url_attr(match: re.Match) -> str:
-        raw = next((g for g in match.groups() if g is not None), "")
-        if safe_href(html.unescape(raw)) is None:
-            return ""
-        return match.group(0)
-
-    def clean_tag(match: re.Match) -> str:
-        tag = _EVENT_HANDLER_ATTR.sub("", match.group(0))
-        return _URL_ATTR.sub(clean_url_attr, tag)
-
-    return _HTML_TAG.sub(clean_tag, text)
 
 
 def scrub_expired_evidence_html(text: str, days: int) -> str:
@@ -1186,7 +1190,6 @@ def scrub_reporter_html(text: str, record: dict, *, trial: bool, expired: bool, 
     text = ACTIONS_ANCHOR.sub(unwrap, text)
     text = ACTIONS_URL.sub("", text)
     text = ARTIFACT_WORD.sub("", text)
-    text = scrub_unsafe_html(text)
     if expired:
         text = scrub_expired_evidence_html(text, days)
     return text
@@ -1218,6 +1221,8 @@ def publish_run_page(folder: Path, record: dict, *, now: str, days: int, trial: 
         reports_href="../../../../index.html",
     )
     public = with_spec_provenance(public, record, report)
+    # Checked after every rewrite, so deleting a word cannot assemble new markup.
+    public = checked_report_html(public, str(folder / "index.html"))
     if html_is_dirty(public):
         raise SiteError(
             f"{folder / 'index.html'}: public page still names an artifact or links to /actions/"
