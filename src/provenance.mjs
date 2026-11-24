@@ -11,15 +11,16 @@ const VERIFIER_IMAGE = 'ghcr.io/living-proof-labs/capability-verifier-hallway';
 const REPORTER_IMAGE = 'ghcr.io/living-proof-labs/livingproof-capability-report';
 
 /**
- * The tag is what people edit. assertLockAgrees is the temporary check that
- * the lock fields capability-verifier reads are exactly the resolved values.
- * When scenario.yml takes those resolved values as inputs, delete
- * assertLockAgrees and pass the resolved commit and image reference through.
+ * The tag is what people edit. capability-verifier v2.12.0 takes the resolved
+ * verifier commit, verifier image, reporter image and scenario-evaluator commit
+ * as workflow inputs. Those lock fields are refused when present. The fields
+ * v2.12.0 still reads from the lock stay, and must match the resolved tag.
  */
 /**
- * required: scenario.yml at 0c00c388, or this action's resolver, reads the lock
- * field and does not substitute a default. optional: absent is allowed; a
- * present value must still be a valid untrimmed string and match.
+ * required: the trial reads the lock field and does not substitute a default.
+ * optional: absent is allowed; a present value must still be a valid untrimmed
+ * string and match the resolved tag. rejected: the field must be absent. The
+ * action passes the resolved value instead.
  */
 const SPECS = [
   {
@@ -29,7 +30,8 @@ const SPECS = [
     kind: 'image',
     workflow: true,
     defaultImage: VERIFIER_IMAGE,
-    fields: { repository: 'required', tag: 'required', commit: 'required', image: 'required', digest: 'required' },
+    fields: { repository: 'required', tag: 'required' },
+    rejected: ['commit', 'image', 'digest'],
     read: (lock, sources) => fromRelease(lock.releases?.verifier, sources?.releases?.verifier),
   },
   {
@@ -46,7 +48,10 @@ const SPECS = [
     expectedRepository: 'Living-Proof-Labs/robot-capability-specs',
     kind: 'files',
     fields: { repository: 'required', tag: 'required', commit: 'required', files: 'optional' },
-    read: (lock, sources) => fromRelease(lock.releases?.specs, sources?.releases?.specs, true),
+    read: (lock, sources) =>
+      fromRelease(lock.releases?.specs, sources?.releases?.specs, true, {
+        sourceParameters: lock.sources?.parameters ?? null,
+      }),
   },
   {
     name: 'livingproof-worlds',
@@ -61,7 +66,8 @@ const SPECS = [
     lockField: 'evaluators.livingproof-evaluator-scenario',
     expectedRepository: 'Living-Proof-Labs/livingproof-evaluator-scenario',
     kind: 'source',
-    fields: { repository: 'required', tag: 'required', commit: 'required' },
+    fields: { repository: 'required', tag: 'required' },
+    rejected: ['commit'],
     read: (lock, sources) =>
       fromRelease(
         lock.evaluators?.['livingproof-evaluator-scenario'],
@@ -90,7 +96,8 @@ const SPECS = [
     expectedRepository: 'Living-Proof-Labs/livingproof-capability-report',
     kind: 'image',
     defaultImage: REPORTER_IMAGE,
-    fields: { repository: 'required', tag: 'required', commit: 'required', image: 'required', digest: 'required' },
+    fields: { repository: 'required', tag: 'required', commit: 'required' },
+    rejected: ['image', 'digest'],
     read: (lock, sources) => fromRelease(lock.releases?.reporter, sources?.releases?.reporter),
   },
 ];
@@ -131,6 +138,8 @@ function fromRelease(lockEntry, tomlEntry, withFiles = false, options = {}) {
   if (withFiles && raw.files && typeof raw.files === 'object' && !Array.isArray(raw.files)) {
     for (const path of Object.keys(raw.files)) files[path] = true;
   }
+  const parameterPath = options.sourceParameters?.path;
+  if (withFiles && typeof parameterPath === 'string' && parameterPath) files[parameterPath] = true;
   return {
     repository,
     tag,
@@ -138,6 +147,8 @@ function fromRelease(lockEntry, tomlEntry, withFiles = false, options = {}) {
     files,
     lockRaw: raw,
     definitionRaw: lockRaw(tomlEntry),
+    sourceParameters:
+      options.sourceParameters && typeof options.sourceParameters === 'object' ? options.sourceParameters : null,
   };
 }
 
@@ -182,6 +193,7 @@ function requirePin(spec, raw) {
   }
   const image = spec.defaultImage || '';
   applyScenarioDefaults(spec, raw);
+  assertDroppedFields(spec, raw.lockRaw ?? {});
   assertConsumedLock(spec, raw.repository, raw.tag, image, raw.lockRaw, raw.definitionRaw, raw.sourceWorld);
   const segments = raw.repository.split('/');
   if (
@@ -218,8 +230,18 @@ function requirePin(spec, raw) {
     lockField: spec.lockField,
     lockRaw: raw.lockRaw,
     sourceWorld: raw.sourceWorld ?? null,
+    sourceParameters: raw.sourceParameters ?? null,
     repository: spec.expectedRepository,
   };
+}
+
+function assertDroppedFields(spec, raw) {
+  for (const key of spec.rejected ?? []) {
+    if (raw[key] === undefined) continue;
+    throw new ReportError(
+      `${spec.name}: ${spec.lockField}.${key} is refused. expected the field to be absent so the resolved value is passed to capability-verifier, found ${JSON.stringify(raw[key])}.`
+    );
+  }
 }
 
 const FIELD_FORM = {
@@ -366,44 +388,102 @@ export function sameRepository(left, right) {
   return a.length > 0 && a.toLowerCase() === b.toLowerCase();
 }
 
+const VERIFIER_IMAGE_INPUT =
+  /^ghcr\.io\/living-proof-labs\/capability-verifier-hallway:(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)@sha256:[0-9a-f]{64}$/;
+const REPORTER_IMAGE_INPUT =
+  /^ghcr\.io\/living-proof-labs\/livingproof-capability-report:(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)@sha256:[0-9a-f]{64}$/;
+
+function imageInput(name, tag, digest, label, pattern) {
+  const semver = typeof tag === 'string' ? tag.replace(/^v/, '') : '';
+  const ref = `${name}:${semver}@${digest}`;
+  if (!pattern.test(ref)) {
+    throw new ReportError(
+      `${label} is not a resolved image ref. expected ${name}:<semver>@sha256:<64 hex>, found ${JSON.stringify(ref)}.`
+    );
+  }
+  return ref;
+}
+
 /**
- * Lock fields that the trial reads must equal the values resolved from the tag.
- * This is the drop-in point for the follow-up that passes those resolved values
- * into capability-verifier and stops reading them from the lock.
+ * The four inputs capability-verifier v2.12.0 scenario.yml accepts. Built from
+ * the commits and image digests the action already resolved from the tags.
+ */
+export function resolvedTrialInputs(records) {
+  const byName = new Map((records ?? []).map((record) => [record.name, record]));
+  const verifier = byName.get('capability-verifier');
+  const reporter = byName.get('livingproof-capability-report');
+  const evaluator = byName.get('livingproof-evaluator-scenario');
+  if (!verifier || !reporter || !evaluator) {
+    throw new ReportError('resolved pins are missing, so no trial can start.');
+  }
+  if (!SHA.test(verifier.commit)) {
+    throw new ReportError(
+      `verifier-commit is not a resolved commit. expected a 40-character commit, found ${JSON.stringify(verifier.commit)}.`
+    );
+  }
+  if (!SHA.test(evaluator.commit)) {
+    throw new ReportError(
+      `evaluator-commit is not a resolved commit. expected a 40-character commit, found ${JSON.stringify(evaluator.commit)}.`
+    );
+  }
+  return {
+    verifier_commit: verifier.commit,
+    verifier_image: imageInput(VERIFIER_IMAGE, verifier.tag, verifier.digest, 'verifier-image', VERIFIER_IMAGE_INPUT),
+    reporter_image: imageInput(REPORTER_IMAGE, reporter.tag, reporter.digest, 'reporter-image', REPORTER_IMAGE_INPUT),
+    evaluator_commit: evaluator.commit,
+  };
+}
+
+function disagree(pin, field, expected, found) {
+  throw new ReportError(
+    `${pin.name}: ${field} differs from the resolved tag. expected ${expected}, found ${found}.`
+  );
+}
+
+/**
+ * Lock fields the trial still reads must equal the values resolved from the tag.
+ * Fields passed as workflow inputs are refused earlier and are not compared here.
  */
 export function assertLockAgrees(pin, resolved) {
   const raw = pin.lockRaw ?? {};
-  if (raw.commit !== undefined && raw.commit !== null && raw.commit !== resolved.commit) {
-    throw new ReportError(
-      `${pin.name}: ${pin.lockField}.commit differs from the resolved tag. expected ${resolved.commit}, found ${raw.commit}.`
-    );
-  }
-  if (pin.kind === 'image' && asDigest(raw.digest) !== resolved.digest) {
-    throw new ReportError(
-      `${pin.name}: ${pin.lockField}.digest differs from the resolved tag. expected ${resolved.digest}, found ${raw.digest}.`
-    );
-  }
   const fileHash = (resolved.digest || '').replace(/^sha256:/, '');
-  if (typeof raw.sha256 === 'string' && raw.sha256 !== fileHash) {
-    throw new ReportError(
-      `${pin.name}: ${pin.lockField}.sha256 differs from the resolved tag. expected ${fileHash}, found ${raw.sha256}.`
-    );
+  if (pin.lockField === 'releases.runner' && raw.commit != null && raw.commit !== resolved.commit) {
+    disagree(pin, `${pin.lockField}.commit`, resolved.commit, raw.commit);
+  }
+  if (pin.lockField === 'releases.specs' && raw.commit !== resolved.commit) {
+    disagree(pin, `${pin.lockField}.commit`, resolved.commit, raw.commit);
+  }
+  if (pin.lockField === 'releases.reporter' && raw.commit !== resolved.commit) {
+    disagree(pin, `${pin.lockField}.commit`, resolved.commit, raw.commit);
+  }
+  if (pin.lockField === 'world' && raw.commit != null && raw.commit !== resolved.commit) {
+    disagree(pin, `${pin.lockField}.commit`, resolved.commit, raw.commit);
+  }
+  if (
+    pin.lockField === 'evaluators.livingproof-evaluator-run' &&
+    raw.commit != null &&
+    raw.commit !== resolved.commit
+  ) {
+    disagree(pin, `${pin.lockField}.commit`, resolved.commit, raw.commit);
+  }
+  if (pin.lockField === 'world' && typeof raw.sha256 === 'string' && raw.sha256 !== fileHash) {
+    disagree(pin, `${pin.lockField}.sha256`, fileHash, raw.sha256);
   }
   const sourceSha = pin.sourceWorld?.sha256;
-  if (typeof sourceSha === 'string' && sourceSha !== fileHash) {
-    throw new ReportError(
-      `${pin.name}: sources.world.sha256 differs from the resolved tag. expected ${fileHash}, found ${sourceSha}.`
-    );
+  if (pin.lockField === 'world' && typeof sourceSha === 'string' && sourceSha !== fileHash) {
+    disagree(pin, 'sources.world.sha256', fileHash, sourceSha);
   }
-  if (raw.files && typeof raw.files === 'object') {
+  if (pin.lockField === 'releases.specs' && raw.files && typeof raw.files === 'object' && !Array.isArray(raw.files)) {
     for (const [path, locked] of Object.entries(raw.files)) {
       const found = resolved.files?.[path] || '';
-      if (locked !== found) {
-        throw new ReportError(
-          `${pin.name}: ${pin.lockField}.files[${path}] differs from the resolved tag. expected ${found || 'the file sha256'}, found ${locked}.`
-        );
-      }
+      if (locked !== found) disagree(pin, `${pin.lockField}.files[${path}]`, found || 'the file sha256', locked);
     }
+  }
+  const parametersSha = pin.sourceParameters?.sha256;
+  if (pin.lockField === 'releases.specs' && typeof parametersSha === 'string') {
+    const parameterPath = typeof pin.sourceParameters.path === 'string' ? pin.sourceParameters.path : '';
+    const found = resolved.files?.[parameterPath] || '';
+    if (parametersSha !== found) disagree(pin, 'sources.parameters.sha256', found || 'the file sha256', parametersSha);
   }
 }
 

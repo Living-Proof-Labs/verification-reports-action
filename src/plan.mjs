@@ -4,7 +4,7 @@ import path from 'node:path';
 import { matrixFor, planDefinitions } from './definitions.mjs';
 import { githubProvenanceClient } from './github-provenance.mjs';
 import { writeGithubOutput } from './github-output.mjs';
-import { assertPinnedInputs, fixtureProvenance } from './provenance.mjs';
+import { assertPinnedInputs, fixtureProvenance, resolvedTrialInputs } from './provenance.mjs';
 
 export async function writePlan(env = process.env, root = process.cwd(), client = null) {
   const inputs = {
@@ -41,8 +41,8 @@ export async function writePlan(env = process.env, root = process.cwd(), client 
   mkdirSync(path.dirname(planPath), { recursive: true });
   writeFileSync(planPath, `${JSON.stringify(serialised, null, 2)}\n`, 'utf8');
   const fixture = matrixFor(plan, 'fixture');
-  const hallway = matrixFor(plan, 'capability-verifier', 'walk-hallway');
-  const scenario = matrixFor(plan, 'capability-verifier', 'scenario');
+  const hallway = trialMatrix(plan, 'walk-hallway');
+  const scenario = trialMatrix(plan, 'scenario');
   const outputs = {
     fixture: JSON.stringify(fixture),
     fixture_count: String(fixture.length),
@@ -54,6 +54,13 @@ export async function writePlan(env = process.env, root = process.cwd(), client 
   };
   writeGithubOutput(env, outputs);
   return { plan: serialised, outputs, planPath };
+}
+
+function trialMatrix(plan, procedure) {
+  return matrixFor(plan, 'capability-verifier', procedure).map((row) => {
+    const item = plan.definitions.find((entry) => entry.id === row.id);
+    return { ...row, ...resolvedTrialInputs(item?.provenance) };
+  });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

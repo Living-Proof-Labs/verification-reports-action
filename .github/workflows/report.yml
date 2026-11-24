@@ -4,6 +4,8 @@
 # Plan resolves every pinned release from its tag and refuses before any trial
 # when the tag, commit, digest, or attestation does not match. A tag that peels
 # to a commit other than the capability-verifier SHA above is refused there too.
+# The resolved verifier commit, verifier image, reporter image and scenario-evaluator
+# commit are passed as workflow inputs. The lock cannot carry those fields.
 name: Verification report
 on:
   workflow_call:
@@ -204,12 +206,16 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.hallway) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@0c00c388c693012392da0c1cd391046c752e9b3c # v2.11.4
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@fdbf233f6fbaef3bf6589a056821bde3ebb634e2 # v2.12.0
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}
       configurations: ${{ matrix.configurations }}
       verification-lock: ${{ matrix.lock }}
+      verifier-commit: ${{ matrix.verifier_commit }}
+      verifier-image: ${{ matrix.verifier_image }}
+      reporter-image: ${{ matrix.reporter_image }}
+      evaluator-commit: ${{ matrix.evaluator_commit }}
       artifact-prefix: ${{ matrix.artifact_prefix }}
       check: false
       comment: ${{ inputs.comment }}
@@ -226,12 +232,16 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.scenario) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@0c00c388c693012392da0c1cd391046c752e9b3c # v2.11.4
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@fdbf233f6fbaef3bf6589a056821bde3ebb634e2 # v2.12.0
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}
       configurations: ${{ matrix.configurations }}
       verification-lock: ${{ matrix.lock }}
+      verifier-commit: ${{ matrix.verifier_commit }}
+      verifier-image: ${{ matrix.verifier_image }}
+      reporter-image: ${{ matrix.reporter_image }}
+      evaluator-commit: ${{ matrix.evaluator_commit }}
       artifact-prefix: ${{ matrix.artifact_prefix }}
       check: false
       comment: ${{ inputs.comment }}

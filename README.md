@@ -20,7 +20,23 @@ A robot `FAIL` or `INSUFFICIENT_EVIDENCE` is a successful run. `status` is `ok` 
 
 Before any trial, the plan job resolves each input from its release tag and refuses the run when the check fails. The message names the input and the expected and found values. No `report.json` is written, and `walk-hallway` and `scenario` do not start, because both need the plan job. The inputs are capability-verifier, livingproof-sim-mujoco, robot-capability-specs, the livingproof-worlds world, livingproof-evaluator-scenario, livingproof-evaluator-run, and livingproof-capability-report together with its image.
 
-The tag is the pin people edit. For now, bumping a tag also means updating that input's commit and digest in the lock to the values the tag resolves to. The plan refuses, before it writes `plan.json`, when a lock commit, digest, or sha256 differs from the resolved tag, and when an image name is not the default `ghcr.io/living-proof-labs/…` image. A tag-only edit is a follow-up, tracked in [va#15](https://github.com/Living-Proof-Labs/verification-reports-action/issues/15) and [cv#244](https://github.com/Living-Proof-Labs/capability-verifier/issues/244): `capability-verifier` `scenario.yml` will take the resolved commits and digests as inputs, and those lock fields can then be dropped.
+The tag is the pin people edit. The plan resolves each tag, then passes four values into capability-verifier v2.12.0: `verifier-commit`, `verifier-image`, `reporter-image`, and `evaluator-commit`. Those values are the commits and image refs the plan already checked. The lock must not carry the fields they replace. A present field is refused before `plan.json` is written:
+
+- `releases.verifier.commit`, `releases.verifier.image`, and `releases.verifier.digest`
+- `releases.reporter.image` and `releases.reporter.digest`
+- `evaluators.livingproof-evaluator-scenario.commit`
+
+A one-line edit of the verifier tag, or of the livingproof-evaluator-scenario tag, needs no relock of those fields. The trial runs the commit and image the new tag resolved to.
+
+These fields stay in the lock. capability-verifier v2.12.0 still reads them, and the plan refuses when one disagrees with the tag it resolved:
+
+- `releases.runner.commit`
+- `releases.specs.commit` and `releases.specs.files`
+- `world.commit`, `world.sha256`, and `sources.world.sha256`
+- `sources.parameters.sha256`
+- `releases.reporter.commit`
+
+A one-line edit of the runner, specs, or world tag that leaves the old commit or hashes in place is refused. `releases.reporter.commit` stays for the same reason: v2.12.0 does not take a reporter commit input, and `repin --check` still requires that commit.
 
 `report.json` and `run.json` each record `inputs`: repository, tag, commit, digest, and `status` for every pin. The same status line is written into `report.md`, `report.html`, and `report.txt` under "Pinned inputs", as `name: status (meaning)`.
 

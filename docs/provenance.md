@@ -8,15 +8,15 @@ The plan job in [`.github/workflows/report.yml`](../.github/workflows/report.yml
 
 | Input | Lock field | What is checked |
 | --- | --- | --- |
-| capability-verifier | `releases.verifier` | Release, tag commit, workflow pin, image digest, attestation |
-| livingproof-sim-mujoco | `releases.runner` | Release, tag commit, source archive sha256, attestation |
-| robot-capability-specs | `releases.specs` | Release, tag commit, each `files` sha256, attestation |
-| livingproof-worlds | `world` | Release, tag commit, `worlds/<id>/<version>/world.json` sha256, attestation |
-| livingproof-evaluator-scenario | `evaluators.livingproof-evaluator-scenario` | Release, tag commit, source archive sha256, attestation |
-| livingproof-evaluator-run | `evaluators.livingproof-evaluator-run` | Release, tag commit, source archive sha256, attestation |
-| livingproof-capability-report | `releases.reporter` | Release, tag commit, image digest, attestation |
+| capability-verifier | `releases.verifier` | Release, tag commit, workflow pin, image digest, attestation. `commit`, `image`, and `digest` in the lock are refused. |
+| livingproof-sim-mujoco | `releases.runner` | Release, tag commit, source archive sha256, attestation. `commit`, when present, must equal the peeled tag. |
+| robot-capability-specs | `releases.specs` | Release, tag commit, each `files` sha256, `sources.parameters.sha256`, attestation. `commit` must equal the peeled tag. Each `files` entry and `sources.parameters.sha256`, when present, must equal the file at that tag. |
+| livingproof-worlds | `world` | Release, tag commit, `worlds/<id>/<version>/world.json` sha256, attestation. `commit`, when present, must equal the peeled tag. `world.sha256` and `sources.world.sha256`, when present, must equal that file. |
+| livingproof-evaluator-scenario | `evaluators.livingproof-evaluator-scenario` | Release, tag commit, source archive sha256, attestation. `commit` in the lock is refused. |
+| livingproof-evaluator-run | `evaluators.livingproof-evaluator-run` | Release, tag commit, source archive sha256, attestation. `commit`, when present, must equal the peeled tag. |
+| livingproof-capability-report | `releases.reporter` | Release, tag commit, image digest, attestation. `commit` must equal the peeled tag. `image` and `digest` in the lock are refused. |
 
-The tag is read from the definition when the definition has one, and otherwise from the lock. The image name defaults to `ghcr.io/living-proof-labs/capability-verifier-hallway` and `ghcr.io/living-proof-labs/livingproof-capability-report` when the lock does not name one. Only `ghcr.io` images are accepted.
+The tag is read from the definition when the definition has one, and otherwise from the lock. The image name passed to the trial is `ghcr.io/living-proof-labs/capability-verifier-hallway` or `ghcr.io/living-proof-labs/livingproof-capability-report`. The lock does not name it.
 
 ## Checks
 
@@ -29,11 +29,21 @@ For each input the plan asks GitHub for the Release named by the tag, peels the 
 
 `contents: read` is the workflow permission. The plan does not ask for `attestations: read`, because every caller of this reusable workflow would have to grant that permission before the plan job could start.
 
-The capability-verifier `uses:` lines stay a full commit SHA. GitHub rejects an expression there, so the plan cannot swap the called workflow. After the tag peels, that commit must be `0c00c388c693012392da0c1cd391046c752e9b3c` (`v2.11.4`). Any other commit fails before a trial. Renovate's GitHub Actions manager bumps that one line, SHA and `# vX.Y.Z` comment together. The lock's verifier tag must peel to the same commit. No lock hash is rewritten.
+The capability-verifier `uses:` lines stay a full commit SHA. GitHub rejects an expression there, so the plan cannot swap the called workflow. After the tag peels, that commit must be `fdbf233f6fbaef3bf6589a056821bde3ebb634e2` (`v2.12.0`). Any other commit fails before a trial. Renovate's GitHub Actions manager bumps that one line, SHA and `# vX.Y.Z` comment together. The lock's verifier tag must peel to the same commit. No lock hash is rewritten.
 
 ## Tag bump
 
-For now, bumping a tag also means updating that input's commit, digest, and file sha256 in the lock to the values the tag resolves to. A tag-only edit fails before `plan.json` is written. The tag-only Renovate bump is a follow-up, tracked in [va#15](https://github.com/Living-Proof-Labs/verification-reports-action/issues/15) and [cv#244](https://github.com/Living-Proof-Labs/capability-verifier/issues/244): `capability-verifier` `scenario.yml` will take the resolved commits and digests as inputs, and `assertLockAgrees` in `src/provenance.mjs` can then be removed.
+capability-verifier v2.12.0 accepts `verifier-commit`, `verifier-image`, `reporter-image`, and `evaluator-commit`. The plan passes the commit and the `image:semver@sha256` ref it resolved. The lock fields those inputs replace are refused when present: `releases.verifier.commit`, `releases.verifier.image`, `releases.verifier.digest`, `releases.reporter.image`, `releases.reporter.digest`, and `evaluators.livingproof-evaluator-scenario.commit`. A one-line edit of the verifier tag or the scenario-evaluator tag therefore needs no relock of a commit or digest.
+
+These fields stay, because v2.12.0 still reads them and has no input for them. A value that differs from the resolved tag is refused:
+
+- `releases.runner.commit`
+- `releases.specs.commit` and `releases.specs.files`
+- `world.commit`, `world.sha256`, and `sources.world.sha256`
+- `sources.parameters.sha256`
+- `releases.reporter.commit`
+
+`repin --check` requires a commit on every `releases.*` entry, including the runner, the specs, and the reporter. `fetch_hallway_specs.py` checks out `releases.specs.commit` and, when `world.commit` is present, `world.commit`. `sources.parameters` and `sources.world` are fetched at those commits. A runner, specs, or world tag edit that leaves the old commit or hashes in the lock is refused before a trial. The runner tag must also still match the robot `pyproject.toml` source, which `repin --check` compares with `releases.runner.tag`.
 
 Fixture definitions under `tests/fixtures/robot/verifications/`, when this repository calls its own workflow, skip the network and record `status: fixture`. They are not a robot release. A robot repository's definitions are checked.
 
