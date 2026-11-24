@@ -40,7 +40,18 @@ A one-line edit of the runner, specs, or world tag that leaves the old commit or
 
 ## Migration
 
-A lock that still has any of the six refused fields, or a verifier tag other than the capability-verifier release this action calls, is refused before a trial. Drop those six fields and set `releases.verifier.tag` to that release (`v2.12.0` for the pin in this change). The kept commit and hash fields stay as they are.
+<a id="migration"></a>
+
+Every lock published before this release is refused before a trial. Drop these six fields:
+
+- `releases.verifier.commit`
+- `releases.verifier.image`
+- `releases.verifier.digest`
+- `releases.reporter.image`
+- `releases.reporter.digest`
+- `evaluators.livingproof-evaluator-scenario.commit`
+
+Set `releases.verifier.tag` to `v2.12.0`. The plan resolves that tag and passes the commit and the image. Leave the kept fields in place: `releases.runner.commit`, `releases.specs.commit`, `releases.specs.files`, `world.commit`, `world.sha256`, `sources.world.sha256`, `sources.parameters.sha256`, and `releases.reporter.commit`.
 
 `report.json` and `run.json` each record `inputs`: repository, tag, commit, digest, and `status` for every pin. The same status line is written into `report.md`, `report.html`, and `report.txt` under "Pinned inputs", as `name: status (meaning)`.
 
