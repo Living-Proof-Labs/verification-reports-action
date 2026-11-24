@@ -79,9 +79,7 @@ const SPECS = [
     read: (lock, sources) =>
       fromRelease(
         lock.evaluators?.['livingproof-evaluator-run'],
-        sources?.evaluators?.['livingproof-evaluator-run'],
-        false,
-        { ignoreDefinitionWithoutLock: true }
+        sources?.evaluators?.['livingproof-evaluator-run']
       ),
   },
   {
@@ -116,11 +114,9 @@ function lockRaw(entry) {
   };
 }
 
-function fromRelease(lockEntry, tomlEntry, withFiles = false, options = {}) {
-  const lockOmitsPin = lockEntry == null || (lockEntry.repository == null && lockEntry.tag == null);
-  const useDefinition = !(options.ignoreDefinitionWithoutLock && lockOmitsPin);
-  const repository = (useDefinition ? text(tomlEntry?.repository) : '') || text(lockEntry?.repository);
-  const tag = (useDefinition ? text(tomlEntry?.tag) : '') || text(lockEntry?.tag);
+function fromRelease(lockEntry, tomlEntry, withFiles = false) {
+  const repository = text(tomlEntry?.repository) || text(lockEntry?.repository);
+  const tag = text(tomlEntry?.tag) || text(lockEntry?.tag);
   if (!repository && !tag && !lockEntry && !tomlEntry) return null;
   const files = {};
   const raw = lockRaw(lockEntry);
@@ -264,17 +260,10 @@ function assertConsumedLock(spec, repository, tag, image, raw, definition, sourc
     assertLockString(spec.name, `${spec.lockField}.tag`, defined.tag, FIELD_FORM.tag);
   }
   const lockOmitsPin = values.repository == null && values.tag == null;
-  if (spec.defaultTag && lockOmitsPin) {
-    if (defined.tag != null && defined.tag !== spec.defaultTag) {
-      throw new ReportError(
-        `${spec.name}: ${spec.lockField}.tag is not what scenario.yml runs. expected ${spec.defaultTag}, found ${defined.tag}.`
-      );
-    }
-    if (defined.repository != null && !sameRepository(defined.repository, spec.expectedRepository)) {
-      throw new ReportError(
-        `${spec.name}: ${spec.lockField}.repository is not what scenario.yml runs. expected ${spec.expectedRepository}, found ${defined.repository}.`
-      );
-    }
+  if (spec.defaultTag && lockOmitsPin && defined.tag != null && defined.tag !== spec.defaultTag) {
+    throw new ReportError(
+      `${spec.name}: ${spec.lockField}.tag is not what scenario.yml runs. expected ${spec.defaultTag}, found ${defined.tag}.`
+    );
   }
   for (const [key, rule] of Object.entries(spec.fields)) {
     if (key === 'files') continue;

@@ -1402,6 +1402,21 @@ test('a definition cannot steer the evaluator-run default', async () => {
     () => assertPinnedInputs(item(lock, steered), client()),
     /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.tag is not what scenario\.yml runs\. expected v1\.5\.0, found v1\.8\.11/
   );
+  await assert.rejects(
+    () =>
+      assertPinnedInputs(
+        item(lock, {
+          evaluators: {
+            'livingproof-evaluator-run': {
+              repository: 'Living-Proof-Labs/something-else',
+              tag: 'v1.5.0',
+            },
+          },
+        }),
+        client()
+      ),
+    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.repository is not the expected repository\. expected Living-Proof-Labs\/livingproof-evaluator-run, found Living-Proof-Labs\/something-else/
+  );
   const matched = await assertPinnedInputs(
     item(lock, {
       evaluators: {
@@ -1417,6 +1432,26 @@ test('a definition cannot steer the evaluator-run default', async () => {
   assert.equal(record.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
   assert.equal(record.tag, 'v1.5.0');
   assert.equal(record.commit, COMMIT);
+});
+
+test('evaluator-run uses the default repository when the lock omits it', async () => {
+  const lock = sampleLock();
+  delete lock.evaluators['livingproof-evaluator-run'].repository;
+  const records = await assertPinnedInputs(item(lock), client());
+  const record = records.find((entry) => entry.name === 'livingproof-evaluator-run');
+  assert.equal(record.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
+  assert.equal(record.tag, 'v1.8.6');
+});
+
+test('a world sha256 that differs from the released world file is refused', async () => {
+  const lock = sampleLock();
+  lock.world.sha256 = 'ff'.repeat(32);
+  await assert.rejects(
+    () => assertPinnedInputs(item(lock), client()),
+    new RegExp(
+      `livingproof-worlds: world\\.sha256 differs from the resolved tag\\. expected ${FILE_HASH}, found ${'ff'.repeat(32)}`
+    )
+  );
 });
 
 test('a world with neither sha256 nor sources.world is unbound', async () => {
@@ -1436,6 +1471,80 @@ test('a world with neither sha256 nor sources.world is unbound', async () => {
     () => assertPinnedInputs(item(lock), client()),
     /livingproof-worlds: sources\.world\.sha256 differs from the resolved tag/
   );
+});
+
+test('real release-please notes do not move the tag', async () => {
+  const fixtures = ['worlds-v1.4.0.json', 'specs-v2.3.0.json', 'evaluator-scenario-v1.5.3.json'].map((name) =>
+    JSON.parse(readFileSync(new URL(`./fixtures/releases/${name}`, import.meta.url), 'utf8'))
+  );
+  for (const fixture of fixtures) {
+    assert.equal(fixture.target_commitish, 'main');
+    assert.notEqual(fixture.changelogCommit, fixture.tagCommit);
+    assert.equal(
+      publishedCommitFromRelease({ target_commitish: fixture.target_commitish, body: fixture.body }),
+      null
+    );
+    assert.equal(fixture.body.includes(fixture.changelogCommit), true);
+    const lock = sampleLock();
+    const bytes = Buffer.from(`bytes for ${fixture.repository}@${fixture.tag}`);
+    const fileHash = createHash('sha256').update(bytes).digest('hex');
+    let pinName;
+    if (fixture.repository.endsWith('/livingproof-worlds')) {
+      pinName = 'livingproof-worlds';
+      lock.world.tag = fixture.tag;
+      lock.world.commit = fixture.tagCommit;
+      lock.world.sha256 = fileHash;
+    } else if (fixture.repository.endsWith('/robot-capability-specs')) {
+      pinName = 'robot-capability-specs';
+      lock.releases.specs.tag = fixture.tag;
+      lock.releases.specs.commit = fixture.tagCommit;
+      lock.releases.specs.files = { 'specs/scenarios/walk-corner-left/description.json': fileHash };
+    } else {
+      pinName = 'livingproof-evaluator-scenario';
+      lock.evaluators['livingproof-evaluator-scenario'].tag = fixture.tag;
+      lock.evaluators['livingproof-evaluator-scenario'].commit = fixture.tagCommit;
+    }
+    const pin = collectPins(item(lock)).find((entry) => entry.name === pinName);
+    const evidence = await resolvePin(pin, {
+      token: '',
+      api: 'https://api.github.com',
+      fetch: async (url) => {
+        const respond = (status, body, raw = null) => ({
+          status,
+          ok: status >= 200 && status < 300,
+          headers: { get: () => null },
+          json: async () => body,
+          text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
+          arrayBuffer: async () => raw ?? new Uint8Array(),
+          body: null,
+        });
+        if (url.includes('/releases/tags/')) {
+          return respond(200, {
+            tag_name: fixture.tag,
+            target_commitish: fixture.target_commitish,
+            body: fixture.body,
+            assets: [],
+          });
+        }
+        if (url.includes('/git/ref/tags/')) {
+          return respond(200, { object: { type: fixture.tagObjectType ?? 'commit', sha: fixture.tagCommit } });
+        }
+        if (url.includes('/contents/')) {
+          return respond(200, { encoding: 'base64', content: bytes.toString('base64') });
+        }
+        if (url.includes('/attestations/')) return respond(404, { message: 'Not Found' });
+        if (url.startsWith('https://codeload.github.com/')) return respond(200, '', Buffer.from('source'));
+        return respond(500, { message: url });
+      },
+    });
+    assert.equal(evidence.tagCommit, fixture.tagCommit);
+    assert.equal(evidence.publishedCommit, null);
+    assert.notEqual(evidence.publishedCommit, fixture.changelogCommit);
+    const record = checkPin(pin, evidence);
+    assert.equal(record.commit, fixture.tagCommit);
+    assert.notEqual(record.commit, fixture.changelogCommit);
+    assert.equal(record.status, 'resolved');
+  }
 });
 
 test('changelog SHAs are not the published commit and an annotated tag peels to the commit', async () => {
