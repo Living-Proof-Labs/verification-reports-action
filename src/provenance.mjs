@@ -282,7 +282,6 @@ function assertConsumedLock(spec, repository, tag, image, raw, definition, sourc
   const defined = definition ?? {};
   if (defined.repository !== undefined && defined.repository !== null) {
     assertLockString(spec.name, `${spec.lockField}.repository`, defined.repository, FIELD_FORM.repository);
-    assertExpectedRepository(spec, defined.repository);
   }
   if (defined.tag !== undefined && defined.tag !== null) {
     assertLockString(spec.name, `${spec.lockField}.tag`, defined.tag, FIELD_FORM.tag);
@@ -299,8 +298,18 @@ function assertConsumedLock(spec, repository, tag, image, raw, definition, sourc
       continue;
     }
     assertLockString(spec.name, field, value, FIELD_FORM[key]);
+    if (key === 'repository' && defined.repository != null && !sameRepository(value, defined.repository)) {
+      throw new ReportError(
+        `${spec.name}: ${field} differs from the definition. expected ${defined.repository}, found ${value}.`
+      );
+    }
     if (key === 'repository') assertExpectedRepository(spec, value);
-    if (key === 'tag' && value !== tag) {
+    if (key === 'tag' && defined.tag != null && value !== defined.tag) {
+      throw new ReportError(
+        `${spec.name}: ${field} differs from the definition. expected ${defined.tag}, found ${value}.`
+      );
+    }
+    if (key === 'tag' && defined.tag == null && value !== tag) {
       throw new ReportError(
         `${spec.name}: ${field} differs from the definition. expected ${tag}, found ${value}.`
       );

@@ -1282,7 +1282,7 @@ test('a repository other than the expected one is refused', async () => {
         item(defined, { releases: { verifier: { repository: 'Evil-Org/capability-verifier', tag: 'v2.11.4' } } }),
         client()
       ),
-    /capability-verifier: releases\.verifier\.repository is not the expected repository\. expected Living-Proof-Labs\/capability-verifier, found Evil-Org\/capability-verifier/
+    /capability-verifier: releases\.verifier\.repository differs from the definition\. expected Evil-Org\/capability-verifier, found Living-Proof-Labs\/capability-verifier/
   );
   const lock = sampleLock();
   lock.releases.verifier.repository = 'living-proof-labs/capability-verifier';
@@ -1431,6 +1431,66 @@ test('a definition cannot steer the evaluator-run default', async () => {
   const record = matched.find((entry) => entry.name === 'livingproof-evaluator-run');
   assert.equal(record.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
   assert.equal(record.tag, 'v1.5.0');
+  assert.equal(record.commit, COMMIT);
+});
+
+test('a full evaluator-run lock with a different definition tag is refused', async () => {
+  const lock = sampleLock();
+  lock.evaluators['livingproof-evaluator-run'].tag = 'v1.8.11';
+  await assert.rejects(
+    () =>
+      assertPinnedInputs(
+        item(lock, {
+          evaluators: {
+            'livingproof-evaluator-run': {
+              repository: 'Living-Proof-Labs/livingproof-evaluator-run',
+              tag: 'v1.8.12',
+            },
+          },
+        }),
+        client()
+      ),
+    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.tag differs from the definition\. expected v1\.8\.12, found v1\.8\.11/
+  );
+});
+
+test('a full evaluator-run lock with a different definition repository is refused', async () => {
+  const lock = sampleLock();
+  lock.evaluators['livingproof-evaluator-run'].tag = 'v1.8.11';
+  await assert.rejects(
+    () =>
+      assertPinnedInputs(
+        item(lock, {
+          evaluators: {
+            'livingproof-evaluator-run': {
+              repository: 'Living-Proof-Labs/something-else',
+              tag: 'v1.8.11',
+            },
+          },
+        }),
+        client()
+      ),
+    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.repository differs from the definition\. expected Living-Proof-Labs\/something-else, found Living-Proof-Labs\/livingproof-evaluator-run/
+  );
+});
+
+test('a full evaluator-run lock with a matching definition passes', async () => {
+  const lock = sampleLock();
+  lock.evaluators['livingproof-evaluator-run'].tag = 'v1.8.11';
+  const records = await assertPinnedInputs(
+    item(lock, {
+      evaluators: {
+        'livingproof-evaluator-run': {
+          repository: 'Living-Proof-Labs/livingproof-evaluator-run',
+          tag: 'v1.8.11',
+        },
+      },
+    }),
+    client()
+  );
+  const record = records.find((entry) => entry.name === 'livingproof-evaluator-run');
+  assert.equal(record.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
+  assert.equal(record.tag, 'v1.8.11');
   assert.equal(record.commit, COMMIT);
 });
 
