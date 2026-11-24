@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { collectReports } from '../src/collect.mjs';
+import { planDefinitions } from '../src/definitions.mjs';
 import { runFixtureCli } from '../src/fixture-run.mjs';
 import { writePlan } from '../src/plan.mjs';
 
@@ -87,7 +88,7 @@ test('src/site_action.py executes end to end as a standalone process on fixture 
   }
 });
 
-test('src/site_action.py consumes collectReports output from .github/workflows/report.yml', () => {
+test('src/site_action.py consumes collectReports output from .github/workflows/report.yml', async () => {
   const tempRoot = mkdtempSync(path.join(tmpdir(), 'vra-report-to-site-'));
   try {
     const baseEnv = {
@@ -104,18 +105,14 @@ test('src/site_action.py consumes collectReports output from .github/workflows/r
       // run as fixtures when this repository calls its own workflow (va#8).
       WORKFLOW_REPOSITORY: 'Living-Proof-Labs/verification-reports-action',
     };
-    const spoofed = writePlan(
-      {
-        ...baseEnv,
-        WORKFLOW_REPOSITORY: 'Other-Org/verification-reports-action',
-        INPUT_PLAN_PATH: path.join(tempRoot, 'spoofed-plan.json'),
-        GITHUB_OUTPUT: path.join(tempRoot, 'spoofed-plan.out'),
-      },
+    const spoofed = planDefinitions(
+      { definitions: baseEnv.INPUT_DEFINITIONS, repository: '', ref: '' },
+      { ...baseEnv, WORKFLOW_REPOSITORY: 'Other-Org/verification-reports-action' },
       repoRoot
     );
-    assert.ok(spoofed.plan.definitions.every((item) => item.execution !== 'fixture'));
+    assert.ok(spoofed.definitions.every((item) => item.execution !== 'fixture'));
     const planPath = path.join(tempRoot, 'plan.json');
-    const planned = writePlan(
+    const planned = await writePlan(
       { ...baseEnv, INPUT_PLAN_PATH: planPath, GITHUB_OUTPUT: path.join(tempRoot, 'plan.out') },
       repoRoot
     );

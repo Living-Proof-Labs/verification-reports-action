@@ -1,0 +1,58 @@
+[
+  {
+    "name": "capability-verifier",
+    "repository": "Living-Proof-Labs/capability-verifier",
+    "tag": "v2.11.4",
+    "commit": "0c00c388c693012392da0c1cd391046c752e9b3c",
+    "digest": "sha256:c76f1d53914b6ba4f364ccb906d9580153e300f6160c6c7ed169e3d7e4456209",
+    "status": "resolved"
+  },
+  {
+    "name": "livingproof-sim-mujoco",
+    "repository": "Living-Proof-Labs/livingproof-sim-mujoco",
+    "tag": "v3.6.2",
+    "commit": "988a57bdb54654aac57aa4de0574d62914074fd0",
+    "digest": "sha256:58fecd76bc449170160cad088fe3d101e16714b0b9eef00ec5df84729ee72fea",
+    "status": "resolved"
+  },
+  {
+    "name": "robot-capability-specs",
+    "repository": "Living-Proof-Labs/robot-capability-specs",
+    "tag": "v2.3.0",
+    "commit": "57317e617014a6df97bb7fba9d92a890af8d42e5",
+    "digest": "sha256:af965dc3a6b3665e98a57b348812a2b9cc45f83351434fdedcbba4fc01027e7c",
+    "status": "resolved"
+  },
+  {
+    "name": "livingproof-worlds",
+    "repository": "Living-Proof-Labs/livingproof-worlds",
+    "tag": "v1.1.0",
+    "commit": "9b3e7119aa93a3370383227fb30bd39a9dd72b4b",
+    "digest": "sha256:d60bb8aa6a72c8403fb6674cc9d803962c1484bc3e163527988e8c57ccec775c",
+    "status": "resolved"
+  },
+  {
+    "name": "livingproof-evaluator-scenario",
+    "repository": "Living-Proof-Labs/livingproof-evaluator-scenario",
+    "tag": "v1.5.3",
+    "commit": "ca9d337a771269d07feec94c99f199bef7fca808",
+    "digest": "sha256:26939e0a0644cb997b9562f7c41cc20e0155b1a683325b025f123f94d51ad8fc",
+    "status": "resolved"
+  },
+  {
+    "name": "livingproof-evaluator-run",
+    "repository": "Living-Proof-Labs/livingproof-evaluator-run",
+    "tag": "v1.8.6",
+    "commit": "105aab515a8b045186a06f73c689568a2e02480d",
+    "digest": "sha256:443be75e256ec6c09f3a6efe17940f60fc3df0cdca46e7fc0c65b83e5fe1d5ff",
+    "status": "resolved"
+  },
+  {
+    "name": "livingproof-capability-report",
+    "repository": "Living-Proof-Labs/livingproof-capability-report",
+    "tag": "v3.15.4",
+    "commit": "5918ce732732a287cd71e4e276ae737f5ca1d49b",
+    "digest": "sha256:b91557cbb024614e441462ced9941e3da1f40cabe96fbfd9a3f5f82d1908db07",
+    "status": "resolved"
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "repository": "Living-Proof-Labs/livingproof-worlds",
+  "tag": "v1.4.0",
+  "target_commitish": "main",
+  "tagCommit": "971b39ee845a18c50da627a7410d22e3b98171f9",
+  "tagObjectType": "commit",
+  "changelogCommit": "9e1eb1555079c720e3807bfbf159021deed3da57",
+  "body": "## [1.4.0](https://github.com/Living-Proof-Labs/livingproof-worlds/compare/v1.3.11...v1.4.0) (2026-11-17)\n\n### feat\n\n* promote reusable corner against specs v2.4.0 ([f194786](https://github.com/Living-Proof-Labs/livingproof-worlds/commit/f194786c3682f33ecc095eb5d7f73396a3fe5aba))\n* reuse one corner through neutral endpoint traversals ([#26](https://github.com/Living-Proof-Labs/livingproof-worlds/issues/26)) ([971b39e](https://github.com/Living-Proof-Labs/livingproof-worlds/commit/971b39ee845a18c50da627a7410d22e3b98171f9))\n* stage one bidirectional corner with neutral endpoints ([c91c57d](https://github.com/Living-Proof-Labs/livingproof-worlds/commit/c91c57d0e7722b06dbbf2bd98cd0965b1273413b))\n\n### fix\n\n* reject repeated vertices in layout routes ([9e1eb15](https://github.com/Living-Proof-Labs/livingproof-worlds/commit/9e1eb1555079c720e3807bfbf159021deed3da57))\n"
+}
