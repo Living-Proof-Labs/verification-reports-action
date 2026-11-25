@@ -26,7 +26,7 @@ function copyOptional(source, destination) {
   return true;
 }
 
-export function assembleVerifierDefinition(item, downloadRoot, outputDir, env, version) {
+export function assembleVerifierDefinition(item, downloadRoot, outputDir, env, version, health = new Map()) {
   for (const configuration of item.configurations ?? []) {
     assertConfigurationSlug(configuration, item.path ?? 'collect');
   }
@@ -79,6 +79,11 @@ export function assembleVerifierDefinition(item, downloadRoot, outputDir, env, v
       env,
       version,
     });
+    const advisory = health.get(`${item.id}/${configuration}`);
+    if (advisory) {
+      writeFileSync(path.join(directory, 'health.json'), advisory.bytes);
+      record.health = advisory.record;
+    }
     stampReportInputs(directory, record.inputs);
     writeFileSync(path.join(directory, 'run.json'), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
     writeChecksums(directory);

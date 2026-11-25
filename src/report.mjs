@@ -173,7 +173,7 @@ export function stampReportInputs(directory, inputs) {
   writeFileSync(htmlFile, spliceHtml(readFileSync(htmlFile, 'utf8'), pinnedInputsHtml(inputs)), 'utf8');
 }
 
-function listFiles(directory) {
+export function listFiles(directory) {
   const found = [];
   const walk = (current) => {
     for (const name of readdirSync(current, { withFileTypes: true })) {

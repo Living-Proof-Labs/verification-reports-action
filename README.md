@@ -217,3 +217,30 @@ task verify
 ## License
 
 [Apache-2.0](LICENSE).
+
+### Advisory Health attachment
+
+The reusable `report.yml` accepts `health: true` (default `false`) and
+`health-trial: 1` (a positive trial index, per configuration). Keep `media: true`.
+Health evaluates the existing evidence and MCAP artifacts; it never runs another
+simulation. It requires real recorded evidence and refuses mismatched robot,
+configuration, run, trial or observation bindings before final assembly.
+
+The Action resolves immutable Evaluator Health `v1.1.2` at
+`7441d6d7c7dc529d12cf0be0a4dc6225faa85cad` through its normal release, source digest
+and attestation checks, then installs that source in an isolated Python 3.12.14
+environment. Each configuration retains the unchanged evaluator output as
+`health.json`, with its digest, trial identity and source provenance in
+`run.json.health` and the portable `SHA256SUMS`.
+
+This attachment is advisory: it changes no `grade`, `grades`, Scenario or Run
+Integrity outcome and adds no report UI. Empty robot telemetry is unavailable,
+not a healthy verdict. Missing or invalid required inputs fail collection rather
+than silently dropping an opted-in attachment. Health off keeps the existing
+collection path and requires no Health installation or release lookup.
+
+The existing real G1 smoke runs once with Health on. Its check reassembles Health
+off from the same downloaded artifacts, compares report bytes, evidence bytes,
+`grade` and `grades`, and retains `g1-health-off-report` alongside the Health-on
+report. `health-comparison.json` records the actual trial hashes and observed
+metrics; historical corner numbers are not used as the hallway oracle.

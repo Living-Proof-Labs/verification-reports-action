@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { prepareHealth } from './health.mjs';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { ReportError } from './definitions.mjs';
@@ -18,18 +19,19 @@ export function collectReports(env = process.env, root = process.cwd()) {
     if (item.execution === 'capability-verifier') assertRecordsPassed(item);
   }
   const version = (env.INPUT_VERSION ?? '').trim();
-  rmSync(outputDir, { recursive: true, force: true });
-  mkdirSync(outputDir, { recursive: true });
   const fixtureRoot = env.INPUT_FIXTURE_ROOT
     ? path.resolve(root, env.INPUT_FIXTURE_ROOT)
     : path.join(root, 'downloaded', 'fixture');
   const verifierRoot = env.INPUT_VERIFIER_ROOT
     ? path.resolve(root, env.INPUT_VERIFIER_ROOT)
     : path.join(root, 'downloaded');
+  const health = prepareHealth(plan, verifierRoot, env);
+  rmSync(outputDir, { recursive: true, force: true });
+  mkdirSync(outputDir, { recursive: true });
   mergeFixtureArtifacts(fixtureRoot, outputDir, plan);
   for (const item of plan.definitions) {
     if (item.execution !== 'capability-verifier') continue;
-    assembleVerifierDefinition(item, verifierRoot, outputDir, env, version);
+    assembleVerifierDefinition(item, verifierRoot, outputDir, env, version, health);
   }
   const grades = gradeMap(outputDir, plan);
   const outputs = outputsFromGrades(grades, outputDir);
