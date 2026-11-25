@@ -2708,6 +2708,188 @@ def test_an_excluded_run_is_not_restored_by_the_next_build_without_the_entry(tmp
     )
 
 
+# ---------------------------------------------------------------- issue #40: exclude-runs follow-up
+
+
+def test_exclude_runs_matching_is_exact_not_prefix_or_case_insensitive(tmp_path: Path, capsys):
+    _make_run_folder(tmp_path / "in1/r1", "hallway", run_id="920", created="2026-11-19T06:00:00Z")
+    _make_run_folder(tmp_path / "in1/r2", "hallway", run_id="AbC", created="2026-11-20T06:00:00Z")
+    reports = tmp_path / "reports"
+    site_tool.build(reports, tmp_path / "in1")
+
+    _make_run_folder(
+        tmp_path / "in2/n1", "hallway", run_id="NewRun", created="2026-11-21T06:00:00Z"
+    )
+    _make_run_folder(tmp_path / "in2/n2", "hallway", run_id="921", created="2026-11-22T06:00:00Z")
+    capsys.readouterr()
+    site_tool.build(
+        reports,
+        tmp_path / "in2",
+        exclude_runs=("92", "9200", "abc", "newrun"),
+    )
+    err = capsys.readouterr().err
+
+    runs_root = reports / "unitree-g1/stock-mujoco-hallway/runs"
+    assert sorted(p.name for p in runs_root.iterdir()) == ["920", "921", "AbC", "NewRun"]
+    assert site_tool.read_json_object(reports / site_tool.MARKER)["runs"] == 4
+    for entry in ("92", "9200", "abc", "newrun"):
+        assert f"exclude-runs entry {entry!r} was not found in restored history." in err
+
+
+@pytest.mark.parametrize("bad_entry", ["../920", "a/b", "", "920\n921", ".hidden"])
+def test_build_revalidates_exclude_runs_entries(tmp_path: Path, bad_entry: str):
+    reports, run = _restored_run(tmp_path)
+    before = {p: p.read_bytes() for p in run.rglob("*") if p.is_file()}
+
+    _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    with pytest.raises(site_tool.SiteError, match="exclude-runs"):
+        site_tool.build(reports, tmp_path / "in2", exclude_runs=(bad_entry,))
+
+    assert {p: p.read_bytes() for p in run.rglob("*") if p.is_file()} == before
+    assert not (reports / "unitree-g1/stock-mujoco-hallway/runs/921").exists()
+
+
+def test_runs_skips_and_warns_unreadable_run_json_when_excluded(tmp_path: Path, capsys):
+    _make_run_folder(tmp_path / "in1/r1", "hallway", run_id="919", created="2026-11-19T06:00:00Z")
+    _make_run_folder(tmp_path / "in1/r2", "hallway", run_id="920", created="2026-11-20T06:00:00Z")
+    reports = tmp_path / "reports"
+    site_tool.build(reports, tmp_path / "in1")
+
+    bad_run = reports / "unitree-g1/stock-mujoco-hallway/runs/920"
+    (bad_run / "run.json").write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(site_tool.SiteError, match="not valid JSON"):
+        site_tool.runs(reports)
+
+    capsys.readouterr()
+    found = site_tool.runs(reports, exclude_runs={"920"})
+    err = capsys.readouterr().err
+
+    assert "::warning::Excluded restored run 920" in err
+    assert [r["folder"] for r in found[("unitree-g1", "stock-mujoco-hallway")]] == ["919"]
+
+
+def test_build_excludes_restored_run_with_unreadable_run_json_and_fails_when_not_excluded(
+    tmp_path: Path, capsys
+):
+    _make_run_folder(tmp_path / "in1/r1", "hallway", run_id="919", created="2026-11-19T06:00:00Z")
+    _make_run_folder(tmp_path / "in1/r2", "hallway", run_id="920", created="2026-11-20T06:00:00Z")
+    reports = tmp_path / "reports"
+    site_tool.build(reports, tmp_path / "in1")
+
+    bad_run = reports / "unitree-g1/stock-mujoco-hallway/runs/920"
+    (bad_run / "run.json").write_text("{not valid json", encoding="utf-8")
+
+    _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    reports_without_exclude = tmp_path / "reports-without-exclude"
+    shutil.copytree(reports, reports_without_exclude)
+    with pytest.raises(site_tool.SiteError, match="not valid JSON"):
+        site_tool.build(reports_without_exclude, tmp_path / "in2")
+
+    capsys.readouterr()
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920",))
+    err = capsys.readouterr().err
+
+    assert "::warning::Excluded restored run 920" in err
+    assert "not found" not in err
+    assert not bad_run.exists()
+    runs_root = reports / "unitree-g1/stock-mujoco-hallway/runs"
+    assert sorted(p.name for p in runs_root.iterdir()) == ["919", "921"]
+    assert site_tool.read_json_object(reports / site_tool.MARKER)["runs"] == 2
+
+
+def test_runs_unsafe_path_still_fails_even_when_folder_is_excluded(tmp_path: Path):
+    reports = tmp_path / "reports"
+    unsafe = reports / ".bad_robot" / "stock-mujoco-hallway" / "runs" / "920"
+    unsafe.mkdir(parents=True)
+    (unsafe / "run.json").write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(site_tool.SiteError, match="unsafe run path"):
+        site_tool.runs(reports, exclude_runs={"920"})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "{}",
+        '{"run": {}}',
+        '{"run": {"id": "920", "created": ""}}',
+    ],
+)
+def test_runs_missing_run_created_raises_site_error_not_key_error(tmp_path: Path, payload: str):
+    reports, run = _restored_run(tmp_path)
+    (run / "run.json").write_text(payload, encoding="utf-8")
+
+    with pytest.raises(site_tool.SiteError):
+        site_tool.runs(reports)
+
+    found = site_tool.runs(reports, exclude_runs={"920"})
+    assert found == {}
+
+
+def test_unsafe_archive_path_stays_fail_closed_even_with_exclude_runs(tmp_path: Path, monkeypatch):
+    tar_buf = io.BytesIO()
+    with tarfile.open(fileobj=tar_buf, mode="w") as tar:
+        info = tarfile.TarInfo("reports/unitree-g1/stock-mujoco-hallway/runs/920/../escape.html")
+        tar.addfile(info, io.BytesIO(b"bad"))
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        zf.writestr("artifact.tar", tar_buf.getvalue())
+    archive = zip_buf.getvalue()
+
+    artifacts_list = [_artifact_entry(5, "main", 90, "2026-11-20T00:00:00Z")]
+
+    def fake_request(url: str, token: str | None):
+        path = urllib.parse.urlsplit(url).path.rstrip("/")
+        if path == f"/repos/{REPO}":
+            return io.BytesIO(json.dumps({"id": REPO_ID, "full_name": REPO}).encode())
+        if path.endswith("/jobs"):
+            return io.BytesIO(
+                json.dumps({"jobs": [{"name": "deploy", "conclusion": "success"}]}).encode()
+            )
+        if "/actions/runs/" in path:
+            return io.BytesIO(json.dumps(_workflow_run_payload(90, event="push")).encode())
+        return io.BytesIO(json.dumps({"artifacts": artifacts_list}).encode())
+
+    monkeypatch.setattr(reports_restore, "_request", fake_request)
+    monkeypatch.setattr(reports_restore, "_open_once", lambda url, token: io.BytesIO(archive))
+
+    _make_run_folder(tmp_path / "in1", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    with pytest.raises(site_tool.SiteError, match="Unsafe path"):
+        site_action.run_site_action(
+            {
+                "INPUT_RUNS_DIR": str(tmp_path / "in1"),
+                "INPUT_OUTPUT_DIR": "reports",
+                "INPUT_RESTORE_HISTORY": "true",
+                "INPUT_EXCLUDE_RUNS": "920",
+                "INPUT_GITHUB_TOKEN": "tok",
+                "GITHUB_WORKSPACE": str(tmp_path),
+                "GITHUB_EVENT_NAME": "push",
+                "GITHUB_REPOSITORY": REPO,
+                "GITHUB_RUN_ID": "921",
+            }
+        )
+
+    assert not (tmp_path / "reports/index.html").exists()
+    assert not (tmp_path / "escape.html").exists()
+
+    outputs = site_action.run_site_action(
+        {
+            "INPUT_RUNS_DIR": str(tmp_path / "in1"),
+            "INPUT_OUTPUT_DIR": "reports",
+            "INPUT_RESTORE_HISTORY": "true",
+            "INPUT_RESET_HISTORY": "true",
+            "INPUT_GITHUB_TOKEN": "tok",
+            "GITHUB_WORKSPACE": str(tmp_path),
+            "GITHUB_EVENT_NAME": "push",
+            "GITHUB_REPOSITORY": REPO,
+            "GITHUB_RUN_ID": "921",
+        }
+    )
+    assert outputs["runs-count"] == "1"
+    assert (tmp_path / "reports/unitree-g1/stock-mujoco-hallway/runs/921/index.html").is_file()
+
+
 # ---------------------------------------------------------------- va#32 B1: many unknown scripts
 
 

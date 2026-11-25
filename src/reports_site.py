@@ -813,7 +813,12 @@ def discover_run_folders(runs_dir: Path) -> list[Path]:
     return found
 
 
-def runs(reports_dir: Path) -> dict[tuple[str, str], list[dict]]:
+def runs(
+    reports_dir: Path,
+    *,
+    exclude_runs: set[str] | frozenset[str] = frozenset(),
+    skipped_excluded: list[tuple[str, str, str]] | None = None,
+) -> dict[tuple[str, str], list[dict]]:
     """Return `{(robot, variant): [run records, newest first]}` from `runs/*/run.json`."""
     found: dict[tuple[str, str], list[dict]] = {}
     if not reports_dir.is_dir():
@@ -831,7 +836,21 @@ def runs(reports_dir: Path) -> dict[tuple[str, str], list[dict]]:
             or any(p.is_symlink() for p in list(path.parents)[:4])
         ):
             raise SiteError(f"{path}: unsafe run path in the reports directory")
+        if folder in exclude_runs:
+            print(
+                f"::warning::Excluded restored run {folder} "
+                f"({robot}/{variant}/runs/{folder}) from the reports site.",
+                file=sys.stderr,
+            )
+            if skipped_excluded is not None:
+                skipped_excluded.append((robot, variant, folder))
+            continue
         record = read_json_object(path)
+        run_block = record.get("run")
+        if not isinstance(run_block, dict):
+            raise SiteError(f"{path}: run.json lacks a 'run' object")
+        if _stored_text(run_block.get("created")) is None:
+            raise SiteError(f"{path}: missing run.created timestamp")
         record["folder"] = folder
         found.setdefault((robot, variant), []).append(record)
     for records in found.values():
@@ -1437,7 +1456,8 @@ def build(
     validate_retention_days(days)
     excluded = tuple(dict.fromkeys(validate_exclude_run_id(entry) for entry in exclude_runs))
     excluded_set = frozenset(excluded)
-    existing = runs(reports_dir)
+    skipped_excluded: list[tuple[str, str, str]] = []
+    existing = runs(reports_dir, exclude_runs=excluded_set, skipped_excluded=skipped_excluded)
     restored_keys = {
         (robot, variant, rec["folder"])
         for (robot, variant), recs in existing.items()
@@ -1463,19 +1483,10 @@ def build(
 
     removed_ids: set[str] = set()
     if excluded_set:
-        for (robot, variant), recs in existing.items():
+        for robot, variant, run_id in skipped_excluded:
             base = reports_dir / robot / variant
-            for rec in recs:
-                run_id = rec["folder"]
-                if run_id not in excluded_set:
-                    continue
-                shutil.rmtree(base / "runs" / run_id)
-                removed_ids.add(run_id)
-                print(
-                    f"::warning::Excluded restored run {run_id} "
-                    f"({robot}/{variant}/runs/{run_id}) from the reports site.",
-                    file=sys.stderr,
-                )
+            shutil.rmtree(base / "runs" / run_id)
+            removed_ids.add(run_id)
             runs_root = base / "runs"
             if runs_root.is_dir() and not any(runs_root.iterdir()):
                 shutil.rmtree(base)
