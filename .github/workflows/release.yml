@@ -74,3 +74,15 @@ jobs:
             echo "report still contains placeholder" >&2
             exit 1
           fi
+  deploy-docs:
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/docs.yml
+    with:
+      release_version: ${{ needs.release.outputs.version }}
+      release_tag: ${{ needs.release.outputs.git-tag }}
+      release_commit: ${{ needs.release.outputs.commit }}

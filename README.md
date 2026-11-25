@@ -1,5 +1,10 @@
 # verification-reports-action
 
+**Start here: [published manual](https://docs.livingprooflabs.com/verification-reports-action/).**
+The manual is built from this README and the `docs/` folder by the Documentation workflow and deployed
+to Pages after each release. Until the first post-merge deployment, build it locally with
+`task -t Taskfile.runtime.yml docs:build` or download the pull request's documentation artifact.
+
 Reusable **Living Proof Verification Reports** workflow and site publisher. A robot repository calls the workflow to get one verification report for the definitions in that repository, and uses the `site` step to publish a single-robot `reports/` section inside its documentation.
 
 Tracked in [Living-Proof-Labs/.github#164](https://github.com/Living-Proof-Labs/.github/issues/164). The workflow interface choice is recorded in [docs/decisions/0001-composite-vs-reusable-workflow.md](docs/decisions/0001-composite-vs-reusable-workflow.md).

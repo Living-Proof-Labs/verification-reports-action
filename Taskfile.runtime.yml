@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# Adapted from Living-Proof-Labs/livingproof-evaluator-health Taskfile.runtime.yml.
+version: '3'
+tasks:
+  docs:setup:
+    desc: Sync locked documentation and development tools
+    cmds:
+      - uv sync --locked --no-python-downloads --group docs
+  docs:build:
+    desc: Generate native references and build the development manual
+    cmds:
+      - uv run --locked --no-sync --no-python-downloads python tools/docs/build.py
+      - uv run --locked --no-sync --no-python-downloads zensical build --clean
+  docs:verify:
+    desc: Check rendered links, fragments, branding and source identity
+    cmds:
+      - uv run --locked --no-sync --no-python-downloads python tools/docs/verify.py
+  docs:test:
+    desc: Test the actual deployment guard and publication smoke checks
+    cmds:
+      - uv run --locked --no-sync --no-python-downloads python -m unittest discover -s tools/docs -p 'test_*.py'
+  docs:smoke:
+    desc: Check served manual identity and assets (pass --url and --commit)
+    cmds:
+      - uv run --locked --no-sync --no-python-downloads python tools/docs/smoke.py {{.CLI_ARGS}}
