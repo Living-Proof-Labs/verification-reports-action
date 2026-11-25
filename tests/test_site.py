@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ast
+import collections
 import email.message
 import hashlib
 import io
@@ -15,7 +16,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -2161,35 +2161,277 @@ def test_a_restored_html_page_below_the_top_of_evidence_is_never_a_listing(tmp_p
         _build_next_run(tmp_path, reports)
 
 
-def test_report_html_policy_is_linear_in_nesting_depth():
+# ---------------------------------------------------------------- va#32: nesting depth and size
+
+
+class _CountingStack(list):
+    """An open-element stack that counts every element a whole-stack scan could visit."""
+
+    scanned = 0
+
+    def _scan(self) -> None:
+        _CountingStack.scanned += len(self)
+
+    def __contains__(self, item):
+        self._scan()
+        return super().__contains__(item)
+
+    def __iter__(self):
+        self._scan()
+        return super().__iter__()
+
+    def __reversed__(self):
+        self._scan()
+        return super().__reversed__()
+
+    def index(self, *args):
+        self._scan()
+        return super().index(*args)
+
+    def count(self, item):
+        self._scan()
+        return super().count(item)
+
+    def remove(self, item):
+        self._scan()
+        return super().remove(item)
+
+
+def _count_stack_scans(monkeypatch, text: str) -> int:
     import reports_render
 
-    page = _page("<p>" * 100_000)
-    started = time.monotonic()
-    checked = reports_render.checked_report_html(page, "probe")
-    elapsed = time.monotonic() - started
-    assert checked == page
-    assert elapsed < 2.0
+    original = reports_render._ReportHtmlPolicy.__init__
+
+    def counting_init(self, page: str) -> None:
+        original(self, page)
+        self.stack = _CountingStack()
+
+    monkeypatch.setattr(reports_render._ReportHtmlPolicy, "__init__", counting_init)
+    monkeypatch.setattr(_CountingStack, "scanned", 0)
+    assert reports_render.checked_report_html(text, "probe") == text
+    return _CountingStack.scanned
+
+
+DEEP_NESTING = 20_000
 
 
 @pytest.mark.parametrize(
-    "payload",
+    "markup",
     [
-        "a" * 8_388_609,
-        "é" * 4_194_305,
+        pytest.param("<p>" * DEEP_NESTING, id="unclosed-start-tags"),
+        pytest.param("<p>" * DEEP_NESTING + "</span>" * DEEP_NESTING, id="end-tags-not-open"),
+        pytest.param(
+            "<div>" + "<p>" * DEEP_NESTING + "</div>" * DEEP_NESTING, id="mismatched-closes"
+        ),
     ],
 )
-def test_report_html_policy_refuses_oversized_page_before_parsing(monkeypatch, payload: str):
+def test_report_html_policy_never_rescans_the_open_element_stack(monkeypatch, markup: str):
+    # Deterministic, unlike a wall-clock bound: count the stack elements visited by
+    # membership tests, iteration and searches. The old `"svg" in self.stack` and
+    # `tag in self.stack` visit the whole stack on every tag (about N*N/2 here).
+    scanned = _count_stack_scans(monkeypatch, _page(markup))
+    assert scanned <= DEEP_NESTING, f"{scanned} stack elements scanned for depth {DEEP_NESTING}"
+
+
+@pytest.mark.timeout(20)
+def test_report_html_policy_finishes_100k_unclosed_tags_within_the_timeout():
     import reports_render
 
-    def fail(*_args, **_kwargs):
-        raise AssertionError("parser should not run on an oversized page")
+    # The issue's probe: 100,000 unclosed <p> (22 s before the fix) and as many stray end
+    # tags. The stack-scan count above is the regression check; this per-test timeout is a
+    # generous backstop, about 40 times what the linear policy needs on a laptop.
+    page = _page("<p>" * 100_000 + "</span>" * 100_000)
+    assert reports_render.checked_report_html(page, "probe") == page
 
-    monkeypatch.setattr(reports_render, "_scan_markup", fail)
-    monkeypatch.setattr(reports_render, "_parsed_policy", fail)
-    page = f"<!doctype html><p>{payload}</p>\n"
+
+class _ReferenceHtmlPolicy:
+    """The policy's stack handling as it was before va#32, to compare against."""
+
+    @staticmethod
+    def build():
+        import reports_render
+
+        class Reference(reports_render._ReportHtmlPolicy):
+            def in_svg(self) -> bool:
+                return "svg" in self.stack
+
+            def handle_endtag(self, tag: str) -> None:
+                if (
+                    tag not in reports_render._HTML_ELEMENTS
+                    and tag not in reports_render._SVG_ELEMENTS
+                ):
+                    self.refuse(f"</{tag}> is not allowed")
+                if tag == "script" and self.script_start is not None:
+                    start = self.source_offset()
+                    if self.text[start : start + 9].lower() != "</script>":
+                        self.refuse("</script> is not plainly written")
+                    element = self.text[self.script_start : start + 9]
+                    digest = hashlib.sha256(element.encode("utf-8")).hexdigest()
+                    if digest not in reports_render.KNOWN_REPORTER_SCRIPTS:
+                        self.unknown_scripts.append((self.script_start, start + 9, digest))
+                    self.script_start = None
+                if self.in_svg():
+                    if self.stack[-1] != tag:
+                        self.refuse(
+                            f"</{tag}> does not close the open <{self.stack[-1]}> inside <svg>"
+                        )
+                    self.stack.pop()
+                elif tag in self.stack:
+                    while self.stack.pop() != tag:
+                        pass
+
+        return Reference
+
+
+def _policy_outcome(policy_class, text: str):
+    policy = policy_class(text)
+    try:
+        policy.feed(text)
+        policy.close()
+    except site_tool.SiteError as exc:
+        return ("refused", str(exc)), policy
+    return ("accepted", list(policy.stack), policy.unknown_scripts), policy
+
+
+def _assert_counters_match_stack(policy) -> None:
+    stack = list.__iter__(policy.stack)
+    counts = collections.Counter(stack)
+    assert {tag: n for tag, n in policy.open_counts.items() if n} == dict(counts)
+    assert all(n >= 0 for n in policy.open_counts.values())
+    assert policy.svg_depth == counts["svg"]
+
+
+# Hand-written stack edge cases: implicit and mismatched closes, void elements, foreign
+# svg/math content and end tags for elements that are not open.
+STACK_EDGE_MARKUP = [
+    "<div><span>x</div>after</span>",
+    "<p><div>x</p></div>",
+    "<ul><li>a<li>b</ul><p>c",
+    "<table><tr><td>a<td>b</table>",
+    "<p>a<p>b</p></p></p>",
+    "<br></br><hr></hr><img src=a.png></img><input></input>",
+    "<br/><img src=a.png/>",
+    "</span></div></svg></g></p>",
+    "<svg><g><rect/></g></svg><p>x</p>",
+    "<svg><g></svg>",
+    "<svg><svg><g></g></svg></svg>",
+    "<svg><g></g></svg></svg></g>",
+    "<p><svg><text>a<tspan>b</tspan></text></svg></p>",
+    "<svg><title>t</title><desc>d</desc></svg>",
+    "<title>t</title><svg><title>s</title></svg>",
+    "<svg></p></svg>",
+    "<svg><g></p></g></svg>",
+    "<math><mi>x</mi></math>",
+    "<p><svg>",
+    "<svg/><p>x</p>",
+    "<div><svg></div></svg>",
+    "<script data-eval-tabs>x</script><svg></svg>",
+]
+
+_FUZZ_TOKENS = [
+    *(f"<{t}>" for t in "p div span em table tr td ul li a title svg g text tspan math".split()),
+    *(f"</{t}>" for t in "p div span em table tr td ul li a title svg g text tspan math".split()),
+    "<br>",
+    "</br>",
+    "<img src=a.png>",
+    "<rect/>",
+    "<g/>",
+    "<svg/>",
+    "<hr/>",
+    "x",
+    " ",
+]
+
+
+def _fuzz_corpus(count: int, seed: int = 32) -> list[str]:
+    import random
+
+    rng = random.Random(seed)
+    return ["".join(rng.choices(_FUZZ_TOKENS, k=rng.randint(1, 40))) for _ in range(count)]
+
+
+def test_linear_stack_tracking_matches_the_old_policy_on_every_case():
+    import reports_render
+
+    reference = _ReferenceHtmlPolicy.build()
+    pages = [REPORTER_FIXTURE.read_text(encoding="utf-8")]
+    pages += [
+        _page(m)
+        for m in HOSTILE_REPORT_MARKUP
+        + SCAN_REFUSED_MARKUP
+        + STACK_EDGE_MARKUP
+        + _fuzz_corpus(3000)
+    ]
+    outcomes = collections.Counter()
+    for page in pages:
+        new, policy = _policy_outcome(reports_render._ReportHtmlPolicy, page)
+        old, _ = _policy_outcome(reference, page)
+        assert new == old, page
+        outcomes[new[0]] += 1
+        # The counters must equal the stack after every case, refused ones included.
+        _assert_counters_match_stack(policy)
+    # The corpus exercises both outcomes, so the comparison is not vacuous.
+    assert outcomes["accepted"] > 100 and outcomes["refused"] > 100
+
+
+@pytest.mark.parametrize("markup", STACK_EDGE_MARKUP)
+def test_stack_counters_stay_in_step_after_every_tag(markup: str):
+    import reports_render
+
+    class Checked(reports_render._ReportHtmlPolicy):
+        def handle_starttag(self, tag, attrs):
+            super().handle_starttag(tag, attrs)
+            _assert_counters_match_stack(self)
+
+        def handle_endtag(self, tag):
+            super().handle_endtag(tag)
+            _assert_counters_match_stack(self)
+
+    _policy_outcome(Checked, _page(markup))
+
+
+def _page_of_bytes(size: int, filler: str) -> str:
+    head = "<!doctype html><p>"
+    tail = "</p>\n"
+    room = size - len((head + tail).encode("utf-8"))
+    unit = len(filler.encode("utf-8"))
+    body = filler * (room // unit) + "a" * (room % unit)
+    page = head + body + tail
+    assert len(page.encode("utf-8")) == size
+    return page
+
+
+@pytest.mark.parametrize(
+    "filler", ["a", "\u00e9", "\u20ac"], ids=["ascii", "two-byte", "three-byte"]
+)
+def test_report_html_size_limit_is_exact_in_utf8_bytes(monkeypatch, filler: str):
+    import reports_render
+
+    limit = reports_render.MAX_REPORT_HTML_BYTES
+    assert limit == 8 * 1024 * 1024
+    parsed = []
+    monkeypatch.setattr(reports_render, "_scan_markup", lambda text: parsed.append(len(text)))
+    monkeypatch.setattr(reports_render, "_parsed_policy", lambda text: _EmptyPolicy())
+
+    at_limit = _page_of_bytes(limit, filler)
+    assert reports_render.checked_report_html(at_limit, "probe") == at_limit
+    assert parsed == [len(at_limit)]
+
+    over = _page_of_bytes(limit + 1, filler)
     with pytest.raises(
-        site_tool.SiteError,
-        match=f"exceeds the {reports_render.MAX_REPORT_HTML_BYTES}-byte limit",
+        site_tool.SiteError, match=rf"^probe: report.html exceeds the {limit}-byte limit$"
     ):
-        reports_render.checked_report_html(page, "probe")
+        reports_render.checked_report_html(over, "probe")
+    # Refused before either parsing layer runs.
+    assert parsed == [len(at_limit)]
+
+
+class _EmptyPolicy:
+    unknown_scripts: list = []
+
+
+def test_a_page_of_exactly_the_size_limit_passes_the_real_policy():
+    import reports_render
+
+    page = _page_of_bytes(reports_render.MAX_REPORT_HTML_BYTES, "a")
+    assert reports_render.checked_report_html(page, "probe") == page
