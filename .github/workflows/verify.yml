@@ -69,6 +69,39 @@ jobs:
           echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" -color
+  site-policy:
+    # The published-HTML policy must not depend on the interpreter's html.parser, which
+    # tokenizes differently across patch releases. So the Python suite also runs on the
+    # oldest supported release, the two releases with the known bypasses (3.12.3 is
+    # ubuntu-24.04's own python3), and the latest 3.13 and 3.14.
+    name: site-policy (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12.0', '3.12.3', '3.13.5', '3.13', '3.14']
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+      PYTHON_VERSION: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+      - name: Python tests on Python ${{ matrix.python }}
+        run: |
+          set -euo pipefail
+          uv sync --locked --python "$PYTHON_VERSION"
+          actual="$(uv run --locked --no-sync python -c 'import platform; print(platform.python_version())')"
+          echo "Python $actual"
+          case "$actual" in
+            "$PYTHON_VERSION" | "$PYTHON_VERSION".*) ;;
+            *) echo "::error::expected Python $PYTHON_VERSION, got $actual" >&2; exit 1 ;;
+          esac
+          uv run --locked --no-sync pytest -p no:cacheprovider
   version:
     if: >-
       github.event_name == 'push' ||
@@ -209,7 +242,7 @@ jobs:
     # version is skipped unless this is a push or a pull request into main;
     # that skip is expected. Any other skip, failure, or cancellation fails.
     if: always()
-    needs: [verify, version, action-smoke, action-smoke-check, site-smoke]
+    needs: [verify, site-policy, version, action-smoke, action-smoke-check, site-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

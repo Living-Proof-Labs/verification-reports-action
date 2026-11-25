@@ -8,6 +8,7 @@ Each definition here is the single copy; the other modules import it.
 from __future__ import annotations
 
 import re
+import urllib.parse
 from datetime import datetime, timezone
 
 
@@ -75,13 +76,21 @@ def _require_single_robot(robots: set[str]) -> str | None:
 def site_path(value: object) -> str | None:
     if not isinstance(value, str) or not SITE_PATH.fullmatch(value):
         return None
+    decoded = urllib.parse.unquote(value)
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in decoded):
+        return None
     if (
-        "://" in value
-        or value.startswith(("/", "\\"))
-        or ".." in value.split("/")
-        or ":" in value
-        or "/actions/" in value.lower()
+        # Decoding cannot remove a leading "/", a "." or ".." segment, ":", a backslash or
+        # "/actions/", so those are checked on the decoded value only. It can remove part
+        # of the artifact word ("%aartifact" decodes to "\xaartifact"), so that is checked
+        # on both.
+        decoded.startswith("/")
+        or "\\" in decoded
+        or any(part in (".", "..") for part in decoded.split("/"))
+        or ":" in decoded
+        or "/actions/" in decoded.lower()
         or ARTIFACT_WORD.search(value)
+        or ARTIFACT_WORD.search(decoded)
     ):
         return None
     return value

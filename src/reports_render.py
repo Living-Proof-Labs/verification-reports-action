@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import re
+import sys
 import urllib.parse
+from html.parser import HTMLParser
 from pathlib import Path
 
 from reports_common import (
@@ -97,6 +100,28 @@ def load_open_js() -> str:
     return _load_asset("open.js", "// SPDX-License-Identifier: Apache-2.0")
 
 
+_SAFE_HOST = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.?"
+)
+
+
+def _valid_https_netloc(parsed: urllib.parse.SplitResult) -> bool:
+    # urlsplit and the checks below refuse userinfo and malformed hosts and ports. An IP
+    # literal such as [2001:db8::1] is refused too: the reporter never links to one.
+    if not parsed.netloc:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    try:
+        _ = parsed.port
+        hostname = parsed.hostname
+    except ValueError:
+        return False
+    if not hostname:
+        return False
+    return _SAFE_HOST.fullmatch(hostname) is not None
+
+
 def safe_href(value: object) -> str | None:
     """Allow only https:// URLs and relative links; reject javascript:, data:, http:, //."""
     if not isinstance(value, str):
@@ -111,7 +136,7 @@ def safe_href(value: object) -> str | None:
     except ValueError:
         return None
     if parsed.scheme:
-        if parsed.scheme.lower() != "https" or not parsed.netloc:
+        if parsed.scheme.lower() != "https" or not _valid_https_netloc(parsed):
             return None
         return cleaned
     if parsed.netloc:
@@ -1026,3 +1051,299 @@ def _index_page_html(history: dict[tuple[str, str], list[dict]]) -> str:
         body_html + _archived_history_html(),
         script_href="open.js",
     )
+
+
+# ---------------------------------------------------------------- published report HTML policy
+#
+# A run folder's report.html is published on the Pages origin, and a forged run folder can
+# recompute SHA256SUMS, so the site checks the markup itself. The check is a parser-based
+# allowlist built from the reporter's own vocabulary (livingproof-capability-report v3.x).
+# Markup that passes is published byte for byte. Anything outside the allowlist refuses the
+# report rather than being rewritten, so there is no sanitizer output to get wrong. The one
+# exception is a <script>: the reporter's scripts are pinned by SHA-256, and an unknown one
+# is removed with a warning, because a reporter release can change them and the page still
+# works without them.
+
+KNOWN_REPORTER_SCRIPTS = frozenset(
+    {
+        # <script data-eval-tabs>, reporter v3.12.0, v3.12.1 to v3.13.2, v3.14.0 to v3.15.4.
+        "f80671dbdb7866984cc3c26202461753d1b79a77c6568209ba0a184f935e84f9",
+        "12b0d29d518b9a7836e6583d6bd4673e44798427bdcfc47f1af96d4e74a00f25",
+        "b1bac501529a257799babc2601f70c201a430b29fb6b7637dcec5e4808f1d036",
+        # <script data-report-times>, reporter v3.15.0 to v3.15.4.
+        "6ef03a512acca84357119a1445dd6be7080da5a99f64f6b8a17197145d7fea88",
+    }
+)
+_HTML_ELEMENTS = frozenset(
+    """html head body meta title style script main header footer nav section article aside
+    div span p br hr h1 h2 h3 h4 h5 h6 ul ol li dl dt dd table caption thead tbody tfoot tr th
+    td details summary fieldset legend label input strong em b i u s small mark code pre kbd
+    samp sub sup abbr blockquote q cite time a video img figure figcaption""".split()
+)
+_SVG_ELEMENTS = frozenset(
+    "svg g path circle rect ellipse line polyline polygon text tspan title desc".split()
+)
+_VOID_ELEMENTS = frozenset({"meta", "br", "hr", "input", "img"})
+_GLOBAL_ATTRS = frozenset({"id", "class", "title", "role", "lang", "dir", "tabindex", "hidden"})
+_ELEMENT_ATTRS = {
+    "a": {"href"},
+    "video": {"src", "poster", "controls", "preload", "muted", "loop", "playsinline"},
+    "img": {"src", "alt", "width", "height", "loading", "decoding"},
+    "meta": {"charset", "name", "content"},
+    "input": {"type", "name", "value", "checked", "disabled"},
+    "label": {"for"},
+    "th": {"scope", "colspan", "rowspan"},
+    "td": {"colspan", "rowspan"},
+    "details": {"open", "name"},
+    "time": {"datetime"},
+    "ol": {"start", "reversed"},
+}
+_SVG_ATTRS = frozenset(
+    """viewbox xmlns width height fill fill-opacity fill-rule clip-rule stroke stroke-width
+    stroke-linecap stroke-linejoin stroke-dasharray stroke-dashoffset stroke-opacity
+    stroke-miterlimit d cx cy r rx ry x y x1 y1 x2 y2 dx dy points transform opacity
+    focusable font-family font-size font-weight text-anchor dominant-baseline pathlength
+    visibility preserveaspectratio""".split()
+)
+_SCRIPT_ATTRS = frozenset({"data-eval-tabs", "data-report-times"})
+_URL_ATTRS = frozenset({"href", "src", "poster"})
+_META_NAMES = frozenset({"viewport", "color-scheme"})
+_ATTR_SOURCE = r"""[a-zA-Z_:][-a-zA-Z0-9_:.]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?"""
+_STRICT_START_TAG = re.compile(rf"<[a-zA-Z][a-zA-Z0-9]*(?:\s+{_ATTR_SOURCE})*\s*/?>")
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+_CSS_URL = re.compile(r"url\(\s*['\"]?([^'\")\s]*)", re.I)
+_CSS_FORBIDDEN = ("\\", "/*", "@import", "image-set", "expression(", "javascript:")
+_CSS_SAFE_URL_PREFIXES = ("data:font/woff2;base64,", "data:font/woff;base64,")
+
+
+def _css_is_inert(css: str) -> bool:
+    """CSS may not fetch anything: the only url() it may use is an inline font."""
+    flat = _CSS_COMMENT.sub("", css).lower()
+    if any(token in flat for token in _CSS_FORBIDDEN):
+        return False
+    urls = _CSS_URL.findall(flat)
+    if len(urls) != flat.count("url("):
+        return False
+    return all(url.startswith(_CSS_SAFE_URL_PREFIXES) for url in urls)
+
+
+# html.parser does not tokenize the way a browser does, and how far it differs depends on the
+# Python patch release: before the 2025 fixes it read <title> and <textarea> as ordinary
+# elements and missed script ends such as "</script x>". So the source is first tokenized by
+# the small scanner below, which follows the browser's rules and refuses anything the two
+# could read differently. Every "<" must begin a plain start tag, a plain end tag or the
+# doctype; no attribute value holds "<" or ">", and an unquoted one does not end in "/"; and
+# <script>, <style>, <title> and <textarea> run to their exact lower-case close tag with no
+# other "</" or "<!--" before it, and no "<" at all in <title> or <textarea>. Only then is the
+# allowlist below applied, so its result does not depend on the interpreter's html.parser.
+_SCAN_SPACE = "[\t\n\f\r ]"
+_SCAN_ATTR = (
+    rf"{_SCAN_SPACE}+[a-zA-Z_:][-a-zA-Z0-9_:.]*"
+    rf"(?:{_SCAN_SPACE}*={_SCAN_SPACE}*"
+    r"""(?:"[^"<>]*"|'[^'<>]*'|[^\t\n\f\r "'=<>`]+(?<!/)(?=[\t\n\f\r >])))?"""
+)
+_SCAN_START_TAG = re.compile(rf"<([a-zA-Z][a-zA-Z0-9]*)(?:{_SCAN_ATTR})*{_SCAN_SPACE}*(/?)>")
+_SCAN_END_TAG = re.compile(r"</[a-zA-Z][a-zA-Z0-9]*>")
+_SCAN_DOCTYPE = re.compile(r"<!doctype html>", re.I)
+_SCAN_RAW_TEXT = frozenset({"script", "style"})
+_SCAN_RCDATA = frozenset({"title", "textarea"})
+
+
+def _scan_markup(text: str) -> None:
+    """Refuse markup that a browser and some html.parser release could tokenize differently."""
+
+    def refuse(offset: int, reason: str) -> None:
+        line = text.count("\n", 0, offset) + 1
+        column = offset - (text.rfind("\n", 0, offset) + 1) + 1
+        raise SiteError(f"line {line} column {column}: {reason}")
+
+    pos = 0
+    while (pos := text.find("<", pos)) != -1:
+        match = _SCAN_DOCTYPE.match(text, pos) or _SCAN_END_TAG.match(text, pos)
+        if match:
+            pos = match.end()
+            continue
+        match = _SCAN_START_TAG.match(text, pos)
+        if not match:
+            refuse(pos, "'<' does not begin a plainly written tag")
+        name = match.group(1).lower()
+        pos = match.end()
+        if name not in _SCAN_RAW_TEXT and name not in _SCAN_RCDATA:
+            continue
+        if match.group(2):
+            refuse(match.start(), f"<{name}/> is not allowed")
+        close = text.find("</", pos)
+        if close == -1 or text[close : close + len(name) + 3] != f"</{name}>":
+            refuse(close if close != -1 else pos, f"<{name}> does not end with a plain </{name}>")
+        body = text[pos:close]
+        if "<!--" in body or (name in _SCAN_RCDATA and "<" in body):
+            refuse(pos, f"<{name}> holds markup")
+        pos = close + len(name) + 3
+
+
+class _ReportHtmlPolicy(HTMLParser):
+    def __init__(self, text: str) -> None:
+        super().__init__(convert_charrefs=False)
+        self.text = text
+        self.line_starts = [0]
+        for match in re.finditer("\n", text):
+            self.line_starts.append(match.end())
+        self.stack: list[str] = []
+        self.script_start: int | None = None
+        self.unknown_scripts: list[tuple[int, int, str]] = []
+
+    def source_offset(self) -> int:
+        line, column = self.getpos()
+        return self.line_starts[line - 1] + column
+
+    def refuse(self, reason: str) -> None:
+        line, column = self.getpos()
+        raise SiteError(f"line {line} column {column + 1}: {reason}")
+
+    def in_svg(self) -> bool:
+        return "svg" in self.stack
+
+    def check_tag_source(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        source = self.get_starttag_text() or ""
+        if not _STRICT_START_TAG.fullmatch(source):
+            self.refuse(f"<{tag}> is not plainly written")
+        names = [name for name, _ in attrs]
+        if len(set(names)) != len(names):
+            self.refuse(f"<{tag}> has a repeated attribute")
+
+    def check_attrs(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        svg = tag in _SVG_ELEMENTS and (tag == "svg" or self.in_svg())
+        for name, value in attrs:
+            if svg and name in _SVG_ATTRS:
+                if value is not None and not _css_is_inert(value):
+                    self.refuse(f"<{tag} {name}> may fetch a resource")
+                continue
+            if name == "style":
+                if value is None or not _css_is_inert(value):
+                    self.refuse(f"<{tag} style> may fetch a resource")
+                continue
+            if not (
+                name in _GLOBAL_ATTRS
+                or name.startswith(("aria-", "data-"))
+                or name in _ELEMENT_ATTRS.get(tag, ())
+            ):
+                self.refuse(f"<{tag}> attribute {name!r} is not allowed")
+            if name in _URL_ATTRS and safe_href(html.unescape(value or "")) is None:
+                self.refuse(f"<{tag} {name}> is not an https or relative link")
+        found = dict(attrs)
+        if tag == "meta" and not (
+            set(found) == {"charset"}
+            and (found["charset"] or "").lower() == "utf-8"
+            or set(found) == {"name", "content"}
+            and (found["name"] or "").lower() in _META_NAMES
+        ):
+            self.refuse("<meta> may only set charset=utf-8, viewport or color-scheme")
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.check_tag_source(tag, attrs)
+        if self.in_svg():
+            if tag not in _SVG_ELEMENTS:
+                self.refuse(f"<{tag}> is not allowed inside <svg>")
+        elif tag not in _HTML_ELEMENTS and tag != "svg":
+            self.refuse(f"<{tag}> is not allowed")
+        if tag == "script":
+            if len(attrs) != 1 or attrs[0][0] not in _SCRIPT_ATTRS or attrs[0][1] is not None:
+                self.refuse("<script> is not one of the reporter's scripts")
+            self.script_start = self.source_offset()
+        else:
+            self.check_attrs(tag, attrs)
+        if tag not in _VOID_ELEMENTS:
+            self.stack.append(tag)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        # A browser ignores "/>" on an HTML element, so <style/> or <script/> would open a
+        # raw-text element here that this parser closes at once.
+        svg = tag in _SVG_ELEMENTS and (tag == "svg" or self.in_svg())
+        if not (tag in _VOID_ELEMENTS or svg):
+            self.refuse(f"<{tag}/> is not a void or SVG element")
+        self.check_tag_source(tag, attrs)
+        # Outside <svg> the rule above already limits this to void HTML elements and <svg>.
+        if self.in_svg() and tag not in _SVG_ELEMENTS:
+            self.refuse(f"<{tag}> is not allowed inside <svg>")
+        self.check_attrs(tag, attrs)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag not in _HTML_ELEMENTS and tag not in _SVG_ELEMENTS:
+            self.refuse(f"</{tag}> is not allowed")
+        if tag == "script" and self.script_start is not None:
+            start = self.source_offset()
+            if self.text[start : start + 9].lower() != "</script>":
+                self.refuse("</script> is not plainly written")
+            element = self.text[self.script_start : start + 9]
+            digest = hashlib.sha256(element.encode("utf-8")).hexdigest()
+            if digest not in KNOWN_REPORTER_SCRIPTS:
+                self.unknown_scripts.append((self.script_start, start + 9, digest))
+            self.script_start = None
+        if self.in_svg():
+            # Inside <svg> a browser's tree depends on exact nesting, so require it.
+            if self.stack[-1] != tag:
+                self.refuse(f"</{tag}> does not close the open <{self.stack[-1]}> inside <svg>")
+            self.stack.pop()
+        elif tag in self.stack:
+            while self.stack.pop() != tag:
+                pass
+
+    def handle_data(self, data: str) -> None:
+        current = self.stack[-1] if self.stack else ""
+        if current == "style":
+            if not _css_is_inert(data):
+                self.refuse("<style> may fetch a resource")
+            return
+        if current == "script":
+            return
+        if "<" in data:
+            self.refuse("text holds a raw '<'")
+
+    def handle_comment(self, data: str) -> None:
+        self.refuse("comments are not allowed")
+
+    def handle_decl(self, decl: str) -> None:
+        if decl.lower() != "doctype html":
+            self.refuse(f"<!{decl}> is not allowed")
+
+    def handle_pi(self, data: str) -> None:
+        self.refuse("processing instructions are not allowed")
+
+    def unknown_decl(self, data: str) -> None:
+        self.refuse("CDATA and other declarations are not allowed")
+
+
+def _parsed_policy(text: str) -> _ReportHtmlPolicy:
+    """Apply the element and attribute allowlist with html.parser (the second layer)."""
+    policy = _ReportHtmlPolicy(text)
+    policy.feed(text)
+    policy.close()
+    if policy.stack and policy.stack[-1] in {"script", "style"}:
+        raise SiteError(f"report.html ends inside <{policy.stack[-1]}>")
+    return policy
+
+
+def checked_report_html(text: str, where: str) -> str:
+    """Return `text` unchanged if it passes the published HTML policy, else refuse it.
+
+    Two independent layers: `_scan_markup` tokenizes the source the way a browser does and
+    refuses anything html.parser could read differently, then `_parsed_policy` applies the
+    allowlist. Unknown <script> elements are cut out with a warning.
+    """
+    if any((ord(ch) < 32 and ch not in "\t\n\r\f") or ord(ch) == 127 for ch in text):
+        raise SiteError(f"{where}: report.html holds a control character")
+    try:
+        _scan_markup(text)
+        policy = _parsed_policy(text)
+    except SiteError as exc:
+        raise SiteError(f"{where}: {exc}") from None
+    # The scan makes each <script> run from a plain start tag to its exact </script>, and text
+    # outside tags holds no "<", so cutting one out cannot join new markup: no second pass.
+    for start, end, digest in reversed(policy.unknown_scripts):
+        print(
+            f"::warning::{where}: removed a <script> that is not a known reporter "
+            f"script (sha256 {digest})",
+            file=sys.stderr,
+        )
+        text = text[:start] + text[end:]
+    return text

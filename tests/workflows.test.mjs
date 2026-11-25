@@ -152,3 +152,13 @@ test('org workflow uses refs are full SHAs with a tag comment', () => {
     }
   }
 });
+
+test('the Python suite runs on each html.parser behaviour the site policy must not depend on', () => {
+  const job = verifyYml.match(/ {2}site-policy:\n[\s\S]*?(?=\n {2}[a-z-]+:\n)/)?.[0] ?? '';
+  for (const python of ['3.12.0', '3.12.3', '3.13.5', '3.13', '3.14']) {
+    assert.match(job, new RegExp(`'${python.replaceAll('.', '\\.')}'`), `site-policy must run Python ${python}`);
+  }
+  assert.match(job, /fail-fast: false/);
+  assert.match(job, /UV_PYTHON_PREFERENCE: only-managed/);
+  assert.match(job, /uv run --locked --no-sync pytest/);
+});
