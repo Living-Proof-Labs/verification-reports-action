@@ -51,17 +51,17 @@ def check(base, commit, version=None):
         html = fetch(path).decode()
         if expected not in html or "assets/brand.css" not in html:
             raise ValueError(f"Missing expected content or brand in {path}")
+        assets = Assets()
+        assets.feed(html)
+        for asset in assets.urls:
+            if not fetch(asset):
+                raise ValueError(f"Empty asset: {asset}")
     try:
         reports = fetch("reports/index.html").decode()
     except OSError as exc:
         raise ValueError("Missing published G1 reports section") from exc
     if "unitree-g1" not in reports:
         raise ValueError("Missing published G1 reports section")
-        assets = Assets()
-        assets.feed(html)
-        for asset in assets.urls:
-            if not fetch(asset):
-                raise ValueError(f"Empty asset: {asset}")
     brand = fetch("assets/brand.css")
     if hashlib.sha256(brand).hexdigest() != identity["brand"]["sha256"]:
         raise ValueError("Published brand checksum mismatch")

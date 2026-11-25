@@ -191,6 +191,15 @@ class PublicationTest(unittest.TestCase):
             try:
                 url = f"http://127.0.0.1:{server.server_port}/manual/"
                 check(url, SHA, "1.2.3")
+                index_page = root / "index.html"
+                original_index = index_page.read_text()
+                (root / "assets/empty.css").write_bytes(b"")
+                index_page.write_text(
+                    original_index + '<link rel="stylesheet" href="assets/empty.css">'
+                )
+                with self.assertRaisesRegex(ValueError, "Empty asset"):
+                    check(url, SHA, "1.2.3")
+                index_page.write_text(original_index)
                 (root / "reports/index.html").unlink()
                 with self.assertRaisesRegex(ValueError, "G1 reports section"):
                     check(url, SHA, "1.2.3")
