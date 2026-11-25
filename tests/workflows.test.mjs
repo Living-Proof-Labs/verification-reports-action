@@ -131,7 +131,9 @@ test('the report workflow calls both verifier procedures and passes no secrets',
 
 test('org workflow uses refs are full SHAs with a tag comment', () => {
   const reportYml = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
+  const docsYml = readFileSync(new URL('../.github/workflows/docs.yml', import.meta.url), 'utf8');
   const files = {
+    'docs.yml': docsYml,
     'report.yml': reportYml,
     'verify.yml': verifyYml,
     'release.yml': releaseYml,

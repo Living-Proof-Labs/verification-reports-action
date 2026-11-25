@@ -1,0 +1,229 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Documentation
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      release_version:
+        required: true
+        type: string
+      release_tag:
+        required: true
+        type: string
+      release_commit:
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: docs-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  candidate:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    permissions:
+      contents: read
+    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release-candidate.yml@d0d9ae8e684f8a828b774eda01622b7c66e5252e # v9.9.10
+  build:
+    name: Documentation verification
+    needs: candidate
+    if: ${{ !cancelled() && inputs.release_version == '' }}
+    env:
+      DOCS_KIND: ${{ github.event_name == 'pull_request' && 'candidate' || 'verification' }}
+      MANUAL_VERSION: ${{ needs.candidate.outputs.semver-version }}
+      CANDIDATE_COMMIT: ${{ needs.candidate.outputs.commit }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    # Same native fallback as Verify: image publication is outside this issue.
+    # PRs produce review artifacts only. Pages artifacts are limited to releases on main.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Require successful shared PR candidate
+        if: github.event_name == 'pull_request'
+        env:
+          CANDIDATE_RESULT: ${{ needs.candidate.result }}
+        run: |
+          test "$CANDIDATE_RESULT" = success
+          test -n "$MANUAL_VERSION"
+          test -n "$CANDIDATE_COMMIT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: "0.12.23"
+          python-version: "3.12.14"
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: "3.54.0"
+      - run: task -t Taskfile.runtime.yml docs:setup
+      - run: task -t Taskfile.runtime.yml docs:test
+      - run: task -t Taskfile.runtime.yml docs:build
+      - run: task -t Taskfile.runtime.yml docs:verify
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: preview
+        with:
+          name: docs-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/site
+          retention-days: 14
+          if-no-files-found: error
+      - name: Link review artifact
+        env:
+          PREVIEW_URL: ${{ steps.preview.outputs.artifact-url }}
+        run: |
+          echo "Documentation review artifact (14 days): $PREVIEW_URL" >> "$GITHUB_STEP_SUMMARY"
+  production:
+    if: ${{ !cancelled() && inputs.release_version != '' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      DOCS_KIND: release
+      MANUAL_VERSION: ${{ inputs.release_version }}
+      RELEASE_VERSION: ${{ inputs.release_version }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_COMMIT: ${{ inputs.release_commit }}
+    steps:
+      - name: Require published release at current protected main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REF_PROTECTED" = true
+          python3 - <<'PYCODE'
+          import json, os, re, subprocess
+          version, tag, commit = (os.environ[k] for k in ('RELEASE_VERSION', 'RELEASE_TAG', 'RELEASE_COMMIT'))
+          if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
+              raise SystemExit('Expected stable release version')
+          if tag != 'v' + version or not re.fullmatch(r'[0-9a-f]{40}', commit) or commit != os.environ['GITHUB_SHA']:
+              raise SystemExit('Release version/tag/commit mismatch')
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', 'repos/' + os.environ['GITHUB_REPOSITORY'] + '/' + path], text=True))
+          branch = api('branches/main')
+          if branch.get('protected') is not True or branch['commit']['sha'] != commit:
+              raise SystemExit('Release is not current protected main')
+          ref = api('git/ref/tags/' + tag)
+          if ref.get('ref') != 'refs/tags/' + tag:
+              raise SystemExit('Wrong tag ref')
+          obj = ref['object']
+          for _ in range(8):
+              if obj.get('type') != 'tag':
+                  break
+              annotated = api('git/tags/' + obj['sha'])
+              if annotated.get('sha') != obj['sha']:
+                  raise SystemExit('Wrong annotated tag object')
+              obj = annotated['object']
+          if obj.get('type') != 'commit' or obj.get('sha') != commit:
+              raise SystemExit('Tag does not resolve to release commit')
+          release = api('releases/tags/' + tag)
+          if (release.get('tag_name') != tag or release.get('draft') is not False
+                  or release.get('prerelease') is not False
+                  or not isinstance(release.get('published_at'), str) or not release['published_at'].strip()):
+              raise SystemExit('Missing published stable GitHub Release')
+          print('Verified published release', tag, commit)
+          PYCODE
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.release_commit }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: "0.12.23"
+          python-version: "3.12.14"
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: "3.54.0"
+      - run: task -t Taskfile.runtime.yml docs:setup
+      - run: task -t Taskfile.runtime.yml docs:build
+      - run: task -t Taskfile.runtime.yml docs:verify
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: artifacts/site
+  deploy:
+    needs: production
+    if: ${{ !cancelled() && needs.production.result == 'success' && inputs.release_version != '' && github.ref == 'refs/heads/main' }}
+    outputs:
+      page-url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      RELEASE_VERSION: ${{ inputs.release_version }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_COMMIT: ${{ inputs.release_commit }}
+    steps:
+      - name: Require published release at current protected main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REF_PROTECTED" = true
+          python3 - <<'PYCODE'
+          import json, os, re, subprocess
+          version, tag, commit = (os.environ[k] for k in ('RELEASE_VERSION', 'RELEASE_TAG', 'RELEASE_COMMIT'))
+          if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
+              raise SystemExit('Expected stable release version')
+          if tag != 'v' + version or not re.fullmatch(r'[0-9a-f]{40}', commit) or commit != os.environ['GITHUB_SHA']:
+              raise SystemExit('Release version/tag/commit mismatch')
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', 'repos/' + os.environ['GITHUB_REPOSITORY'] + '/' + path], text=True))
+          branch = api('branches/main')
+          if branch.get('protected') is not True or branch['commit']['sha'] != commit:
+              raise SystemExit('Release is not current protected main')
+          ref = api('git/ref/tags/' + tag)
+          if ref.get('ref') != 'refs/tags/' + tag:
+              raise SystemExit('Wrong tag ref')
+          obj = ref['object']
+          for _ in range(8):
+              if obj.get('type') != 'tag':
+                  break
+              annotated = api('git/tags/' + obj['sha'])
+              if annotated.get('sha') != obj['sha']:
+                  raise SystemExit('Wrong annotated tag object')
+              obj = annotated['object']
+          if obj.get('type') != 'commit' or obj.get('sha') != commit:
+              raise SystemExit('Tag does not resolve to release commit')
+          release = api('releases/tags/' + tag)
+          if (release.get('tag_name') != tag or release.get('draft') is not False
+                  or release.get('prerelease') is not False
+                  or not isinstance(release.get('published_at'), str) or not release['published_at'].strip()):
+              raise SystemExit('Missing published stable GitHub Release')
+          print('Verified published release', tag, commit)
+          PYCODE
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+  smoke:
+    name: Published documentation smoke
+    needs: deploy
+    if: ${{ !cancelled() && needs.deploy.result == 'success' && inputs.release_version != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.release_commit }}
+          persist-credentials: false
+      - name: Verify published manual
+        env:
+          PAGE_URL: ${{ needs.deploy.outputs.page_url }}
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: python3 tools/docs/smoke.py --url "$PAGE_URL" --commit "$RELEASE_COMMIT" --version "$RELEASE_VERSION" --attempts 6
