@@ -253,6 +253,7 @@ jobs:
           VERSION: ${{ needs.version.outputs.semver-version }}
         run: |
           set -euo pipefail
+          set -x
           test ! -e artifacts/smoke-report/report.json
           dir="artifacts/smoke-report/unitree-g1-stock-mujoco-hallway/stock"
           for name in report.html report.md report.json report.txt SHA256SUMS run.json; do
@@ -271,7 +272,25 @@ jobs:
           test "$(jq -r .declared_robot.ref "$dir/run.json")" = "$G1_REF"
           test "$(jq -r .declared_robot.commit "$dir/run.json")" = "$G1_COMMIT"
           test "$(jq -r .version "$dir/run.json")" = "$VERSION"
-          test -f "$dir/evidence/observation.json"
+          manifest="$dir/evidence/manifest.json"
+          test -f "$manifest"
+          test "$(jq -r '.trials.results | length' "$manifest")" -ge 1
+          test "$(jq -r '.trials.count' "$manifest")" = "1"
+          test "$(jq -r '.trials.results | length' "$manifest")" = "1"
+          seen=0
+          while IFS= read -r rel; do
+            case "$rel" in
+              ""|null|/*|../*|*/../*|*/..)
+                echo "observation path is not inside evidence: $rel" >&2
+                exit 1
+                ;;
+            esac
+            obs="$dir/evidence/$rel"
+            test -f "$obs"
+            test "$(jq -r .format "$obs")" = "livingproof-hallway-observation/2.0.0"
+            seen=$((seen + 1))
+          done < <(jq -r '.trials.results[].path' "$manifest")
+          test "$seen" = "1"
           mapfile -t definitions < <(find artifacts/smoke-report -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
           test "${#definitions[@]}" -eq 1
           test "${definitions[0]}" = "unitree-g1-stock-mujoco-hallway"

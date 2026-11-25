@@ -333,7 +333,12 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
   assert.equal(g1Download.with.name, 'g1-verification-report');
   const reportScript = stepNamed(check, 'Verify the full report').run;
   assert.match(reportScript, /report\.html/);
-  assert.match(reportScript, /observation\.json/);
+  assert.match(reportScript, /^set -x$/m);
+  assert.match(reportScript, /evidence\/manifest\.json/);
+  assert.match(reportScript, /\.trials\.results \| length/);
+  assert.match(reportScript, /\.trials\.count/);
+  assert.match(reportScript, /livingproof-hallway-observation\/2\.0\.0/);
+  assert.doesNotMatch(reportScript, /evidence\/observation\.json/);
   assert.match(reportScript, /summaries\[0\]\.n' "\$dir\/report\.json"\)" = "1"/);
   assert.match(reportScript, /definitions\[0\]\}" = "unitree-g1-stock-mujoco-hallway"/);
   assert.match(reportScript, /test ! -e artifacts\/smoke-report\/fixture-hallway/);
