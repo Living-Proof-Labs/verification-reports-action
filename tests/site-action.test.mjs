@@ -21,11 +21,15 @@ test('site/action.yml defines the composite site step contract without Pages dep
     'output-dir:',
     'evidence-retention-days:',
     'restore-history:',
+    'exclude-runs:',
     'site-url:',
     'upload-artifact:',
   ]) {
     assert.ok(siteActionYml.includes(`  ${inputName}`), `missing input ${inputName}`);
   }
+  // exclude-runs reaches site_action.py, which validates it before restore and build.
+  assert.match(siteActionYml, /^\s+INPUT_EXCLUDE_RUNS: \$\{\{ inputs\.exclude-runs \}\}$/m);
+  assert.match(siteActionYml, /^  exclude-runs:\n(?:    .*\n)*?    default: ''$/m);
   for (const outputName of ['reports-dir:', 'index-path:', 'runs-count:', 'artifact-only:']) {
     assert.ok(siteActionYml.includes(`  ${outputName}`), `missing output ${outputName}`);
   }
