@@ -58,6 +58,14 @@ inputs:
       Pages artifacts (true or false).
     required: false
     default: 'false'
+  exclude-runs:
+    description: >-
+      Optional whitespace- or comma-separated list of restored run folder names
+      (for example `43954868926`) to drop from restored history before building.
+      Fails if an entry is not a plain run folder name or matches a run in
+      runs-dir.
+    required: false
+    default: ''
   upload-artifact:
     description: >-
       Whether to upload the built reports/ tree as a workflow artifact (auto,
@@ -113,6 +121,7 @@ runs:
         INPUT_PAGES_ARTIFACT: ${{ inputs.pages-artifact }}
         INPUT_PAGES_JOB: ${{ inputs.pages-job }}
         INPUT_RESET_HISTORY: ${{ inputs.reset-history }}
+        INPUT_EXCLUDE_RUNS: ${{ inputs.exclude-runs }}
         INPUT_UPLOAD_ARTIFACT: ${{ inputs.upload-artifact }}
         INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}

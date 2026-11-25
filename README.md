@@ -169,6 +169,7 @@ A run folder's `SHA256SUMS` can be recomputed by whoever wrote the folder, so th
 | `pages-artifact` | No | empty | Exact Pages artifact name (matches `github-pages` and `github-pages-*` when empty). |
 | `pages-job` | No | empty | Pages deploy job name (matches `pages`, `deploy`, and `deploy-pages` when empty). |
 | `reset-history` | No | `false` | Start fresh without restoring earlier runs (`true` or `false`). |
+| `exclude-runs` | No | empty | Whitespace- or comma-separated list of restored run folder names (for example `43954868926`) to drop from restored history before building. Fails if an entry is not a plain run folder name or matches a run in `runs-dir`. |
 | `upload-artifact` | No | `auto` | Upload the built `reports/` directory as a workflow artifact (`auto` uploads on `pull_request`). |
 | `artifact-name` | No | empty | Workflow artifact name when uploaded (defaults to `verification-reports-site-<run_id>-<attempt>`). |
 | `artifact-retention-days` | No | `14` | Retention days for the uploaded workflow artifact. |
@@ -182,6 +183,15 @@ A run folder's `SHA256SUMS` can be recomputed by whoever wrote the folder, so th
 | `index-path` | Path to `reports/index.html`. |
 | `runs-count` | Total number of stored runs in the generated `reports/` tree. |
 | `artifact-only` | `true` on `pull_request` and `merge_group` runs (artifact only, never deployed); `false` otherwise. |
+
+### Recovering from a restored run that fails the check
+
+Every site build re-checks the runs it restores from the last GitHub Pages deployment. If a previously published run fails the HTML or evidence policy—for example `error: restored .../runs/<run-id>/report.html: holds a <script> that is not a known reporter script` or `error: restored .../runs/<run-id>/evidence/...: evidence of this type is not published`—the build fails closed and blocks later deployments until that run is no longer in the restored history.
+
+1. **Option 1 (recommended): exclude the failing run ID with `exclude-runs`.**
+   Add the `<run-id>` folder name from the error message to `exclude-runs` in the workflow's `site` step (whitespace- or comma-separated), then run and deploy the site. The excluded run is dropped from the restored tree with a warning while all other restored runs are kept. Once the deployed site no longer has that run, remove the `exclude-runs` entry from the workflow.
+2. **Last resort: `reset-history: true`.**
+   If history cannot be recovered selectively, set `reset-history: true` for one deployment to start a fresh `reports/` tree without restoring earlier runs, then remove it. This drops all previously published run history.
 
 ## Release
 

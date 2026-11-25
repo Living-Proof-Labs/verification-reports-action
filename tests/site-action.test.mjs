@@ -21,6 +21,7 @@ test('site/action.yml defines the composite site step contract without Pages dep
     'output-dir:',
     'evidence-retention-days:',
     'restore-history:',
+    'exclude-runs:',
     'site-url:',
     'upload-artifact:',
   ]) {

@@ -103,6 +103,7 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         "upload-artifact", env_map.get("INPUT_UPLOAD_ARTIFACT", "auto"), "auto"
     )
     reset_history = _parse_bool("reset-history", env_map.get("INPUT_RESET_HISTORY", "false"), False)
+    exclude_runs = site_tool.parse_exclude_runs(env_map.get("INPUT_EXCLUDE_RUNS") or "")
 
     event_name = (env_map.get("GITHUB_EVENT_NAME") or "").strip()
     is_pr = event_name in PR_EVENTS
@@ -158,6 +159,7 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         days=retention_days,
         allow_replace_run_id=allow_replace,
         git_dir=git_dir,
+        exclude_runs=exclude_runs,
     )
 
     issues = site_fixture.check_reports_tree(reports_dir)
