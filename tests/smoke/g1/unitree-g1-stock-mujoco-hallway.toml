@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+# Unitree G1 with its stock controller walks the stock MuJoCo hallway.
+# One trial, so the smoke run stays short. The robot pin is
+# livingproof-unitree-g1 v2.3.34 and is excluded from Renovate.
+# The world, scenario, and specs are the archived stock hallway.
+# The runner is the livingproof-sim-mujoco release that v2.3.34 installs.
+format = "livingproof-verification-definition/0.1.0"
+id = "unitree-g1-stock-mujoco-hallway"
+procedure = "walk-hallway"
+scenario = "walk-hallway@0.1.0"
+
+[robot]
+repository = "Living-Proof-Labs/livingproof-unitree-g1"
+ref = "v2.3.34"
+configurations = ["stock"]
+
+[world]
+id = "hallway-open"
+version = "0.1.0"
+repository = "Living-Proof-Labs/livingproof-worlds"
+tag = "v1.1.0"
+
+[plan]
+trials = { count = 1 }
+command_speed = 0.5
+recording = { max_gap_seconds = 0.05 }
+
+[releases.specs]
+repository = "Living-Proof-Labs/robot-capability-specs"
+tag = "v2.3.0"
