@@ -37,6 +37,7 @@ from reports_render import (
     _history_page_html,
     _index_page_html,
     _spec_repository_url,
+    checked_report_html,
     load_open_js,
     load_styles_css,
     redirect_page,
@@ -115,6 +116,11 @@ MEDIA_SUFFIXES = {
     ".webp",
 }
 VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
+# Evidence types the site publishes. Anything else is not copied, so a MIME mapping on Pages
+# (GitHub serves .xsd and .rng as application/xml, which a browser runs as XHTML) cannot put
+# an active document on the Pages origin. This is what reporters emit (MCAP, video, images,
+# media.json and logs), plus plain-text and data formats a browser only displays.
+PUBLISHED_EVIDENCE_SUFFIXES = frozenset(MEDIA_SUFFIXES | {".json", ".txt", ".log", ".md", ".csv"})
 
 SEED_LABEL = re.compile(r"^seed (?=\d)")
 
@@ -630,6 +636,14 @@ def _infer_evidence_kind(path: Path) -> str:
     return "note"
 
 
+def _publishable_evidence(path: Path) -> bool:
+    if path.suffix.lower() in PUBLISHED_EVIDENCE_SUFFIXES:
+        return True
+    if path.suffix.lower() != ".html":  # .html was always skipped quietly
+        print(f"::warning::{path}: not publishing evidence of this type", file=sys.stderr)
+    return False
+
+
 def _copy_run_evidence(
     source: Path, destination: Path, stored_evidence: object
 ) -> list[dict] | None:
@@ -641,7 +655,7 @@ def _copy_run_evidence(
         for item in sorted(evidence_src.rglob("*")):
             if item.is_symlink():
                 raise SiteError(f"{source}: symlink inside evidence is not allowed ({item})")
-            if item.is_file() and item.suffix.lower() != ".html":
+            if item.is_file() and _publishable_evidence(item):
                 source_files.append(item)
 
     if isinstance(stored_evidence, list) and stored_evidence:
@@ -662,7 +676,11 @@ def _copy_run_evidence(
                 if any(p in ("", ".", "..") for p in parts):
                     raise SiteError(f"{source}: unsafe evidence file path {rel_str!r}")
                 candidate = source.joinpath(*parts)
-                if candidate.is_file() and not candidate.is_symlink():
+                if (
+                    candidate.is_file()
+                    and not candidate.is_symlink()
+                    and _publishable_evidence(candidate)
+                ):
                     resolved_files.append(candidate)
             if resolved_files:
                 size = sum(p.stat().st_size for p in resolved_files)
@@ -1100,6 +1118,7 @@ def publish_report_files(
         cleaned_html = strip_actions_text(html_text)
         if expired:
             cleaned_html = scrub_expired_evidence_html(cleaned_html, days)
+        cleaned_html = checked_report_html(cleaned_html, str(folder / "report.html"))
         (folder / "report.html").write_text(cleaned_html, encoding="utf-8")
     for name in ("report.md", "report.txt"):
         path = folder / name
@@ -1191,6 +1210,8 @@ def publish_run_page(folder: Path, record: dict, *, now: str, days: int, trial: 
         reports_href="../../../../index.html",
     )
     public = with_spec_provenance(public, record, report)
+    # Checked after every rewrite, so deleting a word cannot assemble new markup.
+    public = checked_report_html(public, str(folder / "index.html"))
     if html_is_dirty(public):
         raise SiteError(
             f"{folder / 'index.html'}: public page still names an artifact or links to /actions/"
@@ -1272,6 +1293,34 @@ def remember_stored_wording(folder: Path, record: dict) -> bool:
     return True
 
 
+def recheck_restored_run(folder: Path) -> None:
+    """Check a run restored from the last deployment that this build does not republish.
+
+    Its pages and evidence were published by an earlier build, so a gap fixed since then
+    would otherwise be carried into every later deployment. The build fails rather than
+    rewriting them; reset-history rebuilds the site from run folders.
+    """
+    evidence = folder / "evidence"
+    # The site writes each evidence listing as evidence/<name>.html. A restored one is a
+    # page on the Pages origin like report.html, so it gets the same check.
+    listings = sorted(evidence.glob("*.html")) if evidence.is_dir() else []
+    for path in [folder / "report.html", folder / "index.html", *listings]:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if checked_report_html(text, f"restored {path}") != text:
+            raise SiteError(
+                f"restored {path}: holds a <script> that is not a known reporter script"
+            )
+    if not evidence.is_dir():
+        return
+    for path in sorted(evidence.rglob("*")):
+        if not path.is_file() or path in listings:
+            continue
+        if path.suffix.lower() not in PUBLISHED_EVIDENCE_SUFFIXES:
+            raise SiteError(f"restored {path}: evidence of this type is not published")
+
+
 # ---------------------------------------------------------------- render & build
 
 
@@ -1322,6 +1371,8 @@ def render(
                     days=days,
                     trial=trials[record["folder"]],
                 )
+            else:
+                recheck_restored_run(run_folder)
         (base / "index.html").write_text(
             _history_page_html(robot, variant, records, loaded_reports), encoding="utf-8"
         )

