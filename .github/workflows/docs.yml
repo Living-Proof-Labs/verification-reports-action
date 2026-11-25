@@ -223,7 +223,7 @@ jobs:
           persist-credentials: false
       - name: Verify published manual
         env:
-          PAGE_URL: ${{ needs.deploy.outputs.page_url }}
+          PAGE_URL: ${{ needs.deploy.outputs.page-url }}
           RELEASE_COMMIT: ${{ inputs.release_commit }}
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: python3 tools/docs/smoke.py --url "$PAGE_URL" --commit "$RELEASE_COMMIT" --version "$RELEASE_VERSION" --attempts 6
