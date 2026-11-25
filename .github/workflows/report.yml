@@ -49,6 +49,14 @@ on:
         type: boolean
         default: true
         required: false
+      health:
+        description: Attach advisory Health from one existing recorded trial per configuration. Requires media.
+        type: boolean
+        default: false
+      health-trial:
+        description: Positive trial index to evaluate without rerunning simulation.
+        type: number
+        default: 1
       comment:
         description: >-
           Ask capability-verifier to comment on a same-repository pull request.
@@ -128,6 +136,9 @@ jobs:
         env:
           # contents: read is enough. The client sends this only to api.github.com.
           GITHUB_TOKEN: ${{ github.token }}
+          INPUT_HEALTH: ${{ inputs.health }}
+          INPUT_MEDIA: ${{ inputs.media }}
+          INPUT_HEALTH_TRIAL: ${{ inputs.health-trial }}
           INPUT_DEFINITIONS: ${{ inputs.definitions }}
           INPUT_REPOSITORY: ${{ inputs.repository }}
           INPUT_REF: ${{ inputs.ref }}
@@ -331,9 +342,15 @@ jobs:
         with:
           pattern: vra-*-video-*
           path: downloaded/video
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        if: inputs.health
+        with:
+          version: '0.12.23'
+          python-version: '3.12.14'
       - id: collect
         working-directory: caller
         env:
+          INPUT_HEALTH: ${{ inputs.health }}
           INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/verification-plan/plan.json
           INPUT_OUTPUT_DIR: ${{ github.workspace }}/${{ inputs.output-dir }}
           INPUT_VERSION: ${{ inputs.version }}

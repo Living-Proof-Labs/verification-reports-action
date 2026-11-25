@@ -215,6 +215,8 @@ jobs:
       repository: Living-Proof-Labs/livingproof-unitree-g1
       ref: d554c8243a12849dc7fe8acc1921bb3d4e5239a7
       artifact-name: g1-verification-report
+      health: true
+      health-trial: 1
   g1-smoke-check:
     name: Real G1 smoke report
     needs: [version, g1-smoke]
@@ -229,6 +231,12 @@ jobs:
       G1_REF: v2.3.34
       G1_COMMIT: d554c8243a12849dc7fe8acc1921bb3d4e5239a7
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.3'
       - name: Verify workflow outputs
         env:
           STATUS: ${{ needs.g1-smoke.outputs.status }}
@@ -300,6 +308,43 @@ jobs:
             echo "report still contains placeholder" >&2
             exit 1
           fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: g1-verification-report-plan
+          path: artifacts/health-plan
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vra-unitree-g1-stock-mujoco-hallway-capability-report-*
+          path: downloaded/reports
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vra-unitree-g1-stock-mujoco-hallway-evidence-*
+          path: downloaded/evidence
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vra-unitree-g1-stock-mujoco-hallway-mcap-*
+          path: downloaded/mcap
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vra-unitree-g1-stock-mujoco-hallway-video-*
+          path: downloaded/video
+      - name: Compare Health on and off using the same trial artifacts
+        env:
+          INPUT_PLAN_PATH: artifacts/health-plan/plan.json
+          INPUT_OUTPUT_DIR: artifacts/health-off
+          INPUT_VERIFIER_ROOT: downloaded
+          INPUT_HEALTH: 'false'
+          INPUT_VERSION: ${{ needs.version.outputs.semver-version }}
+          HEALTH_ON_DIR: artifacts/smoke-report
+          HEALTH_ON_GRADE: ${{ needs.g1-smoke.outputs.grade }}
+          HEALTH_ON_GRADES: ${{ needs.g1-smoke.outputs.grades }}
+        run: node tools/health-smoke.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: g1-health-off-report
+          path: artifacts/health-off
+          retention-days: 30
+          if-no-files-found: error
       - name: Upload the smoke report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

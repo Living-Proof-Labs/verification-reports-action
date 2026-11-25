@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { healthEnabled, resolveHealth } from './health.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { matrixFor, planDefinitions } from './definitions.mjs';
@@ -12,13 +13,16 @@ export async function writePlan(env = process.env, root = process.cwd(), client 
     repository: env.INPUT_REPOSITORY,
     ref: env.INPUT_REF,
   };
+  if (healthEnabled(env.INPUT_HEALTH) && env.INPUT_MEDIA === 'false') throw new Error('Health requires media: true');
   const plan = planDefinitions(inputs, env, root);
   const resolver = client ?? githubProvenanceClient(env);
   for (const item of plan.definitions) {
     if (item.execution === 'fixture') item.provenance = fixtureProvenance(item);
     else item.provenance = await assertPinnedInputs(item, resolver);
   }
+  const health = healthEnabled(env.INPUT_HEALTH) ? await resolveHealth(resolver, env.INPUT_HEALTH_TRIAL ?? '1') : null;
   const serialised = {
+    ...(health ? { health } : {}),
     robot: plan.robot,
     definitions: plan.definitions.map((item) => ({
       id: item.id,
