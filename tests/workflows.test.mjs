@@ -51,14 +51,20 @@ test('verify forecasts a candidate version and smokes it without sealing a relea
     verifyYml,
     /uses: Living-Proof-Labs\/collaboration-guidelines\/\.github\/workflows\/semantic-release-candidate\.yml@d0d9ae8e684f8a828b774eda01622b7c66e5252e # v9\.9\.10/
   );
+  assert.match(verifyYml, /action-smoke:[\s\S]*?needs: version/);
   assert.match(verifyYml, /g1-smoke:[\s\S]*?needs: version/);
   assert.match(verifyYml, /version: \$\{\{ needs\.version\.outputs\.semver-version \}\}/);
+  assert.match(verifyYml, /name: smoke-report-\$\{\{ needs\.version\.outputs\.semver-version \}\}/);
   assert.match(verifyYml, /name: g1-smoke-report-\$\{\{ needs\.version\.outputs\.semver-version \}\}/);
   assert.doesNotMatch(verifyYml, /expected-version/);
   assert.doesNotMatch(verifyYml, /uses: \.\/\.github\/workflows\/release\.yml/);
   assert.doesNotMatch(verifyYml, /actions: write/);
   assert.doesNotMatch(verifyYml, /0\.0\.0-placeholder|"placeholder"|status=placeholder/);
   assert.match(verifyYml, / {2}verify:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {6}checks: write\n/);
+  assert.match(
+    verifyYml,
+    / {2}action-smoke:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {6}pull-requests: write\n {4}uses: \.\/\.github\/workflows\/report\.yml\n/
+  );
   assert.match(
     verifyYml,
     / {2}g1-smoke:[\s\S]*?\n {4}permissions:\n {6}contents: read\n {6}pull-requests: write\n {4}uses: \.\/\.github\/workflows\/report\.yml\n/
@@ -70,8 +76,8 @@ test('verify forecasts a candidate version and smokes it without sealing a relea
   assert.match(verifyYml, /uses: \.\/site/);
   assert.doesNotMatch(verifyYml, /pages: write/);
   assert.match(verifyYml, /^permissions:\n {2}contents: read\nconcurrency:/m);
+  assert.match(verifyYml, /definitions: tests\/fixtures\/robot\/verifications\/\*\.toml/);
   assert.match(verifyYml, /definitions: tests\/smoke\/g1\/\*\.toml/);
-  assert.doesNotMatch(verifyYml, /definitions: tests\/fixtures\/robot\/verifications\/\*\.toml/);
 });
 
 test('the report workflow calls both verifier procedures and passes no secrets', () => {
@@ -110,7 +116,7 @@ test('the report workflow calls both verifier procedures and passes no secrets',
   assert.match(reportYml, /path: action/);
   assert.match(reportYml, /path: caller/);
   assert.match(reportYml, /node "\$\{\{ github\.workspace \}\}\/action\/src\/plan\.mjs"/);
-  const planStep = reportYml.slice(reportYml.indexOf('- id: plan\n'), reportYml.indexOf('name: verification-plan'));
+  const planStep = reportYml.slice(reportYml.indexOf('- id: plan\n'), reportYml.indexOf('\n  fixture:\n'));
   assert.match(planStep, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
   assert.doesNotMatch(planStep, /secrets\./);
   assert.match(reportYml, /refuses before any trial/);
@@ -118,7 +124,8 @@ test('the report workflow calls both verifier procedures and passes no secrets',
   assert.match(reportYml, / {2}scenario:\n {4}needs: plan\n/);
   assert.match(reportYml, /test ! -e src\/plan\.mjs/);
   assert.doesNotMatch(reportYml, /run: node src\//);
-  assert.match(reportYml, /name: verification-report/);
+  assert.match(reportYml, /artifact-name:[\s\S]*?default: verification-report/);
+  assert.match(reportYml, /name: \$\{\{ inputs\.artifact-name \}\}/);
   assert.match(releaseYml, /^permissions:\n {2}contents: read\njobs:/m);
   assert.match(
     releaseYml,

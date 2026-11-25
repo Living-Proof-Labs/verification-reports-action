@@ -110,6 +110,90 @@ jobs:
       contents: read
     # Commit of collaboration-guidelines v9.9.10. Issue #4 pins action inputs, not these workflow refs.
     uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release-candidate.yml@d0d9ae8e684f8a828b774eda01622b7c66e5252e # v9.9.10
+  action-smoke:
+    name: Mock robot smoke
+    needs: version
+    if: >-
+      !cancelled() &&
+      (needs.version.result == 'success' || needs.version.result == 'skipped')
+    # capability-verifier's comment job declares pull-requests: write.
+    # With comment: false it never writes.
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/report.yml
+    with:
+      definitions: tests/fixtures/robot/verifications/*.toml
+      output-dir: artifacts/verification-report
+      version: ${{ needs.version.outputs.semver-version }}
+  action-smoke-check:
+    needs: [version, action-smoke]
+    if: >-
+      !cancelled() &&
+      needs.action-smoke.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Verify workflow outputs
+        env:
+          STATUS: ${{ needs.action-smoke.outputs.status }}
+          GRADES: ${{ needs.action-smoke.outputs.grades }}
+          VERSION: ${{ needs.version.outputs.semver-version }}
+        run: |
+          set -euo pipefail
+          test "$STATUS" = "ok"
+          test "$(jq -r '.["fixture-hallway/stock"]' <<<"$GRADES")" = "PASS"
+          test "$(jq -r '.["fixture-scenario/stock"]' <<<"$GRADES")" = "FAIL"
+          if { [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ "$GITHUB_BASE_REF" = "main" ]; } || \
+             { [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; }; then
+            test -n "$VERSION"
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verification-report
+          path: artifacts/smoke-report
+      - name: Verify the full report
+        env:
+          VERSION: ${{ needs.version.outputs.semver-version }}
+        run: |
+          set -euo pipefail
+          test ! -e artifacts/smoke-report/report.json
+          for spec in \
+            "artifacts/smoke-report/fixture-hallway/stock PASS walk-hallway media" \
+            "artifacts/smoke-report/fixture-scenario/stock FAIL scenario observation"
+          do
+            read -r dir grade procedure kind <<<"$spec"
+            for name in report.html report.md report.json report.txt SHA256SUMS run.json; do
+              test -f "$dir/$name"
+            done
+            (cd "$dir" && sha256sum -c SHA256SUMS)
+            test "$(jq -r '.summaries[0].grade' "$dir/report.json")" = "$grade"
+            test "$(jq -r '.outcome[0].grade' "$dir/run.json")" = "$grade"
+            test "$(jq -r .procedure "$dir/run.json")" = "$procedure"
+            test "$(jq -r .robot.commit "$dir/run.json")" = "$GITHUB_SHA"
+            test "$(jq -r .version "$dir/run.json")" = "$VERSION"
+            test "$(jq -r .robot.commit "$dir/run.json")" != "$(jq -r .declared_robot.commit "$dir/run.json")"
+            test -f "$dir/evidence/observation.json"
+            if [ "$kind" = media ]; then
+              test -f "$dir/evidence/trial.mcap"
+              test -f "$dir/evidence/pass.mp4"
+            else
+              test ! -e "$dir/evidence/trial.mcap"
+            fi
+          done
+          if grep -R -n placeholder artifacts/smoke-report; then
+            echo "report still contains placeholder" >&2
+            exit 1
+          fi
+      - name: Upload the smoke report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smoke-report-${{ needs.version.outputs.semver-version }}
+          path: artifacts/smoke-report
+          retention-days: 30
+          if-no-files-found: error
   g1-smoke:
     name: Real G1 smoke
     needs: version
@@ -130,6 +214,7 @@ jobs:
       version: ${{ needs.version.outputs.semver-version }}
       repository: Living-Proof-Labs/livingproof-unitree-g1
       ref: d554c8243a12849dc7fe8acc1921bb3d4e5239a7
+      artifact-name: g1-verification-report
   g1-smoke-check:
     name: Real G1 smoke report
     needs: [version, g1-smoke]
@@ -161,7 +246,7 @@ jobs:
           fi
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: verification-report
+          name: g1-verification-report
           path: artifacts/smoke-report
       - name: Verify the full report
         env:
@@ -199,11 +284,10 @@ jobs:
           retention-days: 30
           if-no-files-found: error
   site-smoke:
-    name: Real G1 reports section
-    needs: g1-smoke
+    needs: action-smoke
     if: >-
       !cancelled() &&
-      needs.g1-smoke.result == 'success'
+      needs.action-smoke.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -233,15 +317,14 @@ jobs:
           set -euo pipefail
           test "$REPORTS_DIR" = "artifacts/site-smoke/reports"
           test -f "$INDEX_PATH"
-          test "$RUNS_COUNT" = "1"
+          test "$RUNS_COUNT" = "2"
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ] || [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
             test "$ARTIFACT_ONLY" = "true"
           else
             test "$ARTIFACT_ONLY" = "false"
           fi
           grep -Fq "https://docs.livingprooflabs.com/livingproof-verification/reports/index.html" "$INDEX_PATH"
-          test -f "$REPORTS_DIR/unitree-g1/stock-mujoco-hallway/latest/index.html"
-          test -d "$REPORTS_DIR/unitree-g1/stock-mujoco-hallway/runs"
+          python3 -c 'import pathlib, sys; t = pathlib.Path(sys.argv[1]).read_text(); assert t.index("fixture-scenario-stock/latest/") < t.index("fixture-hallway-stock/latest/")' "$INDEX_PATH"
           python3 tools/site_fixture.py check "$REPORTS_DIR"
   verification-gate:
     name: Repository verification gate
@@ -249,7 +332,7 @@ jobs:
     # version is skipped unless this is a push or a pull request into main;
     # that skip is expected. Any other skip, failure, or cancellation fails.
     if: always()
-    needs: [verify, site-policy, version, g1-smoke, g1-smoke-check, site-smoke]
+    needs: [verify, site-policy, version, action-smoke, action-smoke-check, g1-smoke, g1-smoke-check, site-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

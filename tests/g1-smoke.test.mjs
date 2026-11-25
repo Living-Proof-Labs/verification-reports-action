@@ -286,12 +286,33 @@ test('Renovate leaves the G1 smoke pin file disabled', () => {
   assert.ok(rule, 'renovate.json must disable updates under tests/smoke/g1');
 });
 
-test('the real G1 smoke job is what Verify runs, and the gate requires it', () => {
+const gateNeeds = [
+  'verify',
+  'site-policy',
+  'version',
+  'action-smoke',
+  'action-smoke-check',
+  'g1-smoke',
+  'g1-smoke-check',
+  'site-smoke',
+];
+
+test('the mock smoke and the real G1 smoke are both required, and their artifacts differ', () => {
   assert.equal(verifyWorkflow.on.pull_request, null);
   assert.ok(verifyWorkflow.on.merge_group);
   assert.deepEqual(verifyWorkflow.on.push.branches, ['main']);
-  assert.equal(verifyWorkflow.jobs['action-smoke'], undefined);
-  assert.equal(verifyWorkflow.jobs['action-smoke-check'], undefined);
+
+  const mock = verifyWorkflow.jobs['action-smoke'];
+  assert.equal(mock.name, 'Mock robot smoke');
+  assert.equal(mock.needs, 'version');
+  assert.equal(mock.uses, './.github/workflows/report.yml');
+  assert.equal(mock.with.definitions, 'tests/fixtures/robot/verifications/*.toml');
+  assert.equal(mock.with['artifact-name'], undefined);
+  assert.match(String(mock.if), /needs\.version\.result == 'skipped'/);
+  const mockUpload = verifyWorkflow.jobs['action-smoke-check'].steps.find(
+    (step) => step.uses && step.uses.startsWith('actions/upload-artifact@'),
+  );
+  assert.equal(mockUpload.with.name, 'smoke-report-${{ needs.version.outputs.semver-version }}');
 
   const smoke = verifyWorkflow.jobs['g1-smoke'];
   assert.equal(smoke.name, 'Real G1 smoke');
@@ -300,18 +321,29 @@ test('the real G1 smoke job is what Verify runs, and the gate requires it', () =
   assert.equal(smoke.with.definitions, 'tests/smoke/g1/*.toml');
   assert.equal(smoke.with.repository, 'Living-Proof-Labs/livingproof-unitree-g1');
   assert.equal(smoke.with.ref, G1_COMMIT);
+  assert.equal(smoke.with['artifact-name'], 'g1-verification-report');
+  assert.notEqual(smoke.with['artifact-name'], 'verification-report');
   assert.match(String(smoke.if), /needs\.version\.result == 'skipped'/);
 
   const check = verifyWorkflow.jobs['g1-smoke-check'];
   assert.deepEqual(check.needs, ['version', 'g1-smoke']);
   assert.equal(check.env.G1_REF, 'v2.3.34');
   assert.equal(check.env.G1_COMMIT, G1_COMMIT);
+  const g1Download = check.steps.find((step) => step.uses && step.uses.startsWith('actions/download-artifact@'));
+  assert.equal(g1Download.with.name, 'g1-verification-report');
   const reportScript = stepNamed(check, 'Verify the full report').run;
   assert.match(reportScript, /report\.html/);
   assert.match(reportScript, /observation\.json/);
   assert.match(reportScript, /summaries\[0\]\.n' "\$dir\/report\.json"\)" = "1"/);
   assert.doesNotMatch(reportScript, /= "PASS"/);
 
+  const site = verifyWorkflow.jobs['site-smoke'];
+  assert.equal(site.needs, 'action-smoke');
+  const siteDownload = site.steps.find((step) => step.uses && step.uses.startsWith('actions/download-artifact@'));
+  assert.equal(siteDownload.with.name, 'verification-report');
+
+  assert.equal(reportWorkflow.on.workflow_call.inputs['artifact-name'].default, 'verification-report');
+  assert.equal(reportWorkflow.jobs.collect.steps.at(-1).with.name, '${{ inputs.artifact-name }}');
   assert.equal(
     reportWorkflow.jobs['walk-hallway'].uses,
     'Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@fdbf233f6fbaef3bf6589a056821bde3ebb634e2',
@@ -323,26 +355,22 @@ test('the real G1 smoke job is what Verify runs, and the gate requires it', () =
   assert.equal(reportWorkflow.jobs['walk-hallway'].with['evaluator-commit'], '${{ matrix.evaluator_commit }}');
   assert.equal(reportWorkflow.jobs.scenario.with['evaluator-commit'], '${{ matrix.evaluator_commit }}');
 
-  assert.deepEqual(verifyWorkflow.jobs['verification-gate'].needs, [
-    'verify',
-    'site-policy',
-    'version',
-    'g1-smoke',
-    'g1-smoke-check',
-    'site-smoke',
-  ]);
-  assert.deepEqual(verificationJobs, verifyWorkflow.jobs['verification-gate'].needs);
+  assert.deepEqual(verifyWorkflow.jobs['verification-gate'].needs, gateNeeds);
+  assert.deepEqual(verificationJobs, gateNeeds);
+  for (const job of ['action-smoke', 'action-smoke-check', 'g1-smoke', 'g1-smoke-check']) {
+    assert.ok(verifyWorkflow.jobs['verification-gate'].needs.includes(job), `${job} is required by the gate`);
+  }
 });
 
-test('a failed real G1 smoke job fails the repository verification gate', () => {
+test('removing either smoke job from the gate fails the gate', () => {
   for (const event of ['pull_request', 'merge_group', 'push']) {
     const baseRef = event === 'pull_request' ? 'main' : '';
     const version = event === 'push' || baseRef === 'main' ? 'success' : 'skipped';
     const needs = Object.fromEntries(verificationJobs.map((job) => [job, { result: job === 'version' ? version : 'success' }]));
-    needs['g1-smoke'].result = 'failure';
-    assert.throws(() => verifyResults(needs, event, baseRef), /g1-smoke must be success/);
-    needs['g1-smoke'].result = 'success';
-    needs['g1-smoke-check'].result = 'failure';
-    assert.throws(() => verifyResults(needs, event, baseRef), /g1-smoke-check must be success/);
+    for (const job of ['action-smoke', 'g1-smoke']) {
+      const failed = structuredClone(needs);
+      failed[job].result = 'failure';
+      assert.throws(() => verifyResults(failed, event, baseRef), new RegExp(`${job} must be success`));
+    }
   }
 });

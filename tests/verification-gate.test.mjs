@@ -68,7 +68,10 @@ test('the gate job is the org check name and runs for pull_request and merge_gro
   const gate = jobsSection.split('  verification-gate:')[1];
   assert.match(gate, /name: Repository verification gate\n/);
   assert.match(gate, /if: always\(\)\n/);
-  assert.match(gate, /needs: \[verify, site-policy, version, g1-smoke, g1-smoke-check, site-smoke\]\n/);
+  assert.match(
+    gate,
+    /needs: \[verify, site-policy, version, action-smoke, action-smoke-check, g1-smoke, g1-smoke-check, site-smoke\]\n/,
+  );
   assert.match(gate, /permissions:\n {6}contents: read\n {4}steps:\n/);
   assert.doesNotMatch(gate, /checks: write|contents: write|pull-requests: write|actions: write/);
   assert.match(gate, /actions\/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\.4\.0/);

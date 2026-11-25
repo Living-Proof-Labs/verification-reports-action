@@ -101,7 +101,8 @@ Replace `<commit>` and `vX.Y.Z` with the published release. The definition files
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
 | `definitions` | No | `verifications/*.toml` | Glob of definition files in the caller repository. |
-| `output-dir` | No | `artifacts/verification-report` | Directory collected into the `verification-report` artifact. |
+| `output-dir` | No | `artifacts/verification-report` | Directory collected into the report artifact. |
+| `artifact-name` | No | `verification-report` | Name of the uploaded report artifact. A second call in the same workflow needs a different name. |
 | `version` | No | empty | Optional version recorded in each `run.json`. |
 | `repository` | No | caller | Another robot repository. `ref` must then be that repository's full commit SHA. |
 | `ref` | No | caller SHA | Robot commit. A release tag is rejected. |
@@ -185,7 +186,7 @@ A run folder's `SHA256SUMS` can be recomputed by whoever wrote the folder, so th
 
 ## Release
 
-`Verify` runs on pull requests, merge groups, and pushes to `main`. Pull requests into `main` get a unique candidate version from `semantic-release-candidate.yml`. The real G1 smoke job runs the report workflow on the Unitree G1 stock MuJoCo hallway, `Living-Proof-Labs/livingproof-unitree-g1` at `v2.3.34`, with one trial, through capability-verifier and livingproof-evaluator-run. It uploads `g1-smoke-report-<version>`. The site smoke job builds the static `reports/` section from `verification-report`.
+`Verify` runs on pull requests, merge groups, and pushes to `main`. Pull requests into `main` get a unique candidate version from `semantic-release-candidate.yml`. The mock robot smoke runs the report workflow on this repository's fixture definitions and uploads `smoke-report-<version>` from the `verification-report` artifact. The real G1 smoke runs the report workflow on the Unitree G1 stock MuJoCo hallway, `Living-Proof-Labs/livingproof-unitree-g1` at `v2.3.34`, with one trial, through capability-verifier and livingproof-evaluator-run. It uploads `g1-smoke-report-<version>` from the `g1-verification-report` artifact. The site smoke job builds the static `reports/` section from the mock report.
 
 After `Verify` succeeds for a push to `main`, `Release` runs. The `release` job tags that commit and publishes the GitHub release. `post-release` runs only when `release` publishes (`published == 'true'`), calls this workflow on the fixture definitions in `tests/fixtures/robot/verifications/` with the published `version`, and `post-release-check` checks out `git-tag`.
 
