@@ -165,8 +165,26 @@ jobs:
           restore-history: 'false'
           upload-artifact: 'false'
           site-url: https://docs.livingprooflabs.com/verification-reports-action/
+      - name: Download the real G1 smoke report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: g1-verification-report
+          path: artifacts/g1-smoke-report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Build the G1 reports section
+        uses: ./site
+        with:
+          runs-dir: artifacts/g1-smoke-report
+          output-dir: artifacts/site/reports/g1
+          reset-history: 'true'
+          restore-history: 'false'
+          upload-artifact: 'false'
+          site-url: https://docs.livingprooflabs.com/verification-reports-action/
       - name: Require the published reports index
-        run: test -f artifacts/site/reports/index.html
+        run: |
+          test -f artifacts/site/reports/index.html
+          test -f artifacts/site/reports/g1/index.html
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: artifacts/site

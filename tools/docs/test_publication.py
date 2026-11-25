@@ -182,8 +182,9 @@ class PublicationTest(unittest.TestCase):
                 (root / f"{page}.html").write_text(
                     '<link rel="stylesheet" href="assets/brand.css">' + text
                 )
-            (root / "reports").mkdir()
+            (root / "reports/g1").mkdir(parents=True)
             (root / "reports/index.html").write_text("verification-reports-action fixture")
+            (root / "reports/g1/index.html").write_text("unitree-g1")
             handler = functools.partial(SimpleHTTPRequestHandler, directory=directory)
             server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -200,6 +201,11 @@ class PublicationTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Empty asset"):
                     check(url, SHA, "1.2.3")
                 index_page.write_text(original_index)
+                g1_page = root / "reports/g1/index.html"
+                g1_page.write_text("missing slug")
+                with self.assertRaisesRegex(ValueError, "published reports section"):
+                    check(url, SHA, "1.2.3")
+                g1_page.write_text("unitree-g1")
                 (root / "reports/index.html").unlink()
                 with self.assertRaisesRegex(ValueError, "published reports section"):
                     check(url, SHA, "1.2.3")
