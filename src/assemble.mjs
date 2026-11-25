@@ -87,12 +87,22 @@ export function assembleVerifierDefinition(item, downloadRoot, outputDir, env, v
   return destination;
 }
 
-export function mergeFixtureArtifacts(fixtureRoot, outputDir) {
+export function mergeFixtureArtifacts(fixtureRoot, outputDir, plan) {
   if (!fixtureRoot || !existsSync(fixtureRoot)) return;
+  const allowed = new Set(
+    (plan?.definitions ?? []).filter((item) => item.execution === 'fixture').map((item) => item.id)
+  );
   for (const artifactName of readdirSync(fixtureRoot)) {
     const artifact = path.join(fixtureRoot, artifactName);
-    for (const id of readdirSync(artifact)) {
-      if (id.startsWith('.')) continue;
+    if (!existsSync(artifact)) continue;
+    let names;
+    try {
+      names = readdirSync(artifact);
+    } catch {
+      continue;
+    }
+    for (const id of names) {
+      if (id.startsWith('.') || !allowed.has(id)) continue;
       const from = path.join(artifact, id);
       const to = path.join(outputDir, id);
       rmSync(to, { recursive: true, force: true });

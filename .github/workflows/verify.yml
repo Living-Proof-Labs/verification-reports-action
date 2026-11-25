@@ -272,6 +272,11 @@ jobs:
           test "$(jq -r .declared_robot.commit "$dir/run.json")" = "$G1_COMMIT"
           test "$(jq -r .version "$dir/run.json")" = "$VERSION"
           test -f "$dir/evidence/observation.json"
+          mapfile -t definitions < <(find artifacts/smoke-report -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+          test "${#definitions[@]}" -eq 1
+          test "${definitions[0]}" = "unitree-g1-stock-mujoco-hallway"
+          test ! -e artifacts/smoke-report/fixture-hallway
+          test ! -e artifacts/smoke-report/fixture-scenario
           if grep -R -n placeholder artifacts/smoke-report; then
             echo "report still contains placeholder" >&2
             exit 1

@@ -26,7 +26,7 @@ export function collectReports(env = process.env, root = process.cwd()) {
   const verifierRoot = env.INPUT_VERIFIER_ROOT
     ? path.resolve(root, env.INPUT_VERIFIER_ROOT)
     : path.join(root, 'downloaded');
-  mergeFixtureArtifacts(fixtureRoot, outputDir);
+  mergeFixtureArtifacts(fixtureRoot, outputDir, plan);
   for (const item of plan.definitions) {
     if (item.execution !== 'capability-verifier') continue;
     assembleVerifierDefinition(item, verifierRoot, outputDir, env, version);

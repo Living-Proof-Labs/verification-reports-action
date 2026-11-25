@@ -199,7 +199,7 @@ jobs:
         run: node "${{ github.workspace }}/action/src/fixture-run.mjs"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: vra-fixture-${{ matrix.id }}
+          name: ${{ inputs.artifact-name == 'verification-report' && format('vra-fixture-{0}', matrix.id) || format('{0}-vra-fixture-{1}', inputs.artifact-name, matrix.id) }}
           path: artifacts/fixture-out
           retention-days: 14
           if-no-files-found: error
@@ -313,7 +313,7 @@ jobs:
           path: artifacts/verification-plan
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: vra-fixture-*
+          pattern: ${{ inputs.artifact-name == 'verification-report' && 'vra-fixture-*' || format('{0}-vra-fixture-*', inputs.artifact-name) }}
           path: downloaded/fixture
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

@@ -309,9 +309,9 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
   assert.equal(mock.with.definitions, 'tests/fixtures/robot/verifications/*.toml');
   assert.equal(mock.with['artifact-name'], undefined);
   assert.match(String(mock.if), /needs\.version\.result == 'skipped'/);
-  const mockUpload = verifyWorkflow.jobs['action-smoke-check'].steps.find(
-    (step) => step.uses && step.uses.startsWith('actions/upload-artifact@'),
-  );
+  const mockCheck = verifyWorkflow.jobs['action-smoke-check'];
+  assert.deepEqual(mockCheck.needs, ['version', 'action-smoke']);
+  const mockUpload = mockCheck.steps.find((step) => step.uses && step.uses.startsWith('actions/upload-artifact@'));
   assert.equal(mockUpload.with.name, 'smoke-report-${{ needs.version.outputs.semver-version }}');
 
   const smoke = verifyWorkflow.jobs['g1-smoke'];
@@ -335,6 +335,9 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
   assert.match(reportScript, /report\.html/);
   assert.match(reportScript, /observation\.json/);
   assert.match(reportScript, /summaries\[0\]\.n' "\$dir\/report\.json"\)" = "1"/);
+  assert.match(reportScript, /definitions\[0\]\}" = "unitree-g1-stock-mujoco-hallway"/);
+  assert.match(reportScript, /test ! -e artifacts\/smoke-report\/fixture-hallway/);
+  assert.match(reportScript, /test ! -e artifacts\/smoke-report\/fixture-scenario/);
   assert.doesNotMatch(reportScript, /= "PASS"/);
 
   const site = verifyWorkflow.jobs['site-smoke'];
@@ -344,6 +347,23 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
 
   assert.equal(reportWorkflow.on.workflow_call.inputs['artifact-name'].default, 'verification-report');
   assert.equal(reportWorkflow.jobs.collect.steps.at(-1).with.name, '${{ inputs.artifact-name }}');
+  const planArtifactName =
+    "${{ inputs.artifact-name == 'verification-report' && 'verification-plan' || format('{0}-plan', inputs.artifact-name) }}";
+  const planSteps = ['plan', 'fixture', 'collect'].flatMap((jobName) =>
+    reportWorkflow.jobs[jobName].steps.filter(
+      (step) => typeof step.with?.path === 'string' && step.with.path.startsWith('artifacts/verification-plan'),
+    ),
+  );
+  assert.equal(planSteps.length, 3);
+  for (const step of planSteps) {
+    assert.equal(step.with.name, planArtifactName);
+    assert.notEqual(step.with.name, 'verification-plan');
+  }
+  const fixtureDownload = reportWorkflow.jobs.collect.steps.find((step) =>
+    String(step.with?.path ?? '').includes('downloaded/fixture'),
+  );
+  assert.match(String(fixtureDownload.with.pattern), /inputs\.artifact-name/);
+  assert.notEqual(fixtureDownload.with.pattern, 'vra-fixture-*');
   assert.equal(
     reportWorkflow.jobs['walk-hallway'].uses,
     'Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@fdbf233f6fbaef3bf6589a056821bde3ebb634e2',
