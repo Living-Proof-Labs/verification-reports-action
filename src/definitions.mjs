@@ -10,7 +10,6 @@ export class ReportError extends Error {
   }
 }
 
-/** capability-verifier release the report workflow calls. Plan refuses a tag that peels elsewhere. */
 // GitHub API paths built from lock or caller data. Every segment must be a plain name:
 // no "." or ".." segment (fetch's URL parser would resolve it), no empty segment or
 // leading "/", no backslash (read as "/"), no "%" (so no encoded form), no control
@@ -45,8 +44,9 @@ export function githubApiUrl(api, parts, { query = null, label = 'GitHub API pat
   return `${api}/${path}${search ? `?${search}` : ''}`;
 }
 
-export const VERIFIER_WORKFLOW_SHA = '0c00c388c693012392da0c1cd391046c752e9b3c';
-export const VERIFIER_WORKFLOW_TAG = 'v2.11.4';
+/** capability-verifier release the report workflow calls. Plan refuses a tag that peels elsewhere. */
+export const VERIFIER_WORKFLOW_SHA = 'fdbf233f6fbaef3bf6589a056821bde3ebb634e2';
+export const VERIFIER_WORKFLOW_TAG = 'v2.12.0';
 export const VERIFIER_OWNER = 'Living-Proof-Labs/capability-verifier';
 
 /** This repository. Fixture reports are produced only when it calls its own workflow. */

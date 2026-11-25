@@ -78,12 +78,19 @@ test('the report workflow calls both verifier procedures and passes no secrets',
   assert.match(reportYml, /^on:\n {2}workflow_call:/m);
   assert.match(
     reportYml,
-    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/walk-hallway\.yml@0c00c388c693012392da0c1cd391046c752e9b3c # v2\.11\.4/
+    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/walk-hallway\.yml@fdbf233f6fbaef3bf6589a056821bde3ebb634e2 # v2\.12\.0/
   );
   assert.match(
     reportYml,
-    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/scenario\.yml@0c00c388c693012392da0c1cd391046c752e9b3c # v2\.11\.4/
+    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/scenario\.yml@fdbf233f6fbaef3bf6589a056821bde3ebb634e2 # v2\.12\.0/
   );
+  const walkHallway = reportYml.slice(reportYml.indexOf('\n  walk-hallway:\n'), reportYml.indexOf('\n  scenario:\n'));
+  const scenario = reportYml.slice(reportYml.indexOf('\n  scenario:\n'), reportYml.indexOf('\n  collect:\n'));
+  for (const input of ['verifier-commit', 'verifier-image', 'reporter-image', 'evaluator-commit']) {
+    const line = `${input}: \${{ matrix.${input.replaceAll('-', '_')} }}`;
+    assert.match(walkHallway, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(scenario, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
   assert.doesNotMatch(reportYml, /secrets:/);
   assert.match(reportYml, /^permissions:\n {2}contents: read\njobs:/m);
   assert.match(
