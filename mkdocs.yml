@@ -27,6 +27,7 @@ markdown_extensions:
 nav:
   - Documentation home: https://docs.livingprooflabs.com/
   - Start here: index.md
+  - Reports: docs/reports.md
   - Provenance: docs/provenance.md
   - Decisions:
     - Composite vs reusable workflow: docs/decisions/0001-composite-vs-reusable-workflow.md
