@@ -25,7 +25,7 @@ A robot `FAIL` or `INSUFFICIENT_EVIDENCE` is a successful run. `status` is `ok` 
 
 Before any trial, the plan job resolves each input from its release tag and refuses the run when the check fails. The message names the input and the expected and found values. No `report.json` is written, and `walk-hallway` and `scenario` do not start, because both need the plan job. The inputs are capability-verifier, livingproof-sim-mujoco, robot-capability-specs, the livingproof-worlds world, livingproof-evaluator-scenario, livingproof-evaluator-run, and livingproof-capability-report together with its image.
 
-The tag is the pin people edit. The plan resolves each tag, then passes four values into capability-verifier v2.12.0: `verifier-commit`, `verifier-image`, `reporter-image`, and `evaluator-commit`. Those values are the commits and image refs the plan already checked. The lock must not carry the fields they replace. A present field is refused before `plan.json` is written:
+The tag is the pin people edit. The plan resolves each tag, then passes four values into capability-verifier v2.12.5: `verifier-commit`, `verifier-image`, `reporter-image`, and `evaluator-commit`. Those values are the commits and image refs the plan already checked. The lock must not carry the fields they replace. A present field is refused before `plan.json` is written:
 
 - `releases.verifier.commit`, `releases.verifier.image`, and `releases.verifier.digest`
 - `releases.reporter.image` and `releases.reporter.digest`
@@ -33,7 +33,7 @@ The tag is the pin people edit. The plan resolves each tag, then passes four val
 
 A one-line edit of the verifier tag, or of the livingproof-evaluator-scenario tag, needs no relock of those fields. The trial runs the commit and image the new tag resolved to.
 
-These fields stay in the lock. capability-verifier v2.12.0 still reads them, and the plan refuses when one disagrees with the tag it resolved:
+These fields stay in the lock. capability-verifier v2.12.5 still reads them, and the plan refuses when one disagrees with the tag it resolved:
 
 - `releases.runner.commit`
 - `releases.specs.commit` and `releases.specs.files`
@@ -41,7 +41,7 @@ These fields stay in the lock. capability-verifier v2.12.0 still reads them, and
 - `sources.parameters.sha256`
 - `releases.reporter.commit`
 
-A one-line edit of the runner, specs, or world tag that leaves the old commit or hashes in place is refused. `releases.reporter.commit` stays for the same reason: v2.12.0 does not take a reporter commit input, and `repin --check` still requires that commit. `sources.parameters.sha256` is the hash of `specs/scenarios/<scenario id>/parameters.json` at the specs commit. `sources.parameters.path` is the path in the robot repository and is not hashed.
+A one-line edit of the runner, specs, or world tag that leaves the old commit or hashes in place is refused. `releases.reporter.commit` stays for the same reason: v2.12.5 does not take a reporter commit input, and `repin --check` still requires that commit. `sources.parameters.sha256` is the hash of `specs/scenarios/<scenario id>/parameters.json` at the specs commit. `sources.parameters.path` is the path in the robot repository and is not hashed.
 
 ## Migration
 
@@ -56,7 +56,7 @@ Every lock published before this release is refused before a trial. Drop these s
 - `releases.reporter.digest`
 - `evaluators.livingproof-evaluator-scenario.commit`
 
-Set `releases.verifier.tag` to `v2.12.0`. The plan resolves that tag and passes the commit and the image. Leave the kept fields in place: `releases.runner.commit`, `releases.specs.commit`, `releases.specs.files`, `world.commit`, `world.sha256`, `sources.world.sha256`, `sources.parameters.sha256`, and `releases.reporter.commit`.
+Set `releases.verifier.tag` to `v2.12.5`. The plan resolves that tag and passes the commit and the image. Leave the kept fields in place: `releases.runner.commit`, `releases.specs.commit`, `releases.specs.files`, `world.commit`, `world.sha256`, `sources.world.sha256`, `sources.parameters.sha256`, and `releases.reporter.commit`.
 
 `report.json` and `run.json` each record `inputs`: repository, tag, commit, digest, and `status` for every pin. The same status line is written into `report.md`, `report.html`, and `report.txt` under "Pinned inputs", as `name: status (meaning)`.
 

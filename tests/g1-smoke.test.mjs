@@ -234,7 +234,7 @@ test('the stock hallway definition and lock pin G1 v2.3.34 for one trial', () =>
   assert.equal(lock.procedure, 'walk-hallway');
   assert.equal(lock.releases.runner.tag, 'v3.9.7');
   assert.equal(lock.releases.runner.commit, RUNNER_COMMIT);
-  assert.equal(lock.releases.verifier.tag, 'v2.12.0');
+  assert.equal(lock.releases.verifier.tag, 'v2.12.5');
   assert.equal(lock.releases.verifier.commit, undefined);
   assert.equal(lock.releases.verifier.image, undefined);
   assert.equal(lock.releases.verifier.digest, undefined);
@@ -255,7 +255,7 @@ test('the G1 definition is planned through capability-verifier, not the fixture 
   const pins = collectPins(loaded);
   const verifier = pins.find((pin) => pin.name === 'capability-verifier');
   const evaluatorRun = pins.find((pin) => pin.name === 'livingproof-evaluator-run');
-  assert.equal(verifier.tag, 'v2.12.0');
+  assert.equal(verifier.tag, 'v2.12.5');
   assert.equal(evaluatorRun.tag, 'v1.8.6');
   assert.equal(evaluatorRun.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
 
@@ -366,11 +366,11 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
   assert.notEqual(fixtureDownload.with.pattern, 'vra-fixture-*');
   assert.equal(
     reportWorkflow.jobs['walk-hallway'].uses,
-    'Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@fdbf233f6fbaef3bf6589a056821bde3ebb634e2',
+    'Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9',
   );
   assert.equal(
     reportWorkflow.jobs.scenario.uses,
-    'Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@fdbf233f6fbaef3bf6589a056821bde3ebb634e2',
+    'Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9',
   );
   assert.equal(reportWorkflow.jobs['walk-hallway'].with['evaluator-commit'], '${{ matrix.evaluator_commit }}');
   assert.equal(reportWorkflow.jobs.scenario.with['evaluator-commit'], '${{ matrix.evaluator_commit }}');

@@ -12,7 +12,7 @@ import { checkPin, collectPins, resolvedTrialInputs } from '../src/provenance.mj
 
 const OTHER = '1111111111111111111111111111111111111111';
 const RELEASE = JSON.parse(
-  readFileSync(new URL('./fixtures/releases/capability-verifier-v2.12.0.json', import.meta.url), 'utf8')
+  readFileSync(new URL('./fixtures/releases/capability-verifier-v2.12.5.json', import.meta.url), 'utf8')
 );
 const EVALUATOR_RELEASE = JSON.parse(
   readFileSync(new URL('./fixtures/releases/evaluator-scenario-v1.5.3.json', import.meta.url), 'utf8')
@@ -107,7 +107,7 @@ function passReal(lock, mutate = () => {}) {
   return records;
 }
 
-test('the v2.12.0 release fixture is the commit and hallway digest the workflow pins', () => {
+test('the v2.12.5 release fixture is the commit and hallway digest the workflow pins', () => {
   assert.equal(RELEASE.tagCommit, VERIFIER_WORKFLOW_SHA);
   assert.equal(RELEASE.tag, VERIFIER_WORKFLOW_TAG);
   assert.equal(imageDigestFromBody(RELEASE.body, RELEASE.image), RELEASE.digest);
@@ -145,14 +145,14 @@ test('each passed field on the real unitree lock is refused even when the value 
   }
 });
 
-test('a one-line verifier tag edit on the real lock passes the v2.12.0 commit and image', () => {
+test('a one-line verifier tag edit on the real lock passes the v2.12.5 commit and image', () => {
   const lock = dropPassedFields(realLock());
   assert.equal(lock.releases.verifier.tag, 'v2.11.4');
   lock.releases.verifier.tag = VERIFIER_WORKFLOW_TAG;
   const records = passReal(lock);
   const inputs = resolvedTrialInputs(records);
   assert.equal(inputs.verifier_commit, RELEASE.tagCommit);
-  assert.equal(inputs.verifier_image, `${RELEASE.image}:2.12.0@${RELEASE.digest}`);
+  assert.equal(inputs.verifier_image, `${RELEASE.image}:2.12.5@${RELEASE.digest}`);
   const reporter = recordedByName().get('livingproof-capability-report');
   assert.equal(
     inputs.reporter_image,
@@ -339,7 +339,7 @@ test('a one-line verifier tag edit is what the plan passes, and the lock file is
     const scenario = JSON.parse(planned.outputs.scenario);
     assert.equal(scenario.length, 1);
     assert.equal(scenario[0].verifier_commit, RELEASE.tagCommit);
-    assert.equal(scenario[0].verifier_image, `${RELEASE.image}:2.12.0@${RELEASE.digest}`);
+    assert.equal(scenario[0].verifier_image, `${RELEASE.image}:2.12.5@${RELEASE.digest}`);
     assert.equal(scenario[0].evaluator_commit, EVALUATOR_RELEASE.tagCommit);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -484,7 +484,7 @@ test('a null image digest is refused before a record is returned', () => {
 
 function trialRecords() {
   return [
-    { name: 'capability-verifier', tag: 'v2.12.0', commit: 'a'.repeat(40), digest: `sha256:${'ab'.repeat(32)}` },
+    { name: 'capability-verifier', tag: 'v2.12.5', commit: 'a'.repeat(40), digest: `sha256:${'ab'.repeat(32)}` },
     { name: 'livingproof-capability-report', tag: 'v3.15.4', commit: 'b'.repeat(40), digest: `sha256:${'cd'.repeat(32)}` },
     { name: 'livingproof-evaluator-scenario', tag: 'v1.5.3', commit: 'c'.repeat(40), digest: `sha256:${'ef'.repeat(32)}` },
   ];

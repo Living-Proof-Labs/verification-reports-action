@@ -215,7 +215,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.hallway) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@fdbf233f6fbaef3bf6589a056821bde3ebb634e2 # v2.12.0
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9 # v2.12.5
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}
@@ -241,7 +241,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.scenario) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@fdbf233f6fbaef3bf6589a056821bde3ebb634e2 # v2.12.0
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9 # v2.12.5
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}

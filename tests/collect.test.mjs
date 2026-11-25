@@ -162,7 +162,7 @@ test('a verifier plan does not merge another job\'s fixture reports', async () =
       provenance: REQUIRED_INPUTS.map((name) => ({
         name,
         repository: 'Living-Proof-Labs/capability-verifier',
-        tag: 'v2.12.0',
+        tag: 'v2.12.5',
         commit: SHA,
         digest: `sha256:${'ab'.repeat(32)}`,
         status: 'resolved',
