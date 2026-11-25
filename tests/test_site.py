@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -2158,3 +2159,37 @@ def test_a_restored_html_page_below_the_top_of_evidence_is_never_a_listing(tmp_p
     (run / "evidence/sub/page.html").write_text("<!doctype html><p>x</p>\n", encoding="utf-8")
     with pytest.raises(site_tool.SiteError, match="evidence of this type is not published"):
         _build_next_run(tmp_path, reports)
+
+
+def test_report_html_policy_is_linear_in_nesting_depth():
+    import reports_render
+
+    page = _page("<p>" * 100_000)
+    started = time.monotonic()
+    checked = reports_render.checked_report_html(page, "probe")
+    elapsed = time.monotonic() - started
+    assert checked == page
+    assert elapsed < 2.0
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "a" * 8_388_609,
+        "é" * 4_194_305,
+    ],
+)
+def test_report_html_policy_refuses_oversized_page_before_parsing(monkeypatch, payload: str):
+    import reports_render
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("parser should not run on an oversized page")
+
+    monkeypatch.setattr(reports_render, "_scan_markup", fail)
+    monkeypatch.setattr(reports_render, "_parsed_policy", fail)
+    page = f"<!doctype html><p>{payload}</p>\n"
+    with pytest.raises(
+        site_tool.SiteError,
+        match=f"exceeds the {reports_render.MAX_REPORT_HTML_BYTES}-byte limit",
+    ):
+        reports_render.checked_report_html(page, "probe")
