@@ -44,10 +44,12 @@ class PublicationTest(unittest.TestCase):
         self.assertEqual(jobs["deploy"]["environment"]["name"], "github-pages")
         self.assertEqual(jobs["smoke"]["permissions"], {"contents": "read"})
         self.assertEqual(jobs["smoke"]["steps"][0]["with"]["ref"], "${{ inputs.release_commit }}")
-        for job in ("build", "production", "smoke"):
+        for job in ("build", "smoke"):
             self.assertEqual(
                 jobs[job].get("permissions", workflow["permissions"]), {"contents": "read"}
             )
+        self.assertEqual(jobs["production"]["permissions"], {"contents": "read", "actions": "read"})
+        self.assertEqual(release["jobs"]["deploy-docs"]["permissions"]["actions"], "read")
         self.assertFalse(
             any("upload-pages-artifact" in s.get("uses", "") for s in jobs["build"]["steps"])
         )
@@ -180,6 +182,8 @@ class PublicationTest(unittest.TestCase):
                 (root / f"{page}.html").write_text(
                     '<link rel="stylesheet" href="assets/brand.css">' + text
                 )
+            (root / "reports").mkdir()
+            (root / "reports/index.html").write_text("unitree-g1 stock hallway")
             handler = functools.partial(SimpleHTTPRequestHandler, directory=directory)
             server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -187,6 +191,10 @@ class PublicationTest(unittest.TestCase):
             try:
                 url = f"http://127.0.0.1:{server.server_port}/manual/"
                 check(url, SHA, "1.2.3")
+                (root / "reports/index.html").unlink()
+                with self.assertRaisesRegex(ValueError, "G1 reports section"):
+                    check(url, SHA, "1.2.3")
+                (root / "reports/index.html").write_text("unitree-g1 stock hallway")
                 with self.assertRaisesRegex(ValueError, "version identity"):
                     check(url, SHA, "2.0.0")
                 with self.assertRaisesRegex(ValueError, "stale or dirty"):
