@@ -185,9 +185,9 @@ A run folder's `SHA256SUMS` can be recomputed by whoever wrote the folder, so th
 
 ## Release
 
-`Verify` runs on pull requests, merge groups, and pushes to `main`. Pull requests into `main` get a unique candidate version from `semantic-release-candidate.yml`. The smoke jobs run the report workflow on the fixture robot, upload `smoke-report-<version>`, and build the static `reports/` section from `verification-report`.
+`Verify` runs on pull requests, merge groups, and pushes to `main`. Pull requests into `main` get a unique candidate version from `semantic-release-candidate.yml`. The real G1 smoke job runs the report workflow on the Unitree G1 stock MuJoCo hallway, `Living-Proof-Labs/livingproof-unitree-g1` at `v2.3.34`, with one trial, through capability-verifier and livingproof-evaluator-run. It uploads `g1-smoke-report-<version>`. The site smoke job builds the static `reports/` section from `verification-report`.
 
-After `Verify` succeeds for a push to `main`, `Release` runs. The `release` job tags that commit and publishes the GitHub release. `post-release` runs only when `release` publishes (`published == 'true'`), calls this workflow with the published `version`, and `post-release-check` checks out `git-tag`.
+After `Verify` succeeds for a push to `main`, `Release` runs. The `release` job tags that commit and publishes the GitHub release. `post-release` runs only when `release` publishes (`published == 'true'`), calls this workflow on the fixture definitions in `tests/fixtures/robot/verifications/` with the published `version`, and `post-release-check` checks out `git-tag`.
 
 ## Development
 
