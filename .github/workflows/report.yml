@@ -16,9 +16,18 @@ on:
         default: verifications/*.toml
         required: false
       output-dir:
-        description: Directory collected into the verification-report artifact.
+        description: Directory collected into the report artifact.
         type: string
         default: artifacts/verification-report
+        required: false
+      artifact-name:
+        description: >-
+          Name of the uploaded report artifact. The default is verification-report.
+          A second call in the same workflow needs a different name.
+          The plan artifact stays verification-plan for this default, and otherwise
+          uses this name with -plan appended.
+        type: string
+        default: verification-report
         required: false
       version:
         description: Optional version recorded in each run.json. Empty when the caller does not supply one.
@@ -49,7 +58,7 @@ on:
         required: false
     outputs:
       report-path:
-        description: Directory of the written reports, also uploaded as the verification-report artifact.
+        description: Directory of the written reports, also uploaded under artifact-name.
         value: ${{ jobs.collect.outputs.report-path }}
       status:
         description: ok when a report was written for every definition. A robot grade does not change this.
@@ -127,7 +136,7 @@ jobs:
         run: node "${{ github.workspace }}/action/src/plan.mjs"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: verification-plan
+          name: ${{ inputs.artifact-name == 'verification-report' && 'verification-plan' || format('{0}-plan', inputs.artifact-name) }}
           path: artifacts/verification-plan/plan.json
           retention-days: 14
           if-no-files-found: error
@@ -179,7 +188,7 @@ jobs:
           node-version: '24.22.3'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: verification-plan
+          name: ${{ inputs.artifact-name == 'verification-report' && 'verification-plan' || format('{0}-plan', inputs.artifact-name) }}
           path: artifacts/verification-plan
       - working-directory: caller
         env:
@@ -190,7 +199,7 @@ jobs:
         run: node "${{ github.workspace }}/action/src/fixture-run.mjs"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: vra-fixture-${{ matrix.id }}
+          name: ${{ inputs.artifact-name == 'verification-report' && format('vra-fixture-{0}', matrix.id) || format('{0}-vra-fixture-{1}', inputs.artifact-name, matrix.id) }}
           path: artifacts/fixture-out
           retention-days: 14
           if-no-files-found: error
@@ -206,7 +215,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.hallway) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@fdbf233f6fbaef3bf6589a056821bde3ebb634e2 # v2.12.0
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9 # v2.12.5
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}
@@ -232,7 +241,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.scenario) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@fdbf233f6fbaef3bf6589a056821bde3ebb634e2 # v2.12.0
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9 # v2.12.5
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}
@@ -300,11 +309,11 @@ jobs:
           node-version: '24.22.3'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: verification-plan
+          name: ${{ inputs.artifact-name == 'verification-report' && 'verification-plan' || format('{0}-plan', inputs.artifact-name) }}
           path: artifacts/verification-plan
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: vra-fixture-*
+          pattern: ${{ inputs.artifact-name == 'verification-report' && 'vra-fixture-*' || format('{0}-vra-fixture-*', inputs.artifact-name) }}
           path: downloaded/fixture
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -333,7 +342,7 @@ jobs:
         run: node "${{ github.workspace }}/action/src/collect.mjs"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: verification-report
+          name: ${{ inputs.artifact-name }}
           path: ${{ inputs.output-dir }}
           retention-days: 30
           if-no-files-found: error

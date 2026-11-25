@@ -12,6 +12,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import yaml
+
 from smoke import check
 
 SHA = "a" * 40

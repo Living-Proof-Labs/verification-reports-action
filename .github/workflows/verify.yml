@@ -111,6 +111,7 @@ jobs:
     # Commit of collaboration-guidelines v9.9.10. Issue #4 pins action inputs, not these workflow refs.
     uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release-candidate.yml@d0d9ae8e684f8a828b774eda01622b7c66e5252e # v9.9.10
   action-smoke:
+    name: Mock robot smoke
     needs: version
     if: >-
       !cancelled() &&
@@ -193,6 +194,119 @@ jobs:
           path: artifacts/smoke-report
           retention-days: 30
           if-no-files-found: error
+  g1-smoke:
+    name: Real G1 smoke
+    needs: version
+    if: >-
+      !cancelled() &&
+      (needs.version.result == 'success' || needs.version.result == 'skipped')
+    # capability-verifier's comment job declares pull-requests: write.
+    # With comment: false it never writes.
+    # ref is the peeled commit of livingproof-unitree-g1 v2.3.34.
+    # The definition under tests/smoke/g1 asks for one hallway trial.
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/report.yml
+    with:
+      definitions: tests/smoke/g1/*.toml
+      output-dir: artifacts/verification-report
+      version: ${{ needs.version.outputs.semver-version }}
+      repository: Living-Proof-Labs/livingproof-unitree-g1
+      ref: d554c8243a12849dc7fe8acc1921bb3d4e5239a7
+      artifact-name: g1-verification-report
+  g1-smoke-check:
+    name: Real G1 smoke report
+    needs: [version, g1-smoke]
+    if: >-
+      !cancelled() &&
+      needs.g1-smoke.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      G1_REF: v2.3.34
+      G1_COMMIT: d554c8243a12849dc7fe8acc1921bb3d4e5239a7
+    steps:
+      - name: Verify workflow outputs
+        env:
+          STATUS: ${{ needs.g1-smoke.outputs.status }}
+          GRADES: ${{ needs.g1-smoke.outputs.grades }}
+          VERSION: ${{ needs.version.outputs.semver-version }}
+        run: |
+          set -euo pipefail
+          test "$STATUS" = "ok"
+          grade="$(jq -r '.["unitree-g1-stock-mujoco-hallway/stock"]' <<<"$GRADES")"
+          test -n "$grade"
+          test "$grade" != "null"
+          if { [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ "$GITHUB_BASE_REF" = "main" ]; } || \
+             { [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; }; then
+            test -n "$VERSION"
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: g1-verification-report
+          path: artifacts/smoke-report
+      - name: Verify the full report
+        env:
+          VERSION: ${{ needs.version.outputs.semver-version }}
+        run: |
+          set -euo pipefail
+          set -x
+          test ! -e artifacts/smoke-report/report.json
+          dir="artifacts/smoke-report/unitree-g1-stock-mujoco-hallway/stock"
+          for name in report.html report.md report.json report.txt SHA256SUMS run.json; do
+            test -f "$dir/$name"
+          done
+          (cd "$dir" && sha256sum -c SHA256SUMS)
+          grade="$(jq -r '.summaries[0].grade' "$dir/report.json")"
+          test -n "$grade"
+          test "$grade" != "null"
+          test "$(jq -r '.outcome[0].grade' "$dir/run.json")" = "$grade"
+          test "$(jq -r '.summaries[0].n' "$dir/report.json")" = "1"
+          test "$(jq -r '.outcome[0].trials' "$dir/run.json")" = "1"
+          test "$(jq -r .procedure "$dir/run.json")" = "walk-hallway"
+          test "$(jq -r .robot.repository "$dir/run.json")" = "Living-Proof-Labs/livingproof-unitree-g1"
+          test "$(jq -r .robot.commit "$dir/run.json")" = "$G1_COMMIT"
+          test "$(jq -r .declared_robot.ref "$dir/run.json")" = "$G1_REF"
+          test "$(jq -r .declared_robot.commit "$dir/run.json")" = "$G1_COMMIT"
+          test "$(jq -r .version "$dir/run.json")" = "$VERSION"
+          manifest="$dir/evidence/manifest.json"
+          test -f "$manifest"
+          test "$(jq -r '.trials.results | length' "$manifest")" -ge 1
+          test "$(jq -r '.trials.count' "$manifest")" = "1"
+          test "$(jq -r '.trials.results | length' "$manifest")" = "1"
+          seen=0
+          while IFS= read -r rel; do
+            case "$rel" in
+              ""|null|/*|../*|*/../*|*/..)
+                echo "observation path is not inside evidence: $rel" >&2
+                exit 1
+                ;;
+            esac
+            obs="$dir/evidence/$rel"
+            test -f "$obs"
+            test "$(jq -r .format "$obs")" = "livingproof-hallway-observation/2.0.0"
+            seen=$((seen + 1))
+          done < <(jq -r '.trials.results[].path' "$manifest")
+          test "$seen" = "1"
+          mapfile -t definitions < <(find artifacts/smoke-report -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+          test "${#definitions[@]}" -eq 1
+          test "${definitions[0]}" = "unitree-g1-stock-mujoco-hallway"
+          test ! -e artifacts/smoke-report/fixture-hallway
+          test ! -e artifacts/smoke-report/fixture-scenario
+          if grep -R -n placeholder artifacts/smoke-report; then
+            echo "report still contains placeholder" >&2
+            exit 1
+          fi
+      - name: Upload the smoke report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: g1-smoke-report-${{ needs.version.outputs.semver-version }}
+          path: artifacts/smoke-report
+          retention-days: 30
+          if-no-files-found: error
   site-smoke:
     needs: action-smoke
     if: >-
@@ -242,7 +356,7 @@ jobs:
     # version is skipped unless this is a push or a pull request into main;
     # that skip is expected. Any other skip, failure, or cancellation fails.
     if: always()
-    needs: [verify, site-policy, version, action-smoke, action-smoke-check, site-smoke]
+    needs: [verify, site-policy, version, action-smoke, action-smoke-check, g1-smoke, g1-smoke-check, site-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

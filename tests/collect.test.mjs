@@ -130,6 +130,91 @@ test('scripts load from this repo when the caller directory has no src', () => {
   }
 });
 
+test('a verifier plan does not merge another job\'s fixture reports', async () => {
+  const tempRoot = mkdtempSync(path.join(tmpdir(), 'vra-foreign-fixture-'));
+  const repo = fileURLToPath(new URL('..', import.meta.url));
+  try {
+    const planPath = path.join(tempRoot, 'plan.json');
+    const planned = await writePlan(
+      env({ INPUT_PLAN_PATH: planPath, GITHUB_OUTPUT: path.join(tempRoot, 'plan-out.txt') }),
+      repo
+    );
+    const stage = path.join(tempRoot, 'artifacts');
+    for (const item of planned.plan.definitions) {
+      runFixtureCli(
+        env({
+          INPUT_PLAN_PATH: planPath,
+          INPUT_DEFINITION: item.path,
+          INPUT_OUTPUT_DIR: path.join(stage, `vra-fixture-${item.id}`),
+        }),
+        repo
+      );
+    }
+    const verifier = {
+      id: 'unitree-g1-stock-mujoco-hallway',
+      path: 'tests/smoke/g1/unitree-g1-stock-mujoco-hallway.toml',
+      procedure: 'walk-hallway',
+      configurations: ['stock'],
+      execution: 'capability-verifier',
+      robot: { repository: 'Living-Proof-Labs/livingproof-unitree-g1', ref: SHA },
+      callerRepository: CALLER,
+      artifactPrefix: 'vra-unitree-g1-stock-mujoco-hallway-',
+      provenance: REQUIRED_INPUTS.map((name) => ({
+        name,
+        repository: 'Living-Proof-Labs/capability-verifier',
+        tag: 'v2.12.5',
+        commit: SHA,
+        digest: `sha256:${'ab'.repeat(32)}`,
+        status: 'resolved',
+        result: 'resolved',
+        attestation: 'not-published',
+        checks: { release: 'passed', commit: 'resolved', digest: 'resolved', attestation: 'not-published' },
+      })),
+      lock: { robot: { commit: SHA } },
+    };
+    const reportDir = path.join(
+      tempRoot,
+      'downloaded',
+      'reports',
+      'vra-unitree-g1-stock-mujoco-hallway-capability-report-stock'
+    );
+    mkdirSync(reportDir, { recursive: true });
+    for (const [name, contents] of Object.entries(renderReport({
+      capability: 'walk-hallway',
+      system: { id: 'unitree-g1/stock' },
+      grade: 'PASS',
+      k: 1,
+      n: 1,
+      required_passes: 1,
+    }))) {
+      writeFileSync(path.join(reportDir, name), contents);
+    }
+    writeChecksums(reportDir);
+    const g1Plan = path.join(tempRoot, 'g1-plan.json');
+    writeFileSync(g1Plan, `${JSON.stringify({ definitions: [verifier] })}\n`);
+    const outputDir = path.join(tempRoot, 'final');
+    const collected = collectReports(
+      env({
+        INPUT_PLAN_PATH: g1Plan,
+        INPUT_OUTPUT_DIR: outputDir,
+        INPUT_FIXTURE_ROOT: stage,
+        INPUT_VERIFIER_ROOT: path.join(tempRoot, 'downloaded'),
+        GITHUB_OUTPUT: path.join(tempRoot, 'collect-out.txt'),
+      }),
+      tempRoot
+    );
+    assert.equal(collected.grades['unitree-g1-stock-mujoco-hallway/stock'], 'PASS');
+    assert.equal(existsSync(path.join(outputDir, 'fixture-hallway')), false);
+    assert.equal(existsSync(path.join(outputDir, 'fixture-scenario')), false);
+    assert.deepEqual(
+      planned.plan.definitions.map((item) => item.id).sort(),
+      ['fixture-hallway', 'fixture-scenario']
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('verifier artifacts are assembled and a missing report fails', () => {
   const tempRoot = mkdtempSync(path.join(tmpdir(), 'vra-verifier-'));
   try {

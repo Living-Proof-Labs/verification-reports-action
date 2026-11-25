@@ -17,10 +17,10 @@ const VERIFIER_IMAGE = 'ghcr.io/living-proof-labs/capability-verifier-hallway';
 const REPORTER_IMAGE = 'ghcr.io/living-proof-labs/livingproof-capability-report';
 
 /**
- * The tag is what people edit. capability-verifier v2.12.0 takes the resolved
+ * The tag is what people edit. capability-verifier v2.12.5 takes the resolved
  * verifier commit, verifier image, reporter image and scenario-evaluator commit
  * as workflow inputs. Those lock fields are refused when present. The fields
- * v2.12.0 still reads from the lock stay, and must match the resolved tag.
+ * v2.12.5 still reads from the lock stay, and must match the resolved tag.
  */
 /**
  * required: the trial reads the lock field and does not substitute a default.
@@ -447,7 +447,7 @@ function imageInput(name, tag, digest, label, pattern) {
 }
 
 /**
- * The four inputs capability-verifier v2.12.0 scenario.yml accepts. Built from
+ * The four inputs capability-verifier v2.12.5 scenario.yml accepts. Built from
  * the commits and image digests the action already resolved from the tags.
  */
 export function resolvedTrialInputs(records) {
