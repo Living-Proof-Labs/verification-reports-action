@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   ReportError,
   VERIFIER_WORKFLOW_SHA,
+  VERIFIER_WORKFLOW_TAG,
   apiPathSegments,
   githubApiUrl,
 } from '../src/definitions.mjs';
@@ -51,10 +52,7 @@ function sampleLock() {
     releases: {
       verifier: {
         repository: 'Living-Proof-Labs/capability-verifier',
-        tag: 'v2.11.4',
-        commit: COMMIT,
-        image: 'ghcr.io/living-proof-labs/capability-verifier-hallway',
-        digest: IMAGE,
+        tag: VERIFIER_WORKFLOW_TAG,
       },
       runner: {
         repository: 'Living-Proof-Labs/livingproof-sim-mujoco',
@@ -71,8 +69,6 @@ function sampleLock() {
         repository: 'Living-Proof-Labs/livingproof-capability-report',
         tag: 'v3.15.4',
         commit: COMMIT,
-        image: 'ghcr.io/living-proof-labs/livingproof-capability-report',
-        digest: IMAGE,
       },
     },
     world: {
@@ -87,7 +83,6 @@ function sampleLock() {
       'livingproof-evaluator-scenario': {
         repository: 'Living-Proof-Labs/livingproof-evaluator-scenario',
         tag: 'v1.5.3',
-        commit: COMMIT,
       },
       'livingproof-evaluator-run': {
         repository: 'Living-Proof-Labs/livingproof-evaluator-run',
@@ -449,7 +444,7 @@ test('a verifier tag that peels to another commit refuses before the workflow ru
         })
       ),
     new RegExp(
-      `capability-verifier: workflow pin mismatch\\. expected commit ${COMMIT} \\(v2\\.11\\.4\\), found commit ${OTHER} for tag v2\\.11\\.4`
+      `capability-verifier: workflow pin mismatch\\. expected commit ${COMMIT} \\(${VERIFIER_WORKFLOW_TAG.replaceAll('.', '\\.')}\\), found commit ${OTHER} for tag ${VERIFIER_WORKFLOW_TAG.replaceAll('.', '\\.')}`
     )
   );
 });
@@ -512,7 +507,6 @@ test('a tag bump that leaves the lock commit and digest fails before a plan is w
     assert.equal(readFileSync(lockPath, 'utf8'), before);
     const agreed = JSON.parse(before);
     agreed.releases.reporter.commit = NEW;
-    agreed.releases.reporter.digest = newDigest;
     writeFileSync(lockPath, `${JSON.stringify(agreed, null, 2)}\n`);
     const planned = await writePlan(
       {
@@ -538,6 +532,14 @@ test('a tag bump that leaves the lock commit and digest fails before a plan is w
     assert.equal(reporter.commit, NEW);
     assert.equal(reporter.digest, newDigest);
     assert.equal(reporter.status, 'not-published');
+    const scenario = JSON.parse(planned.outputs.scenario);
+    assert.equal(scenario[0].reporter_image, `ghcr.io/living-proof-labs/livingproof-capability-report:3.16.0@${newDigest}`);
+    assert.equal(scenario[0].verifier_commit, COMMIT);
+    assert.equal(
+      scenario[0].verifier_image,
+      `ghcr.io/living-proof-labs/capability-verifier-hallway:${VERIFIER_WORKFLOW_TAG.slice(1)}@${IMAGE}`
+    );
+    assert.equal(scenario[0].evaluator_commit, COMMIT);
     await assert.rejects(
       () =>
         runIfProvenancePasses(
@@ -858,40 +860,31 @@ test('the GitHub client resolves a release, peels a tag, and does not send the t
   );
 });
 
-test('an attacker image name, a wrong commit, and a wrong digest fail before a plan is written', async () => {
-  const dead = 'dead'.repeat(10);
-  const badDigest = `sha256:${'66'.repeat(32)}`;
+test('an attacker image name, a verifier commit, and a reporter digest are refused before a plan is written', async () => {
   const attacker = sampleLock();
   attacker.releases.verifier.image = 'ghcr.io/attacker/hallway';
-  attacker.releases.verifier.commit = dead;
-  attacker.releases.verifier.digest = badDigest;
   await assert.rejects(
     () => assertPinnedInputs(item(attacker), client()),
-    (error) => {
-      assert.match(error.message, /capability-verifier: releases\.verifier\.image/);
-      assert.match(error.message, /expected ghcr.io\/living-proof-labs\/capability-verifier-hallway/);
-      assert.match(error.message, /found ghcr.io\/attacker\/hallway/);
-      return true;
-    }
+    /capability-verifier: releases\.verifier\.image is refused\. expected the field to be absent.*ghcr.io\/attacker\/hallway/
   );
 
+  const matchingImage = sampleLock();
+  matchingImage.releases.verifier.image = 'ghcr.io/living-proof-labs/capability-verifier-hallway';
+  assert.throws(() => collectPins(item(matchingImage)), /capability-verifier: releases\.verifier\.image is refused/);
+
   const wrongCommit = sampleLock();
-  wrongCommit.releases.verifier.commit = dead;
-  await assert.rejects(
-    () => assertPinnedInputs(item(wrongCommit), client()),
-    new RegExp(`capability-verifier: releases\\.verifier\\.commit differs from the resolved tag\\. expected ${COMMIT}, found ${dead}`)
+  wrongCommit.releases.verifier.commit = COMMIT;
+  assert.throws(
+    () => collectPins(item(wrongCommit)),
+    new RegExp(`capability-verifier: releases\\.verifier\\.commit is refused.*${COMMIT}`)
   );
 
   const wrongDigest = sampleLock();
-  wrongDigest.releases.reporter.digest = badDigest;
-  await assert.rejects(
-    () => assertPinnedInputs(item(wrongDigest), client()),
-    new RegExp(
-      `livingproof-capability-report: releases\\.reporter\\.digest differs from the resolved tag\\. expected ${IMAGE}, found ${badDigest}`
-    )
+  wrongDigest.releases.reporter.digest = IMAGE;
+  assert.throws(
+    () => collectPins(item(wrongDigest)),
+    new RegExp(`livingproof-capability-report: releases\\.reporter\\.digest is refused.*${IMAGE}`)
   );
-  const root = mkdtempSync(path.join(tmpdir(), 'vra-stale-'));
-  assert.equal(existsSync(path.join(root, 'plan.json')), false);
 });
 
 test('dot segments in a repository are rejected before a URL is built', () => {
@@ -1285,7 +1278,7 @@ test('a repository other than the expected one is refused', async () => {
   await assert.rejects(
     () =>
       assertPinnedInputs(
-        item(defined, { releases: { verifier: { repository: 'Evil-Org/capability-verifier', tag: 'v2.11.4' } } }),
+        item(defined, { releases: { verifier: { repository: 'Evil-Org/capability-verifier', tag: VERIFIER_WORKFLOW_TAG } } }),
         client()
       ),
     /capability-verifier: releases\.verifier\.repository differs from the definition\. expected Evil-Org\/capability-verifier, found Living-Proof-Labs\/capability-verifier/
@@ -1305,14 +1298,9 @@ test('missing, non-string, and empty lock fields are refused', async () => {
   const fields = [
     [['releases', 'verifier'], 'repository', 'capability-verifier'],
     [['releases', 'verifier'], 'tag', 'capability-verifier'],
-    [['releases', 'verifier'], 'commit', 'capability-verifier'],
-    [['releases', 'verifier'], 'image', 'capability-verifier'],
-    [['releases', 'verifier'], 'digest', 'capability-verifier'],
     [['releases', 'reporter'], 'repository', 'livingproof-capability-report'],
     [['releases', 'reporter'], 'tag', 'livingproof-capability-report'],
     [['releases', 'reporter'], 'commit', 'livingproof-capability-report'],
-    [['releases', 'reporter'], 'image', 'livingproof-capability-report'],
-    [['releases', 'reporter'], 'digest', 'livingproof-capability-report'],
     [['releases', 'runner'], 'repository', 'livingproof-sim-mujoco'],
     [['releases', 'runner'], 'tag', 'livingproof-sim-mujoco'],
     [['releases', 'specs'], 'repository', 'robot-capability-specs'],
@@ -1320,7 +1308,6 @@ test('missing, non-string, and empty lock fields are refused', async () => {
     [['releases', 'specs'], 'commit', 'robot-capability-specs'],
     [['evaluators', 'livingproof-evaluator-scenario'], 'repository', 'livingproof-evaluator-scenario'],
     [['evaluators', 'livingproof-evaluator-scenario'], 'tag', 'livingproof-evaluator-scenario'],
-    [['evaluators', 'livingproof-evaluator-scenario'], 'commit', 'livingproof-evaluator-scenario'],
     [['world'], 'repository', 'livingproof-worlds'],
     [['world'], 'tag', 'livingproof-worlds'],
   ];
@@ -1610,7 +1597,6 @@ test('real release-please notes do not move the tag', async () => {
     } else {
       pinName = 'livingproof-evaluator-scenario';
       lock.evaluators['livingproof-evaluator-scenario'].tag = fixture.tag;
-      lock.evaluators['livingproof-evaluator-scenario'].commit = fixture.tagCommit;
     }
     const pin = collectPins(item(lock)).find((entry) => entry.name === pinName);
     const evidence = await resolvePin(pin, {
@@ -1725,10 +1711,10 @@ test('changelog SHAs are not the published commit and an annotated tag peels to 
 
 test('a lock value with surrounding whitespace is refused without trimming', async () => {
   const paddedCommit = sampleLock();
-  paddedCommit.releases.verifier.commit = `${COMMIT}\n`;
+  paddedCommit.releases.reporter.commit = `${COMMIT}\n`;
   await assert.rejects(
     () => assertPinnedInputs(item(paddedCommit), client()),
-    new RegExp(`capability-verifier: releases\\.verifier\\.commit has surrounding whitespace\\. expected a 40-character commit, found ${JSON.stringify(`${COMMIT}\n`).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
+    new RegExp(`livingproof-capability-report: releases\\.reporter\\.commit has surrounding whitespace\\. expected a 40-character commit, found ${JSON.stringify(`${COMMIT}\n`).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
   );
   const paddedRepo = sampleLock();
   paddedRepo.evaluators['livingproof-evaluator-scenario'].repository = ' Living-Proof-Labs/livingproof-evaluator-scenario';
@@ -1813,12 +1799,16 @@ test('a bundle_url download times out', async () => {
   );
 });
 
-test('README says a tag bump also updates the lock commit and digest', () => {
+test('README names the lock fields that stay and the fields that are refused', () => {
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-  assert.match(readme, /bumping a tag also means updating that input's commit and digest/);
-  assert.match(readme, /verification-reports-action\/issues\/15/);
-  assert.match(readme, /capability-verifier\/issues\/244/);
-  assert.doesNotMatch(readme, /needs no hand relock/);
+  assert.match(readme, /verifier-commit/);
+  assert.match(readme, /releases\.verifier\.commit/);
+  assert.match(readme, /releases\.reporter\.commit/);
+  assert.match(readme, /releases\.runner\.commit/);
+  assert.match(readme, /releases\.specs\.files/);
+  assert.match(readme, /sources\.parameters\.sha256/);
+  assert.match(readme, /sources\.world\.sha256/);
+  assert.doesNotMatch(readme, /bumping a tag also means updating that input's commit and digest/);
   assert.match(readme, /No `report\.json` is written/);
   assert.match(readme, /livingproof-evaluator-run/);
   assert.match(readme, /docs\/provenance\.md/);
