@@ -6,13 +6,19 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { VERIFIER_WORKFLOW_SHA } from '../src/definitions.mjs';
+import {
+  ReportError,
+  VERIFIER_WORKFLOW_SHA,
+  apiPathSegments,
+  githubApiUrl,
+} from '../src/definitions.mjs';
 import {
   MAX_BUNDLE_BYTES,
   imageDigestFromBody,
   openAttestations,
   parseSha256Sums,
   publishedCommitFromRelease,
+  githubProvenanceClient,
   readAttestation,
   resolvePin,
 } from '../src/github-provenance.mjs';
@@ -1826,4 +1832,159 @@ test('README says a tag bump also updates the lock commit and digest', () => {
   assert.match(readme, /`status: resolved` can sit beside `attestation: not-published`/);
   assert.match(readme, /GITHUB_TOKEN` from `github\.token`/);
   assert.match(readme, /That 404 is not recorded as `not-published`/);
+});
+
+// ---------------------------------------------------------------- va#24: API path traversal
+
+const UNSAFE_API_PATHS = [
+  ['..', 'dot-dot segment'],
+  ['../../../../user/repos', "Vera's probe: token to /user/repos"],
+  ['../../../Evil-Org/specs/contents/x.json', "Vera's probe: another repository"],
+  ['specs/../../x', 'inner dot-dot'],
+  ['specs/..', 'trailing dot-dot'],
+  ['.', 'dot segment'],
+  ['specs/./x.json', 'inner dot'],
+  ['', 'empty'],
+  ['specs//x.json', 'empty segment'],
+  ['specs/', 'trailing slash'],
+  ['/user/repos', 'leading slash'],
+  ['specs\\..\\x.json', 'backslash'],
+  ['%2e%2e/user/repos', 'encoded dot-dot'],
+  ['%2E%2E%2Fuser', 'encoded slash'],
+  ['.%2e/user', 'half-encoded dot-dot'],
+  ['%252e%252e/user', 'double-encoded'],
+  ['specs/x\u0000.json', 'NUL'],
+  ['specs/x\n.json', 'newline'],
+  ['specs/x\t.json', 'tab'],
+  ['specs/x\u007f.json', 'DEL'],
+  ['specs/x.json?ref=main', 'query'],
+  ['specs/x.json#frag', 'fragment'],
+];
+
+for (const [value, why] of UNSAFE_API_PATHS) {
+  test(`apiPathSegments refuses ${why}: ${JSON.stringify(value)}`, () => {
+    assert.throws(() => apiPathSegments(value, 'probe'), (error) => {
+      assert.ok(error instanceof ReportError);
+      assert.match(error.message, /probe is not a safe API path/);
+      return true;
+    });
+  });
+}
+
+test('apiPathSegments refuses a value that is not a string', () => {
+  for (const value of [undefined, null, 5, ['a'], { a: 1 }]) {
+    assert.throws(() => apiPathSegments(value, 'probe'), /not a safe API path/);
+  }
+});
+
+test('apiPathSegments accepts the paths real locks use', () => {
+  for (const value of [
+    'specs/scenarios/walk-corner-left/description.json',
+    'capabilities/walk-hallway/0.2.0/spec.toml',
+    'worlds/hallway-corner/0.2.0/world.json',
+    'Living-Proof-Labs/robot-capability-specs',
+    'v3.1.0',
+  ]) {
+    assert.deepEqual(apiPathSegments(value, 'probe'), value.split('/'));
+  }
+});
+
+test('githubApiUrl encodes each segment so no value changes the path or the query', () => {
+  const url = githubApiUrl('https://api.github.com', ['repos', 'O/N', 'contents', 'a b/c+d&e=f@g'], {
+    query: { ref: 'x&y=z' },
+  });
+  const parsed = new URL(url);
+  assert.equal(parsed.origin, 'https://api.github.com');
+  assert.equal(parsed.pathname, '/repos/O/N/contents/a%20b/c%2Bd%26e%3Df%40g');
+  assert.deepEqual([...parsed.searchParams], [['ref', 'x&y=z']]);
+  assert.equal(
+    githubApiUrl('https://api.github.com', ['repos', 'O/N', 'attestations', `sha256:${'ab'.repeat(32)}`]),
+    `https://api.github.com/repos/O/N/attestations/sha256:${'ab'.repeat(32)}`
+  );
+  assert.throws(() => githubApiUrl('https://api.github.com', ['repos', 'O/N', 'contents', '../x']), /safe API path/);
+});
+
+function recordingFetch() {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    return { status: 500, ok: false, headers: { get: () => null }, json: async () => ({}) };
+  };
+  return { calls, fetchImpl };
+}
+
+for (const [value, why] of UNSAFE_API_PATHS.filter(([value]) => value !== '')) {
+  test(`a releases.specs.files key with ${why} is refused before any HTTP request`, async () => {
+    const lock = sampleLock();
+    lock.releases.specs.files = { [value]: FILE_HASH };
+    const { calls, fetchImpl } = recordingFetch();
+    await assert.rejects(
+      assertPinnedInputs(item(lock), githubProvenanceClient({ GITHUB_TOKEN: 'ghs_testtoken' }, fetchImpl)),
+      /robot-capability-specs: releases\.specs\.files key is not a safe API path/
+    );
+    assert.deepEqual(calls, []);
+  });
+}
+
+for (const [field, value] of [
+  ['id', '.'],
+  ['version', '.'],
+  ['id', '..'],
+  ['version', 'a/b'],
+  ['id', '%2e%2e'],
+  ['version', '0.2.0?x'],
+]) {
+  test(`world.${field} ${JSON.stringify(value)} is refused before any HTTP request`, async () => {
+    const lock = sampleLock();
+    lock.world[field] = value;
+    const { calls, fetchImpl } = recordingFetch();
+    await assert.rejects(
+      assertPinnedInputs(item(lock), githubProvenanceClient({ GITHUB_TOKEN: 'ghs_testtoken' }, fetchImpl)),
+      new RegExp(`livingproof-worlds: world\\.${field} is not a safe API path`)
+    );
+    assert.deepEqual(calls, []);
+  });
+}
+
+test('resolvePin never sends the token outside the pinned repository, even for a path that skipped the lock check', async () => {
+  const pin = {
+    ...collectPins(item()).find((entry) => entry.name === 'robot-capability-specs'),
+    paths: ['../../../../user/repos'],
+  };
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    const ok = (body) => ({ status: 200, ok: true, headers: { get: () => null }, json: async () => body });
+    if (String(url).includes('/releases/tags/')) return ok({ body: '', assets: [] });
+    if (String(url).includes('/git/ref/tags/')) return ok({ object: { type: 'commit', sha: COMMIT } });
+    return ok({});
+  };
+  await assert.rejects(
+    resolvePin(pin, { token: 'ghs_testtoken', api: 'https://api.github.com', fetch: fetchImpl }),
+    /not a safe API path/
+  );
+  for (const url of calls) {
+    assert.ok(
+      new URL(url).pathname.startsWith('/repos/Living-Proof-Labs/robot-capability-specs/'),
+      `token request left the pinned repository: ${url}`
+    );
+    assert.equal(url.includes('/contents/'), false);
+  }
+});
+
+test('a pin tag with a dot segment is refused before any request, so the URL is never normalised', async () => {
+  for (const tag of ['..', '.']) {
+    const pin = { ...collectPins(item()).find((entry) => entry.name === 'livingproof-sim-mujoco'), tag };
+    const calls = [];
+    const fetchImpl = async (url) => {
+      calls.push(String(url));
+      return { status: 200, ok: true, headers: { get: () => null }, json: async () => ({ body: '', assets: [] }) };
+    };
+    await assert.rejects(
+      resolvePin(pin, { token: 'ghs_testtoken', api: 'https://api.github.com', fetch: fetchImpl }),
+      /not a safe API path/
+    );
+    for (const url of calls) assert.equal(new URL(url).href, url, `fetch would rewrite ${url}`);
+    assert.deepEqual(calls, []);
+  }
 });
