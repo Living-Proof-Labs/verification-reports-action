@@ -2216,9 +2216,16 @@ def test_exclude_runs_skips_hostile_restored_run_and_keeps_other_runs_byte_for_b
 def test_exclude_runs_removes_empty_scenario_when_only_restored_run_is_excluded(
     tmp_path: Path, capsys
 ):
-    _make_run_folder(tmp_path / "in1", "corner-left", run_id="918", created="2026-11-18T06:00:00Z")
+    _make_run_folder(
+        tmp_path / "in1",
+        "corner-left",
+        variant="stock-mujoco-corner-left",
+        run_id="918",
+        created="2026-11-18T06:00:00Z",
+    )
     reports = tmp_path / "reports"
     site_tool.build(reports, tmp_path / "in1")
+    assert (reports / "unitree-g1/stock-mujoco-corner-left/runs/918").is_dir()
 
     _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
     site_tool.build(reports, tmp_path / "in2", exclude_runs=("918",))
@@ -2264,7 +2271,13 @@ def test_exclude_runs_unknown_id_only_warns(tmp_path: Path, capsys):
         "920\x00",
         "920\x1b",
         "920\x7f",
+        "920\r921",
         ".hidden",
+        "C:\\runs\\920",
+        "920:1",
+        "\uff19\uff12\uff10",
+        "920\u200b",
+        "92\u00e90",
     ],
 )
 def test_exclude_runs_invalid_entry_is_refused_before_anything_is_written(
@@ -2340,3 +2353,79 @@ def test_site_action_parses_whitespace_and_comma_separated_exclude_runs(tmp_path
     assert "918" in err
     assert "920" in err
     assert "999999" in err
+
+
+def test_exclude_runs_ids_are_global_and_remove_the_run_from_every_scenario(tmp_path: Path, capsys):
+    # A run folder is named after the workflow run, so one run ID can hold several scenarios.
+    _make_run_folder(tmp_path / "in1/a", "hallway", run_id="919", created="2026-11-19T06:00:00Z")
+    _make_run_folder(tmp_path / "in1/b", "hallway", run_id="920", created="2026-11-20T06:00:00Z")
+    _make_run_folder(
+        tmp_path / "in1/c",
+        "corner-left",
+        variant="stock-mujoco-corner-left",
+        run_id="920",
+        created="2026-11-20T06:00:00Z",
+    )
+    reports = tmp_path / "reports"
+    site_tool.build(reports, tmp_path / "in1")
+    assert (reports / "unitree-g1/stock-mujoco-corner-left/runs/920").is_dir()
+
+    _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    capsys.readouterr()
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920", "920"))
+    err = capsys.readouterr().err
+
+    assert not (reports / "unitree-g1/stock-mujoco-hallway/runs/920").exists()
+    assert not (reports / "unitree-g1/stock-mujoco-corner-left").exists()
+    assert (reports / "unitree-g1/stock-mujoco-hallway/runs/919").is_dir()
+    assert err.count("::warning::Excluded restored run 920") == 2
+    assert "stock-mujoco-corner-left/runs/920" in err
+    assert "not found" not in err
+    assert site_tool.read_json_object(reports / site_tool.MARKER)["runs"] == 2
+
+
+def test_parse_exclude_runs_splits_on_commas_and_whitespace_and_drops_duplicates():
+    assert site_tool.parse_exclude_runs("") == ()
+    assert site_tool.parse_exclude_runs(" \n\t ") == ()
+    assert site_tool.parse_exclude_runs("920, 921\r\n922\t920,921") == ("920", "921", "922")
+    assert site_tool.parse_exclude_runs("920 921\n922\t920") == ("920", "921", "922")
+
+
+def test_exclude_runs_skips_a_restored_run_with_unpublished_evidence(tmp_path: Path):
+    reports, run = _restored_run(tmp_path)
+    (run / "evidence").mkdir(exist_ok=True)
+    (run / "evidence/payload.exe").write_bytes(b"MZ")
+    reports_without_exclude = tmp_path / "reports-without-exclude"
+    shutil.copytree(reports, reports_without_exclude)
+    with pytest.raises(site_tool.SiteError, match="evidence of this type is not published"):
+        _build_next_run(tmp_path, reports_without_exclude)
+
+    _make_run_folder(tmp_path / "in3", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    site_tool.build(reports, tmp_path / "in3", exclude_runs=("920",))
+    assert not run.exists()
+    assert (reports / "unitree-g1/stock-mujoco-hallway/runs/921/index.html").is_file()
+
+
+def test_an_excluded_run_is_not_restored_by_the_next_build_without_the_entry(tmp_path: Path):
+    reports, run = _restored_run(tmp_path)
+    report_html = run / "report.html"
+    report_html.write_text(
+        report_html.read_text(encoding="utf-8").replace(
+            "</body>", "<script>alert(1)</script></body>", 1
+        ),
+        encoding="utf-8",
+    )
+    _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920",))
+
+    # The deployed tree is what the next build restores; the entry has been removed.
+    deployed = tmp_path / "deployed"
+    shutil.copytree(reports, deployed)
+    _make_run_folder(tmp_path / "in3", "hallway", run_id="922", created="2026-11-22T06:00:00Z")
+    site_tool.build(deployed, tmp_path / "in3")
+
+    runs_root = deployed / "unitree-g1/stock-mujoco-hallway/runs"
+    assert sorted(p.name for p in runs_root.iterdir()) == ["921", "922"]
+    assert "runs/920/" not in (deployed / "unitree-g1/stock-mujoco-hallway/index.html").read_text(
+        encoding="utf-8"
+    )
