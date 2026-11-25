@@ -18,6 +18,17 @@ SHA = "a" * 40
 
 
 class PublicationTest(unittest.TestCase):
+    def test_readme_opens_with_start_here_manual_link(self):
+        head = Path("README.md").read_text().splitlines()[:6]
+        self.assertTrue(
+            any(
+                line.startswith("**Start here: [")
+                and "](https://docs.livingprooflabs.com/verification-reports-action/)" in line
+                for line in head
+            ),
+            "README must open with a start-here link to the published manual",
+        )
+
     def test_workflow_structure_and_permissions(self):
         workflow = yaml.load(Path(".github/workflows/docs.yml").read_text(), Loader=yaml.BaseLoader)
         release = yaml.load(
