@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+version: '3'
+
+tasks:
+  setup:
+    desc: Verify Node runtime, sync locked Python dev tools, and prepare artifacts directory
+    cmds:
+      - node --version
+      - uv sync --locked --no-python-downloads
+      - mkdir -p artifacts
+  check:
+    desc: Run static checks for JavaScript, Python, and Action metadata
+    cmds:
+      - npm run check
+      - uv run --locked --no-sync --no-python-downloads ruff check .
+      - uv run --locked --no-sync --no-python-downloads ruff format --check .
+  test:
+    desc: Run Node and Python test suites and write JUnit XML reports
+    cmds:
+      - mkdir -p artifacts
+      - node --test --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=artifacts/node-tests.xml tests/*.test.mjs
+      - uv run --locked --no-sync --no-python-downloads pytest --junitxml=artifacts/pytest-tests.xml
+  verify:
+    desc: Run checks and tests
+    cmds:
+      - task: check
+      - task: test
+  docs:setup:
+    desc: Sync locked documentation and development tools
+    cmds:
+      - uv sync --locked --no-python-downloads --group docs
+  docs:build:
+    desc: Stage README and docs and build the manual
+    cmds:
+      - uv run --locked --no-sync --no-python-downloads python tools/docs/build.py
+      - uv run --locked --no-sync --no-python-downloads zensical build --clean
+  docs:verify:
+    desc: Check rendered links, fragments, branding and source identity
+    cmds:
+      - uv run --locked --no-sync --no-python-downloads python tools/docs/verify.py
+  docs:test:
+    desc: Test the deployment guard and publication smoke checks
+    cmds:
+      - uv run --locked --no-sync --no-python-downloads python -m unittest discover -s tools/docs -p 'test_*.py'
+  docs:smoke:
+    desc: Check served manual identity and assets (pass --url and --commit)
+    cmds:
+      - uv run --locked --no-sync --no-python-downloads python tools/docs/smoke.py {{.CLI_ARGS}}

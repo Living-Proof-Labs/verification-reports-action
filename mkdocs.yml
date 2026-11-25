@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+site_url: https://docs.livingprooflabs.com/verification-reports-action/
+site_name: Living Proof Verification Reports
+repo_url: https://github.com/Living-Proof-Labs/verification-reports-action
+strict: true
+use_directory_urls: false
+docs_dir: artifacts/docs-source
+site_dir: artifacts/site
+theme:
+  name: zensical
+  font: false
+  palette:
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: custom
+      accent: custom
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: custom
+      accent: custom
+extra_css:
+  - assets/brand.css
+markdown_extensions:
+  - tables
+  - toc: {permalink: true}
+  - pymdownx.superfences
+nav:
+  - Documentation home: https://docs.livingprooflabs.com/
+  - Start here: index.md
+  - Provenance: provenance.md
+  - Workflow vs composite: decisions/0001-composite-vs-reusable-workflow.md
+  - Version and source: version.md
+  - License: license.md

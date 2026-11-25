@@ -2,7 +2,7 @@
 
 Reusable **Living Proof Verification Reports** workflow and site publisher. A robot repository calls the workflow to get one verification report for the definitions in that repository, and uses the `site` step to publish a single-robot `reports/` section inside its documentation.
 
-Tracked in [Living-Proof-Labs/.github#164](https://github.com/Living-Proof-Labs/.github/issues/164). The workflow interface choice is recorded in [docs/decisions/0001-composite-vs-reusable-workflow.md](docs/decisions/0001-composite-vs-reusable-workflow.md).
+Start with the [published manual](https://docs.livingprooflabs.com/verification-reports-action/). Tracked in [Living-Proof-Labs/.github#164](https://github.com/Living-Proof-Labs/.github/issues/164). The workflow interface choice is recorded in [docs/decisions/0001-composite-vs-reusable-workflow.md](docs/decisions/0001-composite-vs-reusable-workflow.md).
 
 ## Reusable workflow
 
