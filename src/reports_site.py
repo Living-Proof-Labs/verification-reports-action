@@ -1300,8 +1300,11 @@ def recheck_restored_run(folder: Path) -> None:
     would otherwise be carried into every later deployment. The build fails rather than
     rewriting them; reset-history rebuilds the site from run folders.
     """
-    for name in ("report.html", "index.html"):
-        path = folder / name
+    evidence = folder / "evidence"
+    # The site writes each evidence listing as evidence/<name>.html. A restored one is a
+    # page on the Pages origin like report.html, so it gets the same check.
+    listings = sorted(evidence.glob("*.html")) if evidence.is_dir() else []
+    for path in [folder / "report.html", folder / "index.html", *listings]:
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -1309,15 +1312,12 @@ def recheck_restored_run(folder: Path) -> None:
             raise SiteError(
                 f"restored {path}: holds a <script> that is not a known reporter script"
             )
-    evidence = folder / "evidence"
     if not evidence.is_dir():
         return
     for path in sorted(evidence.rglob("*")):
-        if not path.is_file():
+        if not path.is_file() or path in listings:
             continue
-        # The site writes each evidence listing as evidence/<name>.html.
-        listing = path.parent == evidence and path.suffix == ".html"
-        if not listing and path.suffix.lower() not in PUBLISHED_EVIDENCE_SUFFIXES:
+        if path.suffix.lower() not in PUBLISHED_EVIDENCE_SUFFIXES:
             raise SiteError(f"restored {path}: evidence of this type is not published")
 
 

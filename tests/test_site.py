@@ -2009,10 +2009,19 @@ def _build_next_run(tmp_path: Path, reports: Path) -> None:
 
 def test_a_clean_restored_run_is_rechecked_and_kept(tmp_path: Path):
     reports, run = _restored_run(tmp_path)
-    # A listing page the site wrote, next to evidence of a published type.
-    (run / "evidence").mkdir(exist_ok=True)
-    (run / "evidence/clip.html").write_text("<p>listing</p>", encoding="utf-8")
-    (run / "evidence/clip.mp4").write_bytes(b"mp4")
+    # A genuine listing page, written by the site's own write_listing, next to the
+    # evidence it lists.
+    import reports_render
+
+    (run / "evidence/clip").mkdir(parents=True, exist_ok=True)
+    files = []
+    for name in ("trial-01.mp4", "trial-02.mp4"):
+        (run / "evidence/clip" / name).write_bytes(b"mp4")
+        files.append({"path": f"evidence/clip/{name}", "bytes": 3, "sha256": "0" * 64})
+    reports_render.write_listing(
+        run, {"label": "clip", "name": "clip", "preserved": True, "files": files}, "../../../../"
+    )
+    assert (run / "evidence/clip.html").is_file()
     before = {p: p.read_bytes() for p in run.rglob("*") if p.is_file()}
     _build_next_run(tmp_path, reports)
     assert {p: p.read_bytes() for p in run.rglob("*") if p.is_file()} == before
@@ -2037,7 +2046,26 @@ def test_a_hostile_restored_page_fails_the_next_build(tmp_path: Path, page: str,
         _build_next_run(tmp_path, reports)
 
 
-@pytest.mark.parametrize("name", ["schema.xsd", "sub/page.html", "plot.svg", "noext"])
+@pytest.mark.parametrize(
+    "planted",
+    [
+        "<!doctype html><html><body><script>alert(document.domain)</script></body></html>\n",
+        "<!doctype html><html><body><img src=x onerror=alert(1)></body></html>\n",
+        # An unknown script would be cut from a new page; a restored one fails the build.
+        "<!doctype html><html><body><script data-report-times>alert(1)</script></body></html>\n",
+    ],
+)
+def test_a_planted_restored_evidence_page_fails_the_next_build(tmp_path: Path, planted: str):
+    # Vera's round 3 probe (B5): a top-level evidence/*.html in a restored run is a page on
+    # the Pages origin, so it gets the policy check like report.html, not a pass as a listing.
+    reports, run = _restored_run(tmp_path)
+    (run / "evidence").mkdir(exist_ok=True)
+    (run / "evidence/evil.html").write_text(planted, encoding="utf-8")
+    with pytest.raises(site_tool.SiteError, match="restored .*evil.html"):
+        _build_next_run(tmp_path, reports)
+
+
+@pytest.mark.parametrize("name", ["schema.xsd", "sub/page.html", "plot.svg", "noext", "x.HTML"])
 def test_restored_evidence_of_an_unpublished_type_fails_the_next_build(tmp_path: Path, name: str):
     reports, run = _restored_run(tmp_path)
     path = run / "evidence" / name
@@ -2120,3 +2148,13 @@ def test_workflow_run_id_from_the_api_cannot_change_the_path(monkeypatch):
             "O/N", "1/../../../user", "ghs_testtoken", "https://api.github.com"
         )
     assert calls == []
+
+
+def test_a_restored_html_page_below_the_top_of_evidence_is_never_a_listing(tmp_path: Path):
+    # Listings live only at evidence/<name>.html, so a nested page fails on its type even
+    # when its markup would pass the page policy.
+    reports, run = _restored_run(tmp_path)
+    (run / "evidence/sub").mkdir(parents=True, exist_ok=True)
+    (run / "evidence/sub/page.html").write_text("<!doctype html><p>x</p>\n", encoding="utf-8")
+    with pytest.raises(site_tool.SiteError, match="evidence of this type is not published"):
+        _build_next_run(tmp_path, reports)
