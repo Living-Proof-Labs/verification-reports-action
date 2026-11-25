@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from 'node:crypto';
-import { ReportError, sha256 } from './definitions.mjs';
+import { ReportError, githubApiUrl, sha256 } from './definitions.mjs';
 import { normaliseRepository, sameRepository, subjectDigest } from './provenance.mjs';
 import { decodeMaybeSnappy } from './snappy.mjs';
 
@@ -299,7 +299,9 @@ async function getJson(fetchImpl, url, token) {
 }
 
 async function peelTag(pin, api, token, fetchImpl) {
-  const refUrl = `${api}/repos/${pin.repository}/git/ref/tags/${encodeURIComponent(pin.tag)}`;
+  const refUrl = githubApiUrl(api, ['repos', pin.repository, 'git/ref/tags', pin.tag], {
+    label: `${pin.name}: tag ref`,
+  });
   let { response, body } = await getJson(fetchImpl, refUrl, token);
   if (response.status === 404) return null;
   if (!response.ok) {
@@ -309,7 +311,9 @@ async function peelTag(pin, api, token, fetchImpl) {
   }
   let object = body?.object;
   for (let depth = 0; depth < 3 && object?.type === 'tag'; depth += 1) {
-    const tagUrl = `${api}/repos/${pin.repository}/git/tags/${object.sha}`;
+    const tagUrl = githubApiUrl(api, ['repos', pin.repository, 'git/tags', object.sha], {
+      label: `${pin.name}: tag object`,
+    });
     ({ response, body } = await getJson(fetchImpl, tagUrl, token));
     if (!response.ok) {
       throw new ReportError(
@@ -322,11 +326,10 @@ async function peelTag(pin, api, token, fetchImpl) {
 }
 
 async function hashFile(pin, commit, filePath, api, token, fetchImpl) {
-  const encoded = filePath
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
-  const url = `${api}/repos/${pin.repository}/contents/${encoded}?ref=${commit}`;
+  const url = githubApiUrl(api, ['repos', pin.repository, 'contents', filePath], {
+    query: { ref: commit },
+    label: `${pin.name}: file ${JSON.stringify(filePath)}`,
+  });
   const { response, body } = await getJson(fetchImpl, url, token);
   if (response.status === 404) return null;
   if (!response.ok) {
@@ -361,7 +364,10 @@ async function registryDigest(pin, fetchImpl) {
     );
   }
   const tokenBody = await tokenResponse.json();
-  const manifest = await fetchImpl(`https://ghcr.io/v2/${name}/manifests/${version}`, {
+  const manifestUrl = githubApiUrl('https://ghcr.io/v2', [name, 'manifests', version], {
+    label: `${pin.name}: image manifest`,
+  });
+  const manifest = await fetchImpl(manifestUrl, {
     headers: {
       Authorization: `Bearer ${tokenBody.token}`,
       Accept:
@@ -397,7 +403,9 @@ async function loadSums(pin, release, token, fetchImpl) {
 }
 
 async function hashTarball(pin, commit, fetchImpl) {
-  const url = `https://codeload.github.com/${pin.repository}/tar.gz/${commit}`;
+  const url = githubApiUrl('https://codeload.github.com', [pin.repository, 'tar.gz', commit], {
+    label: `${pin.name}: source archive`,
+  });
   const response = await fetchImpl(url);
   if (!response.ok) {
     throw new ReportError(
@@ -418,7 +426,9 @@ export async function openAttestations(list, digest, fetchImpl, repository = '',
 }
 
 async function loadAttestation(pin, digest, api, token, fetchImpl) {
-  const url = `${api}/repos/${pin.repository}/attestations/${digest}`;
+  const url = githubApiUrl(api, ['repos', pin.repository, 'attestations', digest], {
+    label: `${pin.name}: attestation`,
+  });
   const { response, body } = await getJson(fetchImpl, url, token);
   if (response.status === 404) return { published: false, status: 404 };
   if (response.status !== 200) {
@@ -453,7 +463,9 @@ async function loadAttestation(pin, digest, api, token, fetchImpl) {
 }
 
 export async function resolvePin(pin, { token = '', api = 'https://api.github.com', fetch: fetchImpl }) {
-  const releaseUrl = `${api}/repos/${pin.repository}/releases/tags/${encodeURIComponent(pin.tag)}`;
+  const releaseUrl = githubApiUrl(api, ['repos', pin.repository, 'releases/tags', pin.tag], {
+    label: `${pin.name}: release`,
+  });
   const { response, body: release } = await getJson(fetchImpl, releaseUrl, token);
   if (response.status === 404) {
     return {

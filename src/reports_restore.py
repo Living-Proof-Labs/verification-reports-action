@@ -58,6 +58,41 @@ def _request(url: str, token: str | None):
     return urllib.request.urlopen(request, timeout=120)
 
 
+# GitHub API paths built from caller data (the repository) or API responses (run ids).
+# Each segment must be a plain name, and each is percent-encoded, so no value can change
+# the path or the query. Same rules as apiPathSegments in src/definitions.mjs.
+_API_PATH_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f\\%?#]")
+
+
+def _api_path_segments(value: object, label: str) -> list[str]:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return [str(value)]
+    if (
+        not isinstance(value, str)
+        or not value
+        or _API_PATH_FORBIDDEN.search(value)
+        # An empty part also refuses a leading or trailing "/".
+        or any(part in ("", ".", "..") for part in value.split("/"))
+    ):
+        raise SiteError(f"{label} is not a safe API path: {value!r}.")
+    return value.split("/")
+
+
+def _api_url(api: str, *parts: object, query: dict | None = None) -> str:
+    segments = [
+        segment for part in parts for segment in _api_path_segments(part, "GitHub API path")
+    ]
+    url = f"{api}/" + "/".join(urllib.parse.quote(segment, safe="") for segment in segments)
+    return f"{url}?{urllib.parse.urlencode(query)}" if query else url
+
+
+def _repository_parts(repository: object) -> list[str]:
+    parts = _api_path_segments(repository, "Repository")
+    if len(parts) != 2:
+        raise SiteError(f"Repository is not OWNER/NAME: {repository!r}.")
+    return parts
+
+
 def _open_once(url: str, token: str | None):
     request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
     if token:
@@ -203,9 +238,15 @@ def _list_pages_artifacts(
     pages_artifact: str | None = None,
 ) -> tuple[list[dict], str]:
     artifacts: list[dict] = []
-    name_query = f"name={urllib.parse.quote(pages_artifact, safe='')}&" if pages_artifact else ""
+    name_query = {"name": pages_artifact} if pages_artifact else {}
     for page in range(1, MAX_ARTIFACT_PAGES + 1):
-        url = f"{api}/repos/{repository}/actions/artifacts?{name_query}per_page=100&page={page}"
+        url = _api_url(
+            api,
+            "repos",
+            *_repository_parts(repository),
+            "actions/artifacts",
+            query={**name_query, "per_page": 100, "page": page},
+        )
         try:
             payload = _read_json(url, token)
             batch = payload["artifacts"]
@@ -457,9 +498,14 @@ def _pages_conclusion(
     page = 1
     conclusions: list[str | None] = []
     while True:
-        url = (
-            f"{api}/repos/{repository}/actions/runs/{run_id}/jobs"
-            f"?filter=latest&per_page=100&page={page}"
+        url = _api_url(
+            api,
+            "repos",
+            *_repository_parts(repository),
+            "actions/runs",
+            run_id,
+            "jobs",
+            query={"filter": "latest", "per_page": 100, "page": page},
         )
         try:
             payload = _read_json(url, token)
@@ -504,7 +550,7 @@ def _conclusion_of(repository: str, token: str | None, api: str, *, pages_job: s
 
 
 def _repository_id(repository: str, token: str | None, api: str) -> int:
-    url = f"{api}/repos/{repository}"
+    url = _api_url(api, "repos", *_repository_parts(repository))
     try:
         payload = _read_json(url, token)
     except urllib.error.HTTPError as error:
@@ -529,7 +575,7 @@ def _repository_id(repository: str, token: str | None, api: str) -> int:
 
 
 def _workflow_run(repository: str, run_id: int, token: str | None, api: str) -> dict | None:
-    url = f"{api}/repos/{repository}/actions/runs/{run_id}"
+    url = _api_url(api, "repos", *_repository_parts(repository), "actions/runs", run_id)
     try:
         payload = _read_json(url, token)
     except urllib.error.HTTPError as error:
@@ -614,7 +660,7 @@ def _discover_pages_site_url(
     """
     if not repository or not token:
         return None, False
-    url = f"{api}/repos/{repository}/pages"
+    url = _api_url(api, "repos", *_repository_parts(repository), "pages")
     try:
         payload = _read_json(url, token)
     except urllib.error.HTTPError as error:
