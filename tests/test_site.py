@@ -2733,3 +2733,60 @@ def test_unknown_scripts_are_cut_out_exactly(capsys):
     page = _page("a<script data-report-times>x</script>b<script data-eval-tabs>y</script>c")
     assert reports_render.checked_report_html(page, "probe") == _page("abc")
     assert len(capsys.readouterr().err.splitlines()) == 2
+
+
+# ---------------------------------------------------------------- va#29 N2 & N3
+
+
+@pytest.mark.parametrize(
+    "markup",
+    [
+        "<img src='https://evil.example/x.png'>",
+        "<video src='https://evil.example/x.png'></video>",
+        "<video src='evidence/a.mp4' poster='https://evil.example/x.png'></video>",
+    ],
+)
+def test_report_media_attributes_refuse_https_urls(markup: str):
+    import reports_render
+
+    with pytest.raises(site_tool.SiteError, match="relative link"):
+        reports_render.checked_report_html(_page(markup), "probe")
+
+
+@pytest.mark.parametrize(
+    "markup",
+    [
+        "<img src='evidence/a.png'>",
+        "<video src='evidence/a.mp4'></video>",
+        "<video src='evidence/a.mp4' poster='evidence/a.png'></video>",
+        "<a href='https://ok.example/'>x</a>",
+    ],
+)
+def test_report_media_attributes_accept_relative_links_and_anchors_accept_https(markup: str):
+    import reports_render
+
+    page = _page(markup)
+    assert reports_render.checked_report_html(page, "probe") == page
+
+
+def test_invalid_utf8_report_html_is_refused_with_file_and_byte_offset(tmp_path: Path):
+    folder = _make_run_folder(tmp_path / "in", "hallway", run_id="930")
+    payload = b"<!doctype html><html><body><p>bad\xffbyte</p></body></html>\n"
+    offset = payload.index(b"\xff")
+    (folder / "report.html").write_bytes(payload)
+    (folder / "SHA256SUMS").write_text(
+        "".join(
+            f"{hashlib.sha256((folder / n).read_bytes()).hexdigest()}  {n}\n"
+            for n in site_tool.REPORT_FILES
+        ),
+        encoding="utf-8",
+    )
+    reports_dir = tmp_path / "reports"
+    with pytest.raises(site_tool.SiteError) as exc_info:
+        site_tool.build(reports_dir, tmp_path / "in")
+    message = str(exc_info.value)
+    assert "report.html" in message
+    assert f"byte {offset}" in message
+    assert not list(reports_dir.rglob("runs/930/index.html"))
+    assert not (reports_dir / "index.html").exists()
+    assert not (reports_dir / "site.json").exists()

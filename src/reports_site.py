@@ -1118,15 +1118,22 @@ def strip_actions_text(text: str) -> str:
     return ARTIFACT_WORD.sub("", text)
 
 
+def _read_utf8_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        raise SiteError(f"{path}: not valid UTF-8 at byte {error.start} ({error.reason})") from None
+
+
 def reporter_html(folder: Path) -> str:
     parked = folder / ORIGINAL_HTML
     if parked.is_file():
-        text = parked.read_text(encoding="utf-8", errors="replace")
+        text = _read_utf8_text(parked)
         parked.unlink()
         return text
     report = folder / "report.html"
     if report.is_file():
-        return report.read_text(encoding="utf-8", errors="replace")
+        return _read_utf8_text(report)
     return ""
 
 
@@ -1350,7 +1357,7 @@ def recheck_restored_run(folder: Path) -> None:
     for path in [folder / "report.html", folder / "index.html", *listings]:
         if not path.is_file():
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = _read_utf8_text(path)
         if checked_report_html(text, f"restored {path}") != text:
             raise SiteError(
                 f"restored {path}: holds a <script> that is not a known reporter script"

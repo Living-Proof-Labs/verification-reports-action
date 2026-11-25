@@ -122,8 +122,8 @@ def _valid_https_netloc(parsed: urllib.parse.SplitResult) -> bool:
     return _SAFE_HOST.fullmatch(hostname) is not None
 
 
-def safe_href(value: object) -> str | None:
-    """Allow only https:// URLs and relative links; reject javascript:, data:, http:, //."""
+def safe_href(value: object, *, allow_https: bool = True) -> str | None:
+    """Allow only https:// URLs (when `allow_https` is true) and relative links."""
     if not isinstance(value, str):
         return None
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
@@ -136,7 +136,7 @@ def safe_href(value: object) -> str | None:
     except ValueError:
         return None
     if parsed.scheme:
-        if parsed.scheme.lower() != "https" or not _valid_https_netloc(parsed):
+        if not allow_https or parsed.scheme.lower() != "https" or not _valid_https_netloc(parsed):
             return None
         return cleaned
     if parsed.netloc:
@@ -1107,6 +1107,7 @@ _SVG_ATTRS = frozenset(
 )
 _SCRIPT_ATTRS = frozenset({"data-eval-tabs", "data-report-times"})
 _URL_ATTRS = frozenset({"href", "src", "poster"})
+_MEDIA_URL_ATTRS = frozenset({"src", "poster"})
 _META_NAMES = frozenset({"viewport", "color-scheme"})
 _ATTR_SOURCE = r"""[a-zA-Z_:][-a-zA-Z0-9_:.]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?"""
 _STRICT_START_TAG = re.compile(rf"<[a-zA-Z][a-zA-Z0-9]*(?:\s+{_ATTR_SOURCE})*\s*/?>")
@@ -1230,7 +1231,10 @@ class _ReportHtmlPolicy(HTMLParser):
                 or name in _ELEMENT_ATTRS.get(tag, ())
             ):
                 self.refuse(f"<{tag}> attribute {name!r} is not allowed")
-            if name in _URL_ATTRS and safe_href(html.unescape(value or "")) is None:
+            if name in _MEDIA_URL_ATTRS:
+                if safe_href(html.unescape(value or ""), allow_https=False) is None:
+                    self.refuse(f"<{tag} {name}> is not a relative link")
+            elif name in _URL_ATTRS and safe_href(html.unescape(value or "")) is None:
                 self.refuse(f"<{tag} {name}> is not an https or relative link")
         found = dict(attrs)
         if tag == "meta" and not (
