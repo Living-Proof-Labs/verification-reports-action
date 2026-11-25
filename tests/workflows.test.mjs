@@ -139,7 +139,9 @@ test('the report workflow calls both verifier procedures and passes no secrets',
 
 test('org workflow uses refs are full SHAs with a tag comment', () => {
   const reportYml = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
+  const docsYml = readFileSync(new URL('../.github/workflows/docs.yml', import.meta.url), 'utf8');
   const files = {
+    'docs.yml': docsYml,
     'report.yml': reportYml,
     'verify.yml': verifyYml,
     'release.yml': releaseYml,
@@ -167,4 +169,57 @@ test('the Python suite runs on each html.parser behaviour the site policy must n
   assert.match(job, /fail-fast: false/);
   assert.match(job, /UV_PYTHON_PREFERENCE: only-managed/);
   assert.match(job, /uv run --locked --no-sync pytest/);
+});
+
+// actionlint catches this in CI, but only after a push; this runs in `task test`.
+function workflowJobs(text) {
+  const body = text.slice(text.search(/^jobs:\n/m));
+  const jobs = new Map();
+  const heads = [...body.matchAll(/^ {2}([A-Za-z0-9_-]+):\s*$/gm)];
+  heads.forEach((head, index) => {
+    const block = body.slice(head.index, heads[index + 1]?.index ?? body.length);
+    jobs.set(head[1], block);
+  });
+  return jobs;
+}
+
+function declaredOutputs(block, indent) {
+  const pad = ' '.repeat(indent);
+  const section = block.match(new RegExp(`^${pad}outputs:\\n((?:${pad} {2}.*\\n?)*)`, 'm'));
+  if (!section) return new Set();
+  return new Set([...section[1].matchAll(new RegExp(`^${pad} {2}([A-Za-z0-9_-]+):`, 'gm'))].map((m) => m[1]));
+}
+
+function jobOutputs(block) {
+  const local = block.match(/^ {4}uses:\s*\.\/(\S+)/m);
+  if (local) {
+    const called = readFileSync(new URL(`../${local[1]}`, import.meta.url), 'utf8');
+    const trigger = called.match(/^ {2}workflow_call:\n((?: {4}.*\n?)*)/m)?.[1] ?? '';
+    return declaredOutputs(trigger, 4);
+  }
+  if (/^ {4}uses:/m.test(block)) return null; // remote reusable workflow: outputs not visible here
+  return declaredOutputs(block, 4);
+}
+
+test('every needs.<job>.outputs.<name> names a needed job and an output it declares', () => {
+  for (const file of ['docs.yml', 'report.yml', 'verify.yml', 'release.yml']) {
+    const text = readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), 'utf8');
+    const jobs = workflowJobs(text);
+    assert.ok(jobs.size > 0, `${file}: no jobs found`);
+    for (const [name, block] of jobs) {
+      const needsLine = block.match(/^ {4}needs:\s*(.+)$/m)?.[1] ?? '';
+      const needs = needsLine.replace(/[[\]]/g, '').split(',').map((s) => s.trim()).filter(Boolean);
+      for (const ref of block.matchAll(/needs\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)/g)) {
+        const [, job, output] = ref;
+        assert.ok(needs.includes(job), `${file}: job ${name} reads ${ref[0]} but does not need ${job}`);
+        assert.ok(jobs.has(job), `${file}: job ${name} reads outputs of unknown job ${job}`);
+        const outputs = jobOutputs(jobs.get(job));
+        if (outputs === null) continue;
+        assert.ok(
+          outputs.has(output),
+          `${file}: job ${name} reads ${ref[0]}, but ${job} declares only [${[...outputs].join(', ')}]`,
+        );
+      }
+    }
+  }
 });

@@ -1189,6 +1189,8 @@ class _ReportHtmlPolicy(HTMLParser):
         for match in re.finditer("\n", text):
             self.line_starts.append(match.end())
         self.stack: list[str] = []
+        self.open_counts: dict[str, int] = {}
+        self.svg_depth = 0
         self.script_start: int | None = None
         self.unknown_scripts: list[tuple[int, int, str]] = []
 
@@ -1201,7 +1203,7 @@ class _ReportHtmlPolicy(HTMLParser):
         raise SiteError(f"line {line} column {column + 1}: {reason}")
 
     def in_svg(self) -> bool:
-        return "svg" in self.stack
+        return self.svg_depth > 0
 
     def check_tag_source(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         source = self.get_starttag_text() or ""
@@ -1254,6 +1256,9 @@ class _ReportHtmlPolicy(HTMLParser):
             self.check_attrs(tag, attrs)
         if tag not in _VOID_ELEMENTS:
             self.stack.append(tag)
+            self.open_counts[tag] = self.open_counts.get(tag, 0) + 1
+            if tag == "svg":
+                self.svg_depth += 1
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         # A browser ignores "/>" on an HTML element, so <style/> or <script/> would open a
@@ -1283,10 +1288,16 @@ class _ReportHtmlPolicy(HTMLParser):
             # Inside <svg> a browser's tree depends on exact nesting, so require it.
             if self.stack[-1] != tag:
                 self.refuse(f"</{tag}> does not close the open <{self.stack[-1]}> inside <svg>")
-            self.stack.pop()
-        elif tag in self.stack:
-            while self.stack.pop() != tag:
-                pass
+            popped = self.stack.pop()
+            self.open_counts[popped] -= 1
+            if popped == "svg":
+                self.svg_depth -= 1
+        elif self.open_counts.get(tag, 0) > 0:
+            while True:
+                popped = self.stack.pop()
+                self.open_counts[popped] -= 1
+                if popped == tag:
+                    break
 
     def handle_data(self, data: str) -> None:
         current = self.stack[-1] if self.stack else ""
@@ -1323,6 +1334,10 @@ def _parsed_policy(text: str) -> _ReportHtmlPolicy:
     return policy
 
 
+MAX_REPORT_HTML_BYTES = 8 * 1024 * 1024
+_SCRIPT_WARNING_EXAMPLES = 3
+
+
 def checked_report_html(text: str, where: str) -> str:
     """Return `text` unchanged if it passes the published HTML policy, else refuse it.
 
@@ -1330,6 +1345,8 @@ def checked_report_html(text: str, where: str) -> str:
     refuses anything html.parser could read differently, then `_parsed_policy` applies the
     allowlist. Unknown <script> elements are cut out with a warning.
     """
+    if len(text) > MAX_REPORT_HTML_BYTES or len(text.encode("utf-8")) > MAX_REPORT_HTML_BYTES:
+        raise SiteError(f"{where}: report.html exceeds the {MAX_REPORT_HTML_BYTES}-byte limit")
     if any((ord(ch) < 32 and ch not in "\t\n\r\f") or ord(ch) == 127 for ch in text):
         raise SiteError(f"{where}: report.html holds a control character")
     try:
@@ -1339,11 +1356,28 @@ def checked_report_html(text: str, where: str) -> str:
         raise SiteError(f"{where}: {exc}") from None
     # The scan makes each <script> run from a plain start tag to its exact </script>, and text
     # outside tags holds no "<", so cutting one out cannot join new markup: no second pass.
-    for start, end, digest in reversed(policy.unknown_scripts):
+    scripts = policy.unknown_scripts
+    if not scripts:
+        return text
+    # One summary line and a few examples: a forged page can hold many thousands of scripts.
+    for _, _, digest in scripts[:_SCRIPT_WARNING_EXAMPLES]:
         print(
             f"::warning::{where}: removed a <script> that is not a known reporter "
             f"script (sha256 {digest})",
             file=sys.stderr,
         )
-        text = text[:start] + text[end:]
-    return text
+    if len(scripts) > _SCRIPT_WARNING_EXAMPLES:
+        print(
+            f"::warning::{where}: removed {len(scripts)} <script> elements that are not known "
+            f"reporter scripts in all ({len(scripts) - _SCRIPT_WARNING_EXAMPLES} more not listed)",
+            file=sys.stderr,
+        )
+    # Keep the text between scripts and join it once: cutting one script at a time copies the
+    # whole page per script, which is quadratic in the number of scripts.
+    kept = []
+    pos = 0
+    for start, end, _ in scripts:
+        kept.append(text[pos:start])
+        pos = end
+    kept.append(text[pos:])
+    return "".join(kept)

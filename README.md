@@ -1,5 +1,10 @@
 # verification-reports-action
 
+**Start here: [published manual](https://docs.livingprooflabs.com/verification-reports-action/).**
+The manual is built from this README and the `docs/` folder by the Documentation workflow and deployed
+to Pages after each release. Until the first post-merge deployment, build it locally with
+`task -t Taskfile.runtime.yml docs:build` or download the pull request's documentation artifact.
+
 Reusable **Living Proof Verification Reports** workflow and site publisher. A robot repository calls the workflow to get one verification report for the definitions in that repository, and uses the `site` step to publish a single-robot `reports/` section inside its documentation.
 
 Tracked in [Living-Proof-Labs/.github#164](https://github.com/Living-Proof-Labs/.github/issues/164). The workflow interface choice is recorded in [docs/decisions/0001-composite-vs-reusable-workflow.md](docs/decisions/0001-composite-vs-reusable-workflow.md).
@@ -133,7 +138,7 @@ Use `Living-Proof-Labs/verification-reports-action/site` after downloading the `
 
 A run folder's `SHA256SUMS` can be recomputed by whoever wrote the folder, so the site checks what it publishes itself:
 
-- **Report pages**: each `report.html` and run `index.html` must fit an allowlist of the reporter's own markup, checked with an HTML parser. Allowed links are `https://` or relative, CSS may only embed fonts, and scripts must be the reporter's own, pinned by SHA-256. A page that fits is published byte for byte. Anything else fails the build, except an unknown reporter script, which is removed with a warning.
+- **Report pages**: each `report.html` and run `index.html` must fit an allowlist of the reporter's own markup, checked with an HTML parser. Allowed links are `https://` or relative, CSS may only embed fonts, and scripts must be the reporter's own, pinned by SHA-256. A page that fits is published byte for byte. Anything else fails the build, except an unknown reporter script, which is removed with a warning. A page larger than 8 MiB (8,388,608 bytes of UTF-8) fails the build before it is parsed. That is more than ten times the largest page the reporter has published. Deeply nested markup does not slow the check down: its cost grows with the page size, not with the square of the nesting depth.
 - **Evidence**: files a browser would run, such as `.html`, `.htm`, `.xhtml`, `.svg`, `.xml` or `.js`, are not copied.
 
 ### History across deployments and pull-request runs
@@ -170,6 +175,7 @@ A run folder's `SHA256SUMS` can be recomputed by whoever wrote the folder, so th
 | `pages-artifact` | No | empty | Exact Pages artifact name (matches `github-pages` and `github-pages-*` when empty). |
 | `pages-job` | No | empty | Pages deploy job name (matches `pages`, `deploy`, and `deploy-pages` when empty). |
 | `reset-history` | No | `false` | Start fresh without restoring earlier runs (`true` or `false`). |
+| `exclude-runs` | No | empty | Whitespace- or comma-separated list of restored run folder names (for example `43954868926`) to drop from restored history before building. An entry matches that run folder in every scenario. Fails if an entry is not a plain run folder name or matches a run in `runs-dir`. |
 | `upload-artifact` | No | `auto` | Upload the built `reports/` directory as a workflow artifact (`auto` uploads on `pull_request`). |
 | `artifact-name` | No | empty | Workflow artifact name when uploaded (defaults to `verification-reports-site-<run_id>-<attempt>`). |
 | `artifact-retention-days` | No | `14` | Retention days for the uploaded workflow artifact. |
@@ -183,6 +189,15 @@ A run folder's `SHA256SUMS` can be recomputed by whoever wrote the folder, so th
 | `index-path` | Path to `reports/index.html`. |
 | `runs-count` | Total number of stored runs in the generated `reports/` tree. |
 | `artifact-only` | `true` on `pull_request` and `merge_group` runs (artifact only, never deployed); `false` otherwise. |
+
+### Recovering from a restored run that fails the check
+
+Every site build re-checks the runs it restores from the last GitHub Pages deployment. If a previously published run fails the HTML or evidence policy—for example `error: restored .../runs/<run-id>/report.html: holds a <script> that is not a known reporter script` or `error: restored .../runs/<run-id>/evidence/...: evidence of this type is not published`—the build fails closed and blocks later deployments until that run is no longer in the restored history.
+
+1. **Option 1 (recommended): exclude the failing run ID with `exclude-runs`.**
+   Add the `<run-id>` folder name from the error message to `exclude-runs` in the workflow's `site` step (whitespace- or comma-separated), then run the site build on a branch that deploys Pages (a pull request build is artifact-only, so it does not change what later builds restore). The run folder is dropped from the restored tree in every scenario that has it, with a `::warning::` per removed folder, and all other restored runs are kept byte for byte. An ID that is not in the restored history only warns. Excluding never applies to a run added by the same build: if a `runs-dir` folder has an excluded ID, the build fails. Once the deployed site no longer has that run, remove the `exclude-runs` entry from the workflow.
+2. **Last resort: `reset-history: true`.**
+   If history cannot be recovered selectively, set `reset-history: true` for one deployment to start a fresh `reports/` tree without restoring earlier runs, then remove it. This drops all previously published run history.
 
 ## Release
 
