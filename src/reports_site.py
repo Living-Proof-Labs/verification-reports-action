@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterable
 from datetime import timedelta
 from pathlib import Path, PurePosixPath
 
@@ -70,9 +71,11 @@ __all__ = [
     "extract_pages_reports",
     "live_history",
     "main",
+    "parse_exclude_runs",
     "render",
     "restore",
     "safe_href",
+    "validate_exclude_run_id",
 ]
 
 SEGMENT = re.compile(r"[a-z0-9][a-z0-9.-]*")
@@ -836,6 +839,40 @@ def runs(reports_dir: Path) -> dict[tuple[str, str], list[dict]]:
     return found
 
 
+def validate_exclude_run_id(entry: object) -> str:
+    if not isinstance(entry, str) or not entry:
+        raise SiteError(
+            f"Invalid exclude-runs entry {entry!r}: must be a non-empty run folder name."
+        )
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in entry):
+        raise SiteError(
+            f"Invalid exclude-runs entry {entry!r}: must not contain control characters."
+        )
+    if "/" in entry or "\\" in entry or entry in {".", ".."} or ".." in entry:
+        raise SiteError(f"Invalid exclude-runs entry {entry!r}: must be a plain run folder name.")
+    if not RUN_ID.fullmatch(entry):
+        raise SiteError(f"Invalid exclude-runs entry {entry!r}: must be a plain run folder name.")
+    return entry
+
+
+def parse_exclude_runs(raw: str) -> tuple[str, ...]:
+    normalized = raw.replace("\r\n", "\n")
+    if any((ord(ch) < 32 or ord(ch) == 127) and ch not in "\n\t" for ch in normalized):
+        raise SiteError("exclude-runs must not contain control characters.")
+    if not normalized.strip():
+        return ()
+    if "," in normalized:
+        tokens: list[str] = []
+        for part in normalized.split(","):
+            part_tokens = part.split()
+            if not part_tokens:
+                raise SiteError("exclude-runs must not contain empty entries.")
+            tokens.extend(part_tokens)
+    else:
+        tokens = normalized.split()
+    return tuple(dict.fromkeys(validate_exclude_run_id(entry) for entry in tokens))
+
+
 def add_run_folder(
     reports_dir: Path,
     source: Path,
@@ -844,6 +881,7 @@ def add_run_folder(
     seen_in_batch: set[tuple[str, str, str]],
     allow_replace_run_id: str | None = None,
     git_dir: Path | None = None,
+    exclude_runs: set[str] | frozenset[str] = frozenset(),
 ) -> tuple[Path, tuple[str, str, str], dict]:
     report_data = check_reports(source)
     inputs = grading_inputs(source, report_data)
@@ -851,6 +889,11 @@ def add_run_folder(
     robot, variant, run_id, record = _normalize_run_record(
         raw_record, report_data, source / "run.json", git_dir=git_dir
     )
+    if run_id in exclude_runs:
+        raise SiteError(
+            f"Run {run_id!r} in {source} matches exclude-runs; "
+            "exclude-runs only applies to restored history, not runs added in the same build."
+        )
     key = (robot, variant, run_id)
     if key in seen_in_batch:
         raise SiteError(
@@ -1389,8 +1432,11 @@ def build(
     days: int = DEFAULT_RETENTION_DAYS,
     allow_replace_run_id: str | None = None,
     git_dir: Path | None = None,
+    exclude_runs: Iterable[str] = (),
 ) -> list[Path]:
     validate_retention_days(days)
+    excluded = tuple(dict.fromkeys(validate_exclude_run_id(entry) for entry in exclude_runs))
+    excluded_set = frozenset(excluded)
     existing = runs(reports_dir)
     restored_keys = {
         (robot, variant, rec["folder"])
@@ -1410,9 +1456,38 @@ def build(
             seen_in_batch=seen_in_batch,
             allow_replace_run_id=allow_replace_run_id,
             git_dir=git_dir,
+            exclude_runs=excluded_set,
         )
         added_folders.append(folder)
         timestamps.append(record["run"]["created"])
+
+    removed_ids: set[str] = set()
+    if excluded_set:
+        for (robot, variant), recs in existing.items():
+            base = reports_dir / robot / variant
+            for rec in recs:
+                run_id = rec["folder"]
+                if run_id not in excluded_set:
+                    continue
+                shutil.rmtree(base / "runs" / run_id)
+                removed_ids.add(run_id)
+                print(
+                    f"::warning::Excluded restored run {run_id} "
+                    f"({robot}/{variant}/runs/{run_id}) from the reports site.",
+                    file=sys.stderr,
+                )
+            runs_root = base / "runs"
+            if runs_root.is_dir() and not any(runs_root.iterdir()):
+                shutil.rmtree(base)
+                robot_root = reports_dir / robot
+                if robot_root.is_dir() and not any(robot_root.iterdir()):
+                    robot_root.rmdir()
+        for run_id in excluded:
+            if run_id not in removed_ids:
+                print(
+                    f"::warning::exclude-runs entry {run_id!r} was not found in restored history.",
+                    file=sys.stderr,
+                )
 
     all_runs = runs(reports_dir)
     robot = _require_single_robot({r for r, _ in all_runs})
@@ -1493,6 +1568,12 @@ def main(argv: list[str] | None = None) -> int:
         help="optional current run id allowed to replace itself on a same-run retry",
     )
     b.add_argument("--git-dir", type=Path, default=None)
+    b.add_argument(
+        "--exclude-run",
+        action="append",
+        default=[],
+        help="restored run folder name to exclude before rendering",
+    )
 
     args = parser.parse_args(argv)
     try:
@@ -1518,6 +1599,7 @@ def main(argv: list[str] | None = None) -> int:
                 days=args.evidence_retention_days,
                 allow_replace_run_id=args.allow_replace_run_id or None,
                 git_dir=args.git_dir,
+                exclude_runs=args.exclude_run,
             )
             marker = read_json_object(args.reports_dir / MARKER)
             for folder in added:

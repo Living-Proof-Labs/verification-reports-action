@@ -2158,3 +2158,274 @@ def test_a_restored_html_page_below_the_top_of_evidence_is_never_a_listing(tmp_p
     (run / "evidence/sub/page.html").write_text("<!doctype html><p>x</p>\n", encoding="utf-8")
     with pytest.raises(site_tool.SiteError, match="evidence of this type is not published"):
         _build_next_run(tmp_path, reports)
+
+
+# ---------------------------------------------------------------- issue #31: exclude-runs
+
+
+def test_exclude_runs_skips_hostile_restored_run_and_keeps_other_runs_byte_for_byte(
+    tmp_path: Path, capsys
+):
+    _make_run_folder(tmp_path / "in1/r1", "hallway", run_id="919", created="2026-11-19T06:00:00Z")
+    _make_run_folder(tmp_path / "in1/r2", "hallway", run_id="920", created="2026-11-20T06:00:00Z")
+    reports = tmp_path / "reports"
+    site_tool.build(reports, tmp_path / "in1")
+
+    kept_run = reports / "unitree-g1/stock-mujoco-hallway/runs/919"
+    hostile_run = reports / "unitree-g1/stock-mujoco-hallway/runs/920"
+    kept_before = {p: p.read_bytes() for p in kept_run.rglob("*") if p.is_file()}
+
+    report_html = hostile_run / "report.html"
+    report_html.write_text(
+        report_html.read_text(encoding="utf-8").replace(
+            "</body>", "<script data-report-times>alert(1)</script></body>", 1
+        ),
+        encoding="utf-8",
+    )
+
+    _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    reports_without_exclude = tmp_path / "reports-without-exclude"
+    shutil.copytree(reports, reports_without_exclude)
+    with pytest.raises(site_tool.SiteError, match="restored"):
+        site_tool.build(reports_without_exclude, tmp_path / "in2")
+
+    capsys.readouterr()
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920",))
+    err = capsys.readouterr().err
+
+    assert "::warning::" in err
+    assert "920" in err
+    assert not hostile_run.exists()
+    assert {p: p.read_bytes() for p in kept_run.rglob("*") if p.is_file()} == kept_before
+    assert (reports / "unitree-g1/stock-mujoco-hallway/runs/921/index.html").is_file()
+
+    history_html = (reports / "unitree-g1/stock-mujoco-hallway/index.html").read_text(
+        encoding="utf-8"
+    )
+    latest_html = (reports / "unitree-g1/stock-mujoco-hallway/latest/index.html").read_text(
+        encoding="utf-8"
+    )
+    index_html = (reports / "index.html").read_text(encoding="utf-8")
+    assert "runs/920/" not in history_html
+    assert "runs/920/" not in latest_html
+    assert "runs/920/" not in index_html
+    assert "runs/921/" in latest_html
+    assert site_tool.read_json_object(reports / site_tool.MARKER)["runs"] == 2
+
+
+def test_exclude_runs_removes_empty_scenario_when_only_restored_run_is_excluded(
+    tmp_path: Path, capsys
+):
+    _make_run_folder(
+        tmp_path / "in1",
+        "corner-left",
+        variant="stock-mujoco-corner-left",
+        run_id="918",
+        created="2026-11-18T06:00:00Z",
+    )
+    reports = tmp_path / "reports"
+    site_tool.build(reports, tmp_path / "in1")
+    assert (reports / "unitree-g1/stock-mujoco-corner-left/runs/918").is_dir()
+
+    _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("918",))
+    err = capsys.readouterr().err
+
+    assert "::warning::" in err
+    assert "918" in err
+    assert not (reports / "unitree-g1/stock-mujoco-corner-left").exists()
+    index_html = (reports / "index.html").read_text(encoding="utf-8")
+    assert "stock-mujoco-corner-left" not in index_html
+    assert "stock-mujoco-hallway" in index_html
+    assert site_tool.read_json_object(reports / site_tool.MARKER)["runs"] == 1
+
+
+def test_exclude_runs_unknown_id_only_warns(tmp_path: Path, capsys):
+    reports, run = _restored_run(tmp_path)
+    before = {p: p.read_bytes() for p in run.rglob("*") if p.is_file()}
+
+    _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    capsys.readouterr()
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("999999",))
+    err = capsys.readouterr().err
+
+    assert "::warning::" in err
+    assert "999999" in err
+    assert {p: p.read_bytes() for p in run.rglob("*") if p.is_file()} == before
+    assert (reports / "unitree-g1/stock-mujoco-hallway/runs/921/index.html").is_file()
+
+
+@pytest.mark.parametrize(
+    "raw_value",
+    [
+        "a/b",
+        "920/..",
+        "..",
+        "../920",
+        "a\\b",
+        ",",
+        "920,",
+        ",920",
+        "920,,921",
+        "920, ,921",
+        "920\x00",
+        "920\x1b",
+        "920\x7f",
+        "920\r921",
+        ".hidden",
+        "C:\\runs\\920",
+        "920:1",
+        "\uff19\uff12\uff10",
+        "920\u200b",
+        "92\u00e90",
+    ],
+)
+def test_exclude_runs_invalid_entry_is_refused_before_anything_is_written(
+    tmp_path: Path, monkeypatch, raw_value: str
+):
+    _make_run_folder(tmp_path / "in1", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    reports = tmp_path / "reports"
+    restore_calls: list[object] = []
+
+    def fail_if_called(*args, **kwargs):
+        restore_calls.append((args, kwargs))
+        raise AssertionError("restore() must not be called when exclude-runs is invalid")
+
+    monkeypatch.setattr(site_tool, "restore", fail_if_called)
+
+    with pytest.raises(site_tool.SiteError):
+        site_action.run_site_action(
+            {
+                "INPUT_RUNS_DIR": str(tmp_path / "in1"),
+                "INPUT_OUTPUT_DIR": "reports",
+                "INPUT_RESTORE_HISTORY": "true",
+                "INPUT_EXCLUDE_RUNS": raw_value,
+                "GITHUB_WORKSPACE": str(tmp_path),
+                "GITHUB_EVENT_NAME": "push",
+                "GITHUB_REPOSITORY": "Living-Proof-Labs/livingproof-unitree-g1",
+                "GITHUB_RUN_ID": "921",
+            }
+        )
+
+    assert restore_calls == []
+    assert not reports.exists()
+
+
+def test_exclude_runs_matching_a_new_run_fails(tmp_path: Path):
+    reports, run = _restored_run(tmp_path)
+    before = {p: p.read_bytes() for p in run.rglob("*") if p.is_file()}
+
+    _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    with pytest.raises(site_tool.SiteError, match="exclude-runs"):
+        site_tool.build(reports, tmp_path / "in2", exclude_runs=("921",))
+
+    assert {p: p.read_bytes() for p in run.rglob("*") if p.is_file()} == before
+    assert not (reports / "unitree-g1/stock-mujoco-hallway/runs/921").exists()
+
+
+def test_site_action_parses_whitespace_and_comma_separated_exclude_runs(tmp_path: Path, capsys):
+    _make_run_folder(tmp_path / "in1/r1", "hallway", run_id="918", created="2026-11-18T06:00:00Z")
+    _make_run_folder(tmp_path / "in1/r2", "hallway", run_id="919", created="2026-11-19T06:00:00Z")
+    _make_run_folder(tmp_path / "in1/r3", "hallway", run_id="920", created="2026-11-20T06:00:00Z")
+    reports = tmp_path / "reports"
+    site_tool.build(reports, tmp_path / "in1")
+
+    _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    capsys.readouterr()
+    outputs = site_action.run_site_action(
+        {
+            "INPUT_RUNS_DIR": str(tmp_path / "in2"),
+            "INPUT_OUTPUT_DIR": "reports",
+            "INPUT_RESTORE_HISTORY": "false",
+            "INPUT_EXCLUDE_RUNS": "918, 920\n999999",
+            "GITHUB_WORKSPACE": str(tmp_path),
+            "GITHUB_EVENT_NAME": "push",
+            "GITHUB_RUN_ID": "921",
+        }
+    )
+    err = capsys.readouterr().err
+
+    assert outputs["runs-count"] == "2"
+    assert not (reports / "unitree-g1/stock-mujoco-hallway/runs/918").exists()
+    assert (reports / "unitree-g1/stock-mujoco-hallway/runs/919").is_dir()
+    assert not (reports / "unitree-g1/stock-mujoco-hallway/runs/920").exists()
+    assert (reports / "unitree-g1/stock-mujoco-hallway/runs/921").is_dir()
+    assert "918" in err
+    assert "920" in err
+    assert "999999" in err
+
+
+def test_exclude_runs_ids_are_global_and_remove_the_run_from_every_scenario(tmp_path: Path, capsys):
+    # A run folder is named after the workflow run, so one run ID can hold several scenarios.
+    _make_run_folder(tmp_path / "in1/a", "hallway", run_id="919", created="2026-11-19T06:00:00Z")
+    _make_run_folder(tmp_path / "in1/b", "hallway", run_id="920", created="2026-11-20T06:00:00Z")
+    _make_run_folder(
+        tmp_path / "in1/c",
+        "corner-left",
+        variant="stock-mujoco-corner-left",
+        run_id="920",
+        created="2026-11-20T06:00:00Z",
+    )
+    reports = tmp_path / "reports"
+    site_tool.build(reports, tmp_path / "in1")
+    assert (reports / "unitree-g1/stock-mujoco-corner-left/runs/920").is_dir()
+
+    _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    capsys.readouterr()
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920", "920"))
+    err = capsys.readouterr().err
+
+    assert not (reports / "unitree-g1/stock-mujoco-hallway/runs/920").exists()
+    assert not (reports / "unitree-g1/stock-mujoco-corner-left").exists()
+    assert (reports / "unitree-g1/stock-mujoco-hallway/runs/919").is_dir()
+    assert err.count("::warning::Excluded restored run 920") == 2
+    assert "stock-mujoco-corner-left/runs/920" in err
+    assert "not found" not in err
+    assert site_tool.read_json_object(reports / site_tool.MARKER)["runs"] == 2
+
+
+def test_parse_exclude_runs_splits_on_commas_and_whitespace_and_drops_duplicates():
+    assert site_tool.parse_exclude_runs("") == ()
+    assert site_tool.parse_exclude_runs(" \n\t ") == ()
+    assert site_tool.parse_exclude_runs("920, 921\r\n922\t920,921") == ("920", "921", "922")
+    assert site_tool.parse_exclude_runs("920 921\n922\t920") == ("920", "921", "922")
+
+
+def test_exclude_runs_skips_a_restored_run_with_unpublished_evidence(tmp_path: Path):
+    reports, run = _restored_run(tmp_path)
+    (run / "evidence").mkdir(exist_ok=True)
+    (run / "evidence/payload.exe").write_bytes(b"MZ")
+    reports_without_exclude = tmp_path / "reports-without-exclude"
+    shutil.copytree(reports, reports_without_exclude)
+    with pytest.raises(site_tool.SiteError, match="evidence of this type is not published"):
+        _build_next_run(tmp_path, reports_without_exclude)
+
+    _make_run_folder(tmp_path / "in3", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    site_tool.build(reports, tmp_path / "in3", exclude_runs=("920",))
+    assert not run.exists()
+    assert (reports / "unitree-g1/stock-mujoco-hallway/runs/921/index.html").is_file()
+
+
+def test_an_excluded_run_is_not_restored_by_the_next_build_without_the_entry(tmp_path: Path):
+    reports, run = _restored_run(tmp_path)
+    report_html = run / "report.html"
+    report_html.write_text(
+        report_html.read_text(encoding="utf-8").replace(
+            "</body>", "<script>alert(1)</script></body>", 1
+        ),
+        encoding="utf-8",
+    )
+    _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920",))
+
+    # The deployed tree is what the next build restores; the entry has been removed.
+    deployed = tmp_path / "deployed"
+    shutil.copytree(reports, deployed)
+    _make_run_folder(tmp_path / "in3", "hallway", run_id="922", created="2026-11-22T06:00:00Z")
+    site_tool.build(deployed, tmp_path / "in3")
+
+    runs_root = deployed / "unitree-g1/stock-mujoco-hallway/runs"
+    assert sorted(p.name for p in runs_root.iterdir()) == ["921", "922"]
+    assert "runs/920/" not in (deployed / "unitree-g1/stock-mujoco-hallway/index.html").read_text(
+        encoding="utf-8"
+    )
