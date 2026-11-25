@@ -10,8 +10,8 @@ export const verificationJobs = [
   'verify',
   'site-policy',
   'version',
-  'action-smoke',
-  'action-smoke-check',
+  'g1-smoke',
+  'g1-smoke-check',
   'site-smoke',
 ];
 
