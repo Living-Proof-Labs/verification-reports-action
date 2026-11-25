@@ -80,16 +80,14 @@ def site_path(value: object) -> str | None:
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in decoded):
         return None
     if (
-        "://" in value
-        or "://" in decoded
-        or value.startswith(("/", "\\"))
-        or decoded.startswith(("/", "\\"))
+        # Decoding cannot remove a leading "/", a "." or ".." segment, ":", a backslash or
+        # "/actions/", so those are checked on the decoded value only. It can remove part
+        # of the artifact word ("%aartifact" decodes to "\xaartifact"), so that is checked
+        # on both.
+        decoded.startswith("/")
         or "\\" in decoded
-        or any(part in (".", "..") for part in value.split("/"))
         or any(part in (".", "..") for part in decoded.split("/"))
-        or ":" in value
         or ":" in decoded
-        or "/actions/" in value.lower()
         or "/actions/" in decoded.lower()
         or ARTIFACT_WORD.search(value)
         or ARTIFACT_WORD.search(decoded)

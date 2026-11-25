@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import hashlib
 import html
-import ipaddress
 import re
 import sys
 import urllib.parse
@@ -107,8 +106,9 @@ _SAFE_HOST = re.compile(
 
 
 def _valid_https_netloc(parsed: urllib.parse.SplitResult) -> bool:
-    netloc = parsed.netloc
-    if not netloc or "@" in netloc or any(ch.isspace() for ch in netloc):
+    # urlsplit and the checks below refuse userinfo and malformed hosts and ports. An IP
+    # literal such as [2001:db8::1] is refused too: the reporter never links to one.
+    if not parsed.netloc:
         return False
     if parsed.username is not None or parsed.password is not None:
         return False
@@ -119,12 +119,6 @@ def _valid_https_netloc(parsed: urllib.parse.SplitResult) -> bool:
         return False
     if not hostname:
         return False
-    if netloc.startswith("["):
-        try:
-            ipaddress.ip_address(hostname)
-        except ValueError:
-            return False
-        return True
     return _SAFE_HOST.fullmatch(hostname) is not None
 
 
@@ -1116,9 +1110,6 @@ _URL_ATTRS = frozenset({"href", "src", "poster"})
 _META_NAMES = frozenset({"viewport", "color-scheme"})
 _ATTR_SOURCE = r"""[a-zA-Z_:][-a-zA-Z0-9_:.]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?"""
 _STRICT_START_TAG = re.compile(rf"<[a-zA-Z][a-zA-Z0-9]*(?:\s+{_ATTR_SOURCE})*\s*/?>")
-_STRICT_ATTR_NAME = re.compile(
-    r"""\s+([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?"""
-)
 _CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 _CSS_URL = re.compile(r"url\(\s*['\"]?([^'\")\s]*)", re.I)
 _CSS_FORBIDDEN = ("\\", "/*", "@import", "image-set", "expression(", "javascript:")
@@ -1134,6 +1125,60 @@ def _css_is_inert(css: str) -> bool:
     if len(urls) != flat.count("url("):
         return False
     return all(url.startswith(_CSS_SAFE_URL_PREFIXES) for url in urls)
+
+
+# html.parser does not tokenize the way a browser does, and how far it differs depends on the
+# Python patch release: before the 2025 fixes it read <title> and <textarea> as ordinary
+# elements and missed script ends such as "</script x>". So the source is first tokenized by
+# the small scanner below, which follows the browser's rules and refuses anything the two
+# could read differently. Every "<" must begin a plain start tag, a plain end tag or the
+# doctype; no attribute value holds "<" or ">", and an unquoted one does not end in "/"; and
+# <script>, <style>, <title> and <textarea> run to their exact lower-case close tag with no
+# other "</" or "<!--" before it, and no "<" at all in <title> or <textarea>. Only then is the
+# allowlist below applied, so its result does not depend on the interpreter's html.parser.
+_SCAN_SPACE = "[\t\n\f\r ]"
+_SCAN_ATTR = (
+    rf"{_SCAN_SPACE}+[a-zA-Z_:][-a-zA-Z0-9_:.]*"
+    rf"(?:{_SCAN_SPACE}*={_SCAN_SPACE}*"
+    r"""(?:"[^"<>]*"|'[^'<>]*'|[^\t\n\f\r "'=<>`]+(?<!/)(?=[\t\n\f\r >])))?"""
+)
+_SCAN_START_TAG = re.compile(rf"<([a-zA-Z][a-zA-Z0-9]*)(?:{_SCAN_ATTR})*{_SCAN_SPACE}*(/?)>")
+_SCAN_END_TAG = re.compile(r"</[a-zA-Z][a-zA-Z0-9]*>")
+_SCAN_DOCTYPE = re.compile(r"<!doctype html>", re.I)
+_SCAN_RAW_TEXT = frozenset({"script", "style"})
+_SCAN_RCDATA = frozenset({"title", "textarea"})
+
+
+def _scan_markup(text: str) -> None:
+    """Refuse markup that a browser and some html.parser release could tokenize differently."""
+
+    def refuse(offset: int, reason: str) -> None:
+        line = text.count("\n", 0, offset) + 1
+        column = offset - (text.rfind("\n", 0, offset) + 1) + 1
+        raise SiteError(f"line {line} column {column}: {reason}")
+
+    pos = 0
+    while (pos := text.find("<", pos)) != -1:
+        match = _SCAN_DOCTYPE.match(text, pos) or _SCAN_END_TAG.match(text, pos)
+        if match:
+            pos = match.end()
+            continue
+        match = _SCAN_START_TAG.match(text, pos)
+        if not match:
+            refuse(pos, "'<' does not begin a plainly written tag")
+        name = match.group(1).lower()
+        pos = match.end()
+        if name not in _SCAN_RAW_TEXT and name not in _SCAN_RCDATA:
+            continue
+        if match.group(2):
+            refuse(match.start(), f"<{name}/> is not allowed")
+        close = text.find("</", pos)
+        if close == -1 or text[close : close + len(name) + 3] != f"</{name}>":
+            refuse(close if close != -1 else pos, f"<{name}> does not end with a plain </{name}>")
+        body = text[pos:close]
+        if "<!--" in body or (name in _SCAN_RCDATA and "<" in body):
+            refuse(pos, f"<{name}> holds markup")
+        pos = close + len(name) + 3
 
 
 class _ReportHtmlPolicy(HTMLParser):
@@ -1162,9 +1207,9 @@ class _ReportHtmlPolicy(HTMLParser):
         source = self.get_starttag_text() or ""
         if not _STRICT_START_TAG.fullmatch(source):
             self.refuse(f"<{tag}> is not plainly written")
-        names = [name.lower() for name in _STRICT_ATTR_NAME.findall(source[len(tag) + 1 :])]
-        if names != [name for name, _ in attrs] or len(set(names)) != len(names):
-            self.refuse(f"<{tag}> has repeated or unparsable attributes")
+        names = [name for name, _ in attrs]
+        if len(set(names)) != len(names):
+            self.refuse(f"<{tag}> has a repeated attribute")
 
     def check_attrs(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         svg = tag in _SVG_ELEMENTS and (tag == "svg" or self.in_svg())
@@ -1217,10 +1262,9 @@ class _ReportHtmlPolicy(HTMLParser):
         if not (tag in _VOID_ELEMENTS or svg):
             self.refuse(f"<{tag}/> is not a void or SVG element")
         self.check_tag_source(tag, attrs)
+        # Outside <svg> the rule above already limits this to void HTML elements and <svg>.
         if self.in_svg() and tag not in _SVG_ELEMENTS:
             self.refuse(f"<{tag}> is not allowed inside <svg>")
-        if not self.in_svg() and tag not in _HTML_ELEMENTS and tag != "svg":
-            self.refuse(f"<{tag}> is not allowed")
         self.check_attrs(tag, attrs)
 
     def handle_endtag(self, tag: str) -> None:
@@ -1269,29 +1313,37 @@ class _ReportHtmlPolicy(HTMLParser):
         self.refuse("CDATA and other declarations are not allowed")
 
 
+def _parsed_policy(text: str) -> _ReportHtmlPolicy:
+    """Apply the element and attribute allowlist with html.parser (the second layer)."""
+    policy = _ReportHtmlPolicy(text)
+    policy.feed(text)
+    policy.close()
+    if policy.stack and policy.stack[-1] in {"script", "style"}:
+        raise SiteError(f"report.html ends inside <{policy.stack[-1]}>")
+    return policy
+
+
 def checked_report_html(text: str, where: str) -> str:
     """Return `text` unchanged if it passes the published HTML policy, else refuse it.
 
-    Unknown <script> elements are cut out (with a warning) and the result is checked again.
+    Two independent layers: `_scan_markup` tokenizes the source the way a browser does and
+    refuses anything html.parser could read differently, then `_parsed_policy` applies the
+    allowlist. Unknown <script> elements are cut out with a warning.
     """
     if any((ord(ch) < 32 and ch not in "\t\n\r\f") or ord(ch) == 127 for ch in text):
         raise SiteError(f"{where}: report.html holds a control character")
-    for _ in range(2):
-        policy = _ReportHtmlPolicy(text)
-        try:
-            policy.feed(text)
-            policy.close()
-        except SiteError as exc:
-            raise SiteError(f"{where}: {exc}") from None
-        if policy.stack and policy.stack[-1] in {"script", "style"}:
-            raise SiteError(f"{where}: report.html ends inside <{policy.stack[-1]}>")
-        if not policy.unknown_scripts:
-            return text
-        for start, end, digest in reversed(policy.unknown_scripts):
-            print(
-                f"::warning::{where}: removed a <script> that is not a known reporter "
-                f"script (sha256 {digest})",
-                file=sys.stderr,
-            )
-            text = text[:start] + text[end:]
-    raise SiteError(f"{where}: report.html still holds an unknown <script>")
+    try:
+        _scan_markup(text)
+        policy = _parsed_policy(text)
+    except SiteError as exc:
+        raise SiteError(f"{where}: {exc}") from None
+    # The scan makes each <script> run from a plain start tag to its exact </script>, and text
+    # outside tags holds no "<", so cutting one out cannot join new markup: no second pass.
+    for start, end, digest in reversed(policy.unknown_scripts):
+        print(
+            f"::warning::{where}: removed a <script> that is not a known reporter "
+            f"script (sha256 {digest})",
+            file=sys.stderr,
+        )
+        text = text[:start] + text[end:]
+    return text

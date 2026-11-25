@@ -116,22 +116,11 @@ MEDIA_SUFFIXES = {
     ".webp",
 }
 VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
-# Evidence a browser would run as a page or script on the Pages origin. It is never copied.
-ACTIVE_EVIDENCE_SUFFIXES = {
-    ".html",
-    ".htm",
-    ".xhtml",
-    ".xht",
-    ".shtml",
-    ".svg",
-    ".svgz",
-    ".xml",
-    ".xsl",
-    ".xslt",
-    ".js",
-    ".mjs",
-    ".swf",
-}
+# Evidence types the site publishes. Anything else is not copied, so a MIME mapping on Pages
+# (GitHub serves .xsd and .rng as application/xml, which a browser runs as XHTML) cannot put
+# an active document on the Pages origin. This is what reporters emit (MCAP, video, images,
+# media.json and logs), plus plain-text and data formats a browser only displays.
+PUBLISHED_EVIDENCE_SUFFIXES = frozenset(MEDIA_SUFFIXES | {".json", ".txt", ".log", ".md", ".csv"})
 
 SEED_LABEL = re.compile(r"^seed (?=\d)")
 
@@ -648,10 +637,10 @@ def _infer_evidence_kind(path: Path) -> str:
 
 
 def _publishable_evidence(path: Path) -> bool:
-    if path.suffix.lower() not in ACTIVE_EVIDENCE_SUFFIXES:
+    if path.suffix.lower() in PUBLISHED_EVIDENCE_SUFFIXES:
         return True
     if path.suffix.lower() != ".html":  # .html was always skipped quietly
-        print(f"::warning::{path}: not publishing active-content evidence", file=sys.stderr)
+        print(f"::warning::{path}: not publishing evidence of this type", file=sys.stderr)
     return False
 
 
@@ -1304,6 +1293,34 @@ def remember_stored_wording(folder: Path, record: dict) -> bool:
     return True
 
 
+def recheck_restored_run(folder: Path) -> None:
+    """Check a run restored from the last deployment that this build does not republish.
+
+    Its pages and evidence were published by an earlier build, so a gap fixed since then
+    would otherwise be carried into every later deployment. The build fails rather than
+    rewriting them; reset-history rebuilds the site from run folders.
+    """
+    for name in ("report.html", "index.html"):
+        path = folder / name
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if checked_report_html(text, f"restored {path}") != text:
+            raise SiteError(
+                f"restored {path}: holds a <script> that is not a known reporter script"
+            )
+    evidence = folder / "evidence"
+    if not evidence.is_dir():
+        return
+    for path in sorted(evidence.rglob("*")):
+        if not path.is_file():
+            continue
+        # The site writes each evidence listing as evidence/<name>.html.
+        listing = path.parent == evidence and path.suffix == ".html"
+        if not listing and path.suffix.lower() not in PUBLISHED_EVIDENCE_SUFFIXES:
+            raise SiteError(f"restored {path}: evidence of this type is not published")
+
+
 # ---------------------------------------------------------------- render & build
 
 
@@ -1354,6 +1371,8 @@ def render(
                     days=days,
                     trial=trials[record["folder"]],
                 )
+            else:
+                recheck_restored_run(run_folder)
         (base / "index.html").write_text(
             _history_page_html(robot, variant, records, loaded_reports), encoding="utf-8"
         )
