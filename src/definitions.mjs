@@ -10,6 +10,40 @@ export class ReportError extends Error {
   }
 }
 
+// GitHub API paths built from lock or caller data. Every segment must be a plain name:
+// no "." or ".." segment (fetch's URL parser would resolve it), no empty segment or
+// leading "/", no backslash (read as "/"), no "%" (so no encoded form), no control
+// character, and no "?" or "#" (which would end the path).
+const API_PATH_FORBIDDEN = /[\u0000-\u001f\u007f\\%?#]/;
+
+export function apiPathSegments(value, label) {
+  const refuse = (why) => {
+    throw new ReportError(
+      `${label} is not a safe API path. expected relative path segments, found ${JSON.stringify(value)} (${why}).`
+    );
+  };
+  if (typeof value !== 'string' || value === '') refuse('empty or not a string');
+  const bad = value.match(API_PATH_FORBIDDEN);
+  if (bad) refuse(`${JSON.stringify(bad[0])} is not allowed`);
+  const segments = value.split('/');
+  // This also refuses a leading or trailing '/'.
+  if (segments.some((segment) => segment === '')) refuse('empty segment');
+  if (segments.some((segment) => segment === '.' || segment === '..')) refuse('dot segment');
+  return segments;
+}
+
+// Builds `${api}/<segments>?<query>`. Each part is checked with apiPathSegments and each
+// segment is percent-encoded, so no value can change the path or add to the query.
+export function githubApiUrl(api, parts, { query = null, label = 'GitHub API path' } = {}) {
+  const path = parts
+    .flatMap((part) => apiPathSegments(part, label))
+    // ':' is left as is: it is inert in a path and attestation digests use it.
+    .map((segment) => encodeURIComponent(segment).replace(/%3A/g, ':'))
+    .join('/');
+  const search = query ? new URLSearchParams(query).toString() : '';
+  return `${api}/${path}${search ? `?${search}` : ''}`;
+}
+
 /** capability-verifier release the report workflow calls. Plan refuses a tag that peels elsewhere. */
 export const VERIFIER_WORKFLOW_SHA = 'fdbf233f6fbaef3bf6589a056821bde3ebb634e2';
 export const VERIFIER_WORKFLOW_TAG = 'v2.12.0';

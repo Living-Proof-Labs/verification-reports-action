@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { sha256, ReportError, VERIFIER_WORKFLOW_SHA, VERIFIER_WORKFLOW_TAG } from './definitions.mjs';
+import {
+  apiPathSegments,
+  sha256,
+  ReportError,
+  VERIFIER_WORKFLOW_SHA,
+  VERIFIER_WORKFLOW_TAG,
+} from './definitions.mjs';
 
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TAG = /^v\d+\.\d+\.\d+$/;
@@ -181,7 +187,14 @@ function fromWorld(lockWorld, tomlWorld, sourceWorld) {
   const version = text(tomlWorld?.version) || text(lockWorld?.version);
   if (!repository && !tag && !id && !version) return null;
   const files = {};
-  if (id && version && !id.includes('/') && !version.includes('/') && !id.includes('..') && !version.includes('..')) {
+  if (id && version) {
+    for (const [field, value] of [['id', id], ['version', version]]) {
+      if (apiPathSegments(value, `livingproof-worlds: world.${field}`).length !== 1) {
+        throw new ReportError(
+          `livingproof-worlds: world.${field} is not a safe API path. expected one path segment, found ${JSON.stringify(value)}.`
+        );
+      }
+    }
     files[`worlds/${id}/${version}/world.json`] = true;
   }
   return {
@@ -392,6 +405,8 @@ function assertConsumedLock(spec, repository, tag, image, raw, definition, sourc
       );
     }
     for (const [path, hash] of Object.entries(files)) {
+      // The key becomes the path of a token-bearing contents API request.
+      apiPathSegments(path, `${spec.name}: ${spec.lockField}.files key`);
       assertLockString(spec.name, `${spec.lockField}.files[${path}]`, hash, FIELD_FORM.sha256);
     }
   }

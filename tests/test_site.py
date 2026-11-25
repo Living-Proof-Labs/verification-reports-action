@@ -1585,3 +1585,78 @@ def test_site_action_refuses_control_characters_before_writing_github_output(
     with pytest.raises(site_tool.SiteError, match="control characters"):
         site_action.run_site_action(env)
     assert not gh_out.exists()
+
+
+# ---------------------------------------------------------------- va#24: API path traversal
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "..",
+        "Owner/..",
+        "../user",
+        ".",
+        "Owner/.",
+        "",
+        "Owner//Name",
+        "Owner/",
+        "/Owner/Name",
+        "Owner\\Name",
+        "Owner/%2e%2e",
+        "%2E%2E%2Fuser",
+        "Owner/Na\x00me",
+        "Owner/Na\nme",
+        "Owner/Na\x7fme",
+        "Owner/Name?x=1",
+        "Owner/Name#x",
+        None,
+        True,
+        -1,
+    ],
+)
+def test_api_path_segments_refuse_unsafe_forms(value: object):
+    with pytest.raises(site_tool.SiteError, match="not a safe API path"):
+        reports_restore._api_path_segments(value, "probe")
+
+
+def test_api_url_encodes_each_segment_and_the_query():
+    url = reports_restore._api_url(
+        "https://api.github.com", "repos", "O/N", "actions/runs", 42, query={"name": "a&b=c"}
+    )
+    assert url == "https://api.github.com/repos/O/N/actions/runs/42?name=a%26b%3Dc"
+    spaced = reports_restore._api_url("https://api.github.com", "repos", "O/a b&c=d@e")
+    assert spaced == "https://api.github.com/repos/O/a%20b%26c%3Dd%40e"
+    assert reports_restore._repository_parts("Living-Proof-Labs/livingproof-unitree-g1") == [
+        "Living-Proof-Labs",
+        "livingproof-unitree-g1",
+    ]
+    with pytest.raises(site_tool.SiteError, match="OWNER/NAME"):
+        reports_restore._repository_parts("a/b/c")
+
+
+@pytest.mark.parametrize("repository", ["Owner/..", "../../user", "Owner/Name/../../x", "O/N?x"])
+def test_restore_with_a_traversal_repository_makes_no_request(
+    tmp_path: Path, monkeypatch, repository: str
+):
+    calls: list[str] = []
+
+    def record(url, token):
+        calls.append(url)
+        raise AssertionError(f"unexpected request {url}")
+
+    monkeypatch.setattr(reports_restore, "_request", record)
+    monkeypatch.setattr(reports_restore, "_open_once", record)
+    with pytest.raises(site_tool.SiteError, match="not a safe API path|OWNER/NAME"):
+        reports_restore.restore(tmp_path / "out", repository, token="ghs_testtoken")
+    assert calls == []
+
+
+def test_workflow_run_id_from_the_api_cannot_change_the_path(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(reports_restore, "_request", lambda url, token: calls.append(url))
+    with pytest.raises(site_tool.SiteError, match="not a safe API path"):
+        reports_restore._workflow_run(
+            "O/N", "1/../../../user", "ghs_testtoken", "https://api.github.com"
+        )
+    assert calls == []
