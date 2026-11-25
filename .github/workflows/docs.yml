@@ -84,7 +84,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      # Download the G1 report from the Verify run that triggered this release.
+      # Download the mock smoke report from the Verify run that triggered this release.
       actions: read
     env:
       DOCS_KIND: release
@@ -147,20 +147,19 @@ jobs:
       - run: task -t Taskfile.runtime.yml docs:setup
       - run: task -t Taskfile.runtime.yml docs:build
       - run: task -t Taskfile.runtime.yml docs:verify
-      # Reuse the report g1-smoke already uploaded on the Verify run for this commit.
-      # A second trial would be a different run. docs:verify stays on the manual pages;
-      # the reports tree is added afterwards so those pages are not required to carry the manual brand.
-      - name: Download the real G1 smoke report
+      # Reuse the mock report action-smoke already uploaded on the Verify run for this commit.
+      # docs:verify stays on the manual pages; the reports tree is added afterwards.
+      - name: Download the mock robot smoke report
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: g1-verification-report
-          path: artifacts/g1-smoke-report
+          name: verification-report
+          path: artifacts/smoke-report
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
       - name: Build the reports section
         uses: ./site
         with:
-          runs-dir: artifacts/g1-smoke-report
+          runs-dir: artifacts/smoke-report
           output-dir: artifacts/site/reports
           reset-history: 'true'
           restore-history: 'false'

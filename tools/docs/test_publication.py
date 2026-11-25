@@ -183,7 +183,7 @@ class PublicationTest(unittest.TestCase):
                     '<link rel="stylesheet" href="assets/brand.css">' + text
                 )
             (root / "reports").mkdir()
-            (root / "reports/index.html").write_text("unitree-g1 stock hallway")
+            (root / "reports/index.html").write_text("verification-reports-action fixture")
             handler = functools.partial(SimpleHTTPRequestHandler, directory=directory)
             server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -201,9 +201,9 @@ class PublicationTest(unittest.TestCase):
                     check(url, SHA, "1.2.3")
                 index_page.write_text(original_index)
                 (root / "reports/index.html").unlink()
-                with self.assertRaisesRegex(ValueError, "G1 reports section"):
+                with self.assertRaisesRegex(ValueError, "published reports section"):
                     check(url, SHA, "1.2.3")
-                (root / "reports/index.html").write_text("unitree-g1 stock hallway")
+                (root / "reports/index.html").write_text("verification-reports-action fixture")
                 with self.assertRaisesRegex(ValueError, "version identity"):
                     check(url, SHA, "2.0.0")
                 with self.assertRaisesRegex(ValueError, "stale or dirty"):

@@ -9,10 +9,10 @@ import site_fixture
 
 def test_site_build_writes_reports_index(tmp_path: Path):
     runs = tmp_path / "runs"
-    site_fixture.write(runs)
+    site_fixture.write(runs, repository="Living-Proof-Labs/verification-reports-action")
     reports = tmp_path / "site" / "reports"
     site.build(reports, runs, now="2026-11-25T00:00:00Z")
     index = reports / "index.html"
     assert index.is_file()
     text = index.read_text()
-    assert "unitree-g1" in text
+    assert "verification-reports-action/" in text

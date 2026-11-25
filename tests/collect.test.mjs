@@ -265,7 +265,6 @@ test('verifier artifacts are assembled and a missing report fails', () => {
     for (const [name, contents] of Object.entries(rendered)) {
       writeFileSync(path.join(reportDir, name), contents);
     }
-    writeFileSync(path.join(reportDir, 'thresholds.json'), '{"max_lateral_drift_m":0.5}\n');
     writeChecksums(reportDir);
     const evidenceDir = path.join(tempRoot, 'downloaded', 'evidence', `vra-corner-evidence-${configuration}`);
     mkdirSync(evidenceDir, { recursive: true });
@@ -292,10 +291,6 @@ test('verifier artifacts are assembled and a missing report fails', () => {
     const directory = path.join(outputDir, 'corner', 'stock');
     execFileSync('sha256sum', ['-c', 'SHA256SUMS'], { cwd: directory });
     assert.equal(readFileSync(path.join(directory, 'evidence', 'observation.json'), 'utf8'), '{"trial":0}\n');
-    assert.equal(
-      readFileSync(path.join(directory, 'thresholds.json'), 'utf8'),
-      '{"max_lateral_drift_m":0.5}\n'
-    );
     assert.equal(readFileSync(path.join(directory, 'evidence', 'mcap', 'trial.mcap'), 'utf8'), 'mcap');
     const run = JSON.parse(readFileSync(path.join(directory, 'run.json'), 'utf8'));
     const report = JSON.parse(readFileSync(path.join(directory, 'report.json'), 'utf8'));

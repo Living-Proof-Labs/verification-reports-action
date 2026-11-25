@@ -55,12 +55,6 @@ export function assembleVerifierDefinition(item, downloadRoot, outputDir, env, v
     for (const name of REPORT_FILES) {
       writeFileSync(path.join(directory, name), readFileSync(path.join(reportArtifact, name)));
     }
-    // The evaluator cites thresholds.json from the run folder. The reporter
-    // uploads it beside the report; without this copy ./site refuses the run.
-    const thresholds = path.join(reportArtifact, 'thresholds.json');
-    if (existsSync(thresholds)) {
-      writeFileSync(path.join(directory, 'thresholds.json'), readFileSync(thresholds));
-    }
     const evidenceArtifact = artifactDir(
       path.join(downloadRoot, 'evidence'),
       `${prefix}evidence-${configuration}`
