@@ -1335,6 +1335,7 @@ def _parsed_policy(text: str) -> _ReportHtmlPolicy:
 
 
 MAX_REPORT_HTML_BYTES = 8 * 1024 * 1024
+_SCRIPT_WARNING_EXAMPLES = 3
 
 
 def checked_report_html(text: str, where: str) -> str:
@@ -1355,11 +1356,28 @@ def checked_report_html(text: str, where: str) -> str:
         raise SiteError(f"{where}: {exc}") from None
     # The scan makes each <script> run from a plain start tag to its exact </script>, and text
     # outside tags holds no "<", so cutting one out cannot join new markup: no second pass.
-    for start, end, digest in reversed(policy.unknown_scripts):
+    scripts = policy.unknown_scripts
+    if not scripts:
+        return text
+    # One summary line and a few examples: a forged page can hold many thousands of scripts.
+    for _, _, digest in scripts[:_SCRIPT_WARNING_EXAMPLES]:
         print(
             f"::warning::{where}: removed a <script> that is not a known reporter "
             f"script (sha256 {digest})",
             file=sys.stderr,
         )
-        text = text[:start] + text[end:]
-    return text
+    if len(scripts) > _SCRIPT_WARNING_EXAMPLES:
+        print(
+            f"::warning::{where}: removed {len(scripts)} <script> elements that are not known "
+            f"reporter scripts in all ({len(scripts) - _SCRIPT_WARNING_EXAMPLES} more not listed)",
+            file=sys.stderr,
+        )
+    # Keep the text between scripts and join it once: cutting one script at a time copies the
+    # whole page per script, which is quadratic in the number of scripts.
+    kept = []
+    pos = 0
+    for start, end, _ in scripts:
+        kept.append(text[pos:start])
+        pos = end
+    kept.append(text[pos:])
+    return "".join(kept)

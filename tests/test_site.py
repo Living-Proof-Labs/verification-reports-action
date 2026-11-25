@@ -2706,3 +2706,30 @@ def test_an_excluded_run_is_not_restored_by_the_next_build_without_the_entry(tmp
     assert "runs/920/" not in (deployed / "unitree-g1/stock-mujoco-hallway/index.html").read_text(
         encoding="utf-8"
     )
+
+
+# ---------------------------------------------------------------- va#32 B1: many unknown scripts
+
+
+@pytest.mark.timeout(30)
+def test_many_unknown_scripts_are_cut_out_in_one_pass_with_few_warnings(capsys):
+    import reports_render
+
+    # Vera's PR 35 B1 probe: 200,000 copies of an unknown reporter-style script (about
+    # 7 MiB). Cutting them out one at a time copies the page per script, which takes well
+    # over a minute; one pass takes a few seconds, so the 30 s timeout is generous.
+    count = 200_000
+    script = "<script data-report-times>x</script>"
+    page = _page(script * count)
+    assert reports_render.checked_report_html(page, "probe") == _page("")
+    warnings = capsys.readouterr().err.splitlines()
+    assert len(warnings) == reports_render._SCRIPT_WARNING_EXAMPLES + 1
+    assert f"removed {count} <script> elements" in warnings[-1]
+
+
+def test_unknown_scripts_are_cut_out_exactly(capsys):
+    import reports_render
+
+    page = _page("a<script data-report-times>x</script>b<script data-eval-tabs>y</script>c")
+    assert reports_render.checked_report_html(page, "probe") == _page("abc")
+    assert len(capsys.readouterr().err.splitlines()) == 2
