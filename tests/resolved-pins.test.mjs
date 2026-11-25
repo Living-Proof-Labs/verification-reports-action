@@ -624,16 +624,79 @@ test('a deleted tag and a non-commit tag object do not become the resolved commi
   }
 });
 
-for (const variant of [
-  "sources.parameters.path with a '..' segment",
-  'sources.parameters.path with a leading slash',
-  'sources.parameters.path with a backslash',
-  'sources.parameters.path with an empty segment',
-  'sources.parameters.path percent-encoded %2e',
-  'sources.parameters.path percent-encoded %2f',
-  'sources.parameters.path percent-encoded %5c',
-  'sources.parameters.path percent-encoding decoded repeatedly',
-  'a contents request stays under /repos/<owner>/<repo>/contents/',
-]) {
-  test(variant, { skip: 'pending shared validator (Rivet)' }, () => {});
+function refuseParametersPath(pathValue) {
+  const lock = specsReadyLock();
+  lock.sources.parameters = { path: pathValue, sha256: CORNER_HASH };
+  assert.throws(
+    () => collectPins(item(lock)),
+    /robot-capability-specs: sources\.parameters\.path is not a safe API path/
+  );
 }
+
+for (const [pathValue, why] of [
+  ['..', 'a .. segment'],
+  ['../secrets', 'a .. segment'],
+  ['%2e%2e/%2fetc', 'an encoded traversal'],
+  ['%2e%2e', 'encoded dot-dot'],
+  ['%2f', 'an encoded slash'],
+  ['/etc/passwd', 'an absolute path'],
+  ['specs//x.json', 'an empty segment'],
+  ['specs\\..\\x.json', 'a backslash'],
+  ['%252e%252e/user', 'percent-encoding decoded repeatedly'],
+]) {
+  test(`sources.parameters.path with ${why} is refused`, () => {
+    refuseParametersPath(pathValue);
+  });
+}
+
+function refuseScenarioParameters(scenario) {
+  const lock = specsReadyLock();
+  lock.scenario = scenario;
+  lock.sources.parameters = { path: 'parameters.json', sha256: CORNER_HASH };
+  assert.throws(
+    () => collectPins(item(lock)),
+    /robot-capability-specs: scenario parameters file is not a safe API path/
+  );
+}
+
+for (const [scenario, why] of [
+  ['../user@0.1.0', 'a .. segment'],
+  ['%2e%2e/%2f@0.1.0', 'an encoded traversal'],
+  ['/abs@0.1.0', 'an absolute path'],
+]) {
+  test(`scenario parameters file with ${why} is refused`, () => {
+    refuseScenarioParameters(scenario);
+  });
+}
+
+test('a valid scenario parameters file is accepted', () => {
+  const lock = specsReadyLock();
+  lock.sources.parameters = { path: 'parameters.json', sha256: CORNER_HASH };
+  const specs = collectPins(item(lock)).find((pin) => pin.name === 'robot-capability-specs');
+  assert.equal(specs.parametersFile, CORNER_PARAMETERS);
+});
+
+function refuseSpecsFile(pathValue) {
+  const lock = specsReadyLock();
+  lock.releases.specs.files = { [pathValue]: CORNER_HASH };
+  assert.throws(
+    () => collectPins(item(lock)),
+    /robot-capability-specs: releases\.specs\.files key is not a safe API path/
+  );
+}
+
+for (const [pathValue, why] of [
+  ['..', 'a .. segment'],
+  ['%2e%2e/%2fetc', 'an encoded traversal'],
+  ['/etc/passwd', 'an absolute path'],
+]) {
+  test(`releases.specs.files key with ${why} is refused`, () => {
+    refuseSpecsFile(pathValue);
+  });
+}
+
+test('a valid releases.specs.files key is accepted', () => {
+  const lock = specsReadyLock();
+  const specs = collectPins(item(lock)).find((pin) => pin.name === 'robot-capability-specs');
+  assert.equal(specs.paths.includes('specs/scenarios/walk-corner-left/description.json'), true);
+});

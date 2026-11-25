@@ -168,6 +168,9 @@ function scenarioParametersFile(scenario) {
 
 function parametersBinding(entry, scenario, withFiles) {
   if (!withFiles || !entry || typeof entry !== 'object') return { entry: null, file: null };
+  if (entry.path !== undefined && entry.path !== null) {
+    apiPathSegments(entry.path, 'robot-capability-specs: sources.parameters.path');
+  }
   if (entry.sha256 !== undefined && entry.sha256 !== null) {
     assertLockString('robot-capability-specs', 'sources.parameters.sha256', entry.sha256, FIELD_FORM.sha256);
   }
@@ -177,6 +180,7 @@ function parametersBinding(entry, scenario, withFiles) {
       'robot-capability-specs: scenario is missing. expected a scenario id so sources.parameters.sha256 can be checked against specs/scenarios/<id>/parameters.json, found none.'
     );
   }
+  apiPathSegments(file, 'robot-capability-specs: scenario parameters file');
   return { entry, file };
 }
 
