@@ -193,3 +193,14 @@ def test_restored_health_tampering_is_refused(tmp_path):
     (folder / "health.json").write_text("{}")
     with pytest.raises(reports_site.SiteError, match="digest mismatch"):
         reports_site.recheck_restored_run(folder)
+
+
+def test_restored_unreferenced_sidecar_is_refused(tmp_path):
+    unpack(tmp_path)
+    assert run_site(tmp_path).returncode == 0
+    folder = next((tmp_path / "site").glob("*/*/runs/*"))
+    record = json.loads((folder / "run.json").read_text())
+    record.pop("health")
+    (folder / "run.json").write_text(json.dumps(record))
+    with pytest.raises(reports_site.SiteError, match="unreferenced restored"):
+        reports_site.recheck_restored_run(folder)

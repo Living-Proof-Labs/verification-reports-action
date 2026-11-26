@@ -57,6 +57,11 @@ def _read_sidecar(
 ):
     reference = record.get("health")
     if reference is None:
+        if missing_ok:
+            require(
+                not (folder / "health.json").exists() and not (folder / "health.json").is_symlink(),
+                "unreferenced restored sidecar",
+            )
         return None
     require(isinstance(reference, dict), "invalid reference")
     require(record.get("fixture") is False, "Health requires a real recorded run")
