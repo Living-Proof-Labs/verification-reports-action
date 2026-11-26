@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { ReportError, assertConfigurationSlug } from './definitions.mjs';
+import { ReportError, assertConfigurationSlug, sha256 } from './definitions.mjs';
 import {
   assertChecksums,
   buildRunRecord,
@@ -24,6 +24,19 @@ function copyOptional(source, destination) {
   if (!source || !existsSync(source)) return false;
   copyTreeContents(source, destination);
   return true;
+}
+
+export function preserveReporterInput(reportArtifact, directory) {
+  const reference = { format: 'livingproof-reporter-input/1' };
+  for (const [key, from, to] of [
+    ['report', 'report.json', 'report-render-input.json'],
+    ['integrity_lines', 'integrity-lines.txt', 'report-integrity-lines.txt'],
+  ]) {
+    const bytes = readFileSync(path.join(reportArtifact, from));
+    writeFileSync(path.join(directory, to), bytes);
+    reference[key] = { path: to, sha256: sha256(bytes) };
+  }
+  return reference;
 }
 
 export function assembleVerifierDefinition(item, downloadRoot, outputDir, env, version, health = new Map()) {
@@ -89,6 +102,11 @@ export function assembleVerifierDefinition(item, downloadRoot, outputDir, env, v
     if (advisory) {
       writeFileSync(path.join(directory, 'health.json'), advisory.bytes);
       record.health = advisory.record;
+    }
+    // Preserve the exact render input before JSON stamping normalizes numeric tokens.
+    // Staging contract only: publish neither these raw files nor an unreleased dependency.
+    if (advisory) {
+      record.reporter_input = preserveReporterInput(reportArtifact, directory);
     }
     stampReportInputs(directory, record.inputs);
     writeFileSync(path.join(directory, 'run.json'), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
