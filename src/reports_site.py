@@ -1424,12 +1424,19 @@ def recheck_restored_run(folder: Path) -> None:
     would otherwise be carried into every later deployment. The build fails rather than
     rewriting them; reset-history rebuilds the site from run folders.
     """
-    read_sidecar(
+    health = read_sidecar(
         folder,
         read_json_object(folder / "run.json"),
         read_report(folder / "report.json"),
         missing_ok=True,
     )
+    page = folder / "index.html"
+    if (
+        health is None
+        and page.is_file()
+        and '<section id="health-advisory"' in _read_utf8_text(page)
+    ):
+        raise SiteError(f"restored {page}: Health advisory has no validated sidecar")
     evidence = folder / "evidence"
     # The site writes each evidence listing as evidence/<name>.html. A restored one is a
     # page on the Pages origin like report.html, so it gets the same check.

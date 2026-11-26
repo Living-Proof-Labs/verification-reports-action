@@ -204,3 +204,12 @@ def test_restored_unreferenced_sidecar_is_refused(tmp_path):
     (folder / "run.json").write_text(json.dumps(record))
     with pytest.raises(reports_site.SiteError, match="unreferenced restored"):
         reports_site.recheck_restored_run(folder)
+
+
+def test_restored_display_without_its_sidecar_is_refused(tmp_path):
+    unpack(tmp_path)
+    assert run_site(tmp_path).returncode == 0
+    folder = next((tmp_path / "site").glob("*/*/runs/*"))
+    (folder / "health.json").unlink()
+    with pytest.raises(reports_site.SiteError, match="no validated sidecar"):
+        reports_site.recheck_restored_run(folder)
