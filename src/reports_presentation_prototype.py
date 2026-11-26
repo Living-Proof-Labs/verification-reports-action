@@ -55,6 +55,20 @@ def prepare_inputs(source, record, report, original_html):
     return result
 
 
+def preserve_pinned_inputs(original_html, page):
+    """Retain the producer-owned stamp; the final publication policy still applies."""
+    pattern = r'<section id="pinned-inputs">[\s\S]*?</section>\n?'
+    sections = re.findall(pattern, original_html)
+    if len(sections) > 1 or re.search(pattern, page):
+        raise SiteError("Ambiguous Pinned inputs section during Reporter replay")
+    if not sections:
+        return page
+    page, count = re.subn(r"</body\s*>", lambda _: sections[0] + "</body>", page, flags=re.I)
+    if count != 1:
+        raise SiteError("Reporter replay has no unique Pinned inputs insertion location")
+    return page
+
+
 def prototype_html(folder, record, report, original_html, days):
     validated = read_sidecar(folder, record, report, missing_ok=True)
     if validated is None:
@@ -132,6 +146,7 @@ def prototype_html(folder, record, report, original_html, days):
     )
     if not count:
         raise SiteError("Reporter replay has no compatible verdict annotation location")
+    page = preserve_pinned_inputs(original_html, page)
     for name in INPUT_FILES.values():
         (folder / ("." + name)).unlink()
     return page

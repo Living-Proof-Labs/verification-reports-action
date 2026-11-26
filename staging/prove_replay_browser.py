@@ -9,6 +9,7 @@ from playwright.sync_api import sync_playwright
 parser = argparse.ArgumentParser()
 parser.add_argument("--replay", type=Path, required=True)
 parser.add_argument("--output", type=Path, required=True)
+parser.add_argument("--baseline-page", type=Path, required=True)
 parser.add_argument("--browser", default="/usr/bin/chromium")
 args = parser.parse_args()
 root = args.replay
@@ -87,6 +88,30 @@ with sync_playwright() as p:
                         "es=>es.map(e=>e.getAttribute('href')).sort()"
                     )
 
+                # The off page follows the pre-change publisher path. Compare the actual
+                # stamped section, not merely the source metadata or surrounding provenance.
+                assert off.locator("#pinned-inputs").count() == 1
+                assert page.locator("#pinned-inputs").count() == 1
+                assert page.locator("#pinned-inputs").evaluate("e=>e.outerHTML") == off.locator(
+                    "#pinned-inputs"
+                ).evaluate("e=>e.outerHTML")
+                assert page.locator("#pinned-inputs a").evaluate_all(
+                    "es=>es.map(e=>({text:e.textContent,href:e.getAttribute('href')}))"
+                ) == off.locator("#pinned-inputs a").evaluate_all(
+                    "es=>es.map(e=>({text:e.textContent,href:e.getAttribute('href')}))"
+                )
+                baseline = context.new_page()
+                baseline.set_content(args.baseline_page.read_text())
+                assert baseline.locator("#pinned-inputs").count() == 1
+                assert page.locator("#pinned-inputs").evaluate(
+                    "e=>e.outerHTML"
+                ) == baseline.locator("#pinned-inputs").evaluate("e=>e.outerHTML")
+                assert page.locator("#pinned-inputs a").evaluate_all(
+                    "es=>es.map(e=>({text:e.textContent,href:e.getAttribute('href')}))"
+                ) == baseline.locator("#pinned-inputs a").evaluate_all(
+                    "es=>es.map(e=>({text:e.textContent,href:e.getAttribute('href')}))"
+                )
+                baseline.close()
                 assert evidence(page) == evidence(off)
                 assert "11.46 s" in page.content()
                 assert "evaluator-livingproof-health" not in off.content()
@@ -97,7 +122,8 @@ with sync_playwright() as p:
                         path=str(art / "health-peer-mobile.png")
                     )
                 print(
-                    "Hero, Scenario/Integrity peer details, evidence links and duration parity PASS"
+                    "Hero, Scenario/Integrity peer details, evidence links, "
+                    "Pinned inputs HTML/links and duration parity PASS"
                 )
                 context.close()
     finally:

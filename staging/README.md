@@ -46,6 +46,7 @@ python staging/prove_replay.py \
   --output /path/to/new-proof-directory
 python staging/prove_replay_browser.py \
   --replay /path/to/new-proof-directory \
+  --baseline-page /path/to/pre-change-generated-run/index.html \
   --output /path/to/screenshots --browser /path/to/chromium
 ```
 
@@ -88,7 +89,7 @@ Do not pin this unpublished candidate on main.
   guessed replacement peer are needed. An unavailable or damaged original page
   is not a license to reconstruct unverifiable results.
 
-Normal verification: `task verify` passed 223 Node and 495 Python tests. The 28
+Normal verification: `task verify` passed 223 Node and 499 Python tests. The 28
 focused tests in `tests/test_health_display.py` and `tests/test_health_history.py`
 cover legacy ingestion, restore, tampering and expiry. Restore tests call the
 actual site Action entry point and actual Pages ZIP extraction; only GitHub
@@ -107,3 +108,21 @@ uv run python staging/prove_history.py \
 The immutable Reporter release/install and normal production dependency/CI
 integration remain gates before an Action PR. No GitHub mutation or new
 production pin is part of this compatibility staging turn.
+
+## Pinned inputs parity
+
+The genuine replay probe exposed a missing producer-owned Pinned inputs section.
+The adapter now retains that exact section from the original portable HTML, using
+`stampReportInputs`' existing before-body placement. It does not rebuild provenance
+from guessed inputs; the normal final HTML publication policy still applies.
+Ambiguous sections or insertion locations fail. The portable files remain unchanged.
+
+The browser probe compares both section outerHTML and every link text/href against
+Health-off **and** the pre-change generated page, alongside existing Integrity hero,
+Scenario/Integrity detail, evidence-link and duration parity checks. This runs at
+390, 430 and 1280 CSS pixels with JavaScript enabled and disabled.
+
+Latest local proof: `/tmp/health-replay-pinned` (nine CLI variants),
+`/tmp/health-pinned-browser` (six browser combinations), and
+`/tmp/health-pinned-history` (restore and expiry). Pre-change comparison input:
+`artifacts/live-baseline/unitree-g1/stock-mujoco-hallway/runs/45760910690/index.html`.
