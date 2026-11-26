@@ -354,6 +354,12 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
   const g1DownloadAt = check.steps.indexOf(g1Download);
   const g1SiteAt = check.steps.indexOf(g1Site);
   assert.ok(g1DownloadAt !== -1 && g1SiteAt > g1DownloadAt);
+  const g1Require = stepNamed(check, 'Require the G1 site build');
+  assert.equal(g1Require.if, 'always()');
+  assert.match(g1Require.run, /require_reports\.py g1 artifacts\/g1-site-check/);
+  assert.match(g1Require.env.SITE_STATUS, /steps\.g1-site\.outcome/);
+  assert.doesNotMatch(g1Require.run, /test -f/);
+  assert.ok(check.steps.indexOf(g1Require) > g1SiteAt);
 
   const site = verifyWorkflow.jobs['site-smoke'];
   assert.equal(site.needs, 'action-smoke');
