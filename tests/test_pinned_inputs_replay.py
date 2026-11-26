@@ -3,7 +3,7 @@
 import pytest
 
 from reports_common import SiteError
-from reports_presentation_prototype import preserve_pinned_inputs
+from reports_presentation import preserve_pinned_inputs
 
 
 def test_preserve_exact_producer_stamp_and_links():

@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--replay", type=Path, required=True)
 parser.add_argument("--output", type=Path, required=True)
 parser.add_argument("--baseline-page", type=Path, required=True)
-parser.add_argument("--browser", default="/usr/bin/chromium")
+parser.add_argument("--browser")
 args = parser.parse_args()
 root = args.replay
 handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
@@ -19,7 +19,7 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 art = args.output
 art.mkdir(parents=True, exist_ok=True)
 with sync_playwright() as p:
-    b = p.chromium.launch(executable_path=args.browser)
+    b = p.chromium.launch(**({"executable_path": args.browser} if args.browser else {}))
     try:
         for js in (True, False):
             for width in (390, 430, 1280):

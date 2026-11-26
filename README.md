@@ -256,3 +256,20 @@ site build. Unreferenced sidecars are not published. Validated `health.json` is
 retained with the published run checksums for the evidence retention window,
 then removed; run provenance remains. Older restored runs that never retained a
 sidecar show no Health result. Health-off pages are unchanged.
+
+### Optional evaluator peers
+
+New Health-on reports retain bound original rendering inputs. `./site` uses the
+released Reporter v3.16.0 typed presentation API to show Health as a third peer in
+the summary's Evaluators strip, alongside Scenario and Run Integrity. Its neutral
+**Advisory** cue is not PASS/FAIL and never affects grade. Each evaluator contributes
+independently; absent Health creates no placeholder. The three peers reflow on
+mobile and their details remain keyboard-accessible without JavaScript.
+
+The site Action installs a separate hash-locked Python runtime from
+`site/requirements.txt`. Original report/evidence files, Integrity annotations and
+Pinned inputs are preserved. Private rendering inputs are not published. Older
+Health archives without those inputs retain their validated advisory section;
+invalid declared bindings fail instead of falling back. Restored pages need no
+private input, but must retain their validated sidecar until normal evidence expiry.
+See [replay verification and compatibility](staging/README.md).

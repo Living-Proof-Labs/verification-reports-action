@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""LOCAL staging only; installed candidate API, no production dependency pin."""
+"""Typed adapter to the pinned released Reporter presentation API."""
 
 import hashlib
 import html
@@ -69,7 +69,7 @@ def preserve_pinned_inputs(original_html, page):
     return page
 
 
-def prototype_html(folder, record, report, original_html, days):
+def presentation_html(folder, record, report, original_html, days):
     validated = read_sidecar(folder, record, report, missing_ok=True)
     if validated is None:
         return original_html

@@ -32,7 +32,7 @@ from reports_common import (
     site_path,
 )
 from reports_health import read_sidecar
-from reports_presentation_prototype import INPUT_FILES, prepare_inputs, prototype_html
+from reports_presentation import INPUT_FILES, prepare_inputs, presentation_html
 from reports_render import (
     ARCHIVED_REPORTS_URL,
     DOCS_HOME_URL,
@@ -1282,10 +1282,9 @@ def publish_run_page(folder: Path, record: dict, *, now: str, days: int, trial: 
         strip_actions_links(report) | publish_evidence_links(report, links)
     ):
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    # The run's report.html was rendered by report.yml's reporter; republish it scrubbed.
-    # The old multi-robot site re-rendered with whatever reporter binary was on PATH,
-    # which made output depend on the runner; that path is intentionally gone.
-    html_text_for_page = prototype_html(folder, record, report, html_text, days)
+    # Preserve portable HTML. Only validated, bound optional contributions replay
+    # original inputs through the hash-locked released Reporter presentation API.
+    html_text_for_page = presentation_html(folder, record, report, html_text, days)
     for name in INPUT_FILES.values():
         (folder / ("." + name)).unlink(missing_ok=True)
     public = scrub_reporter_html(

@@ -9,7 +9,7 @@ from pathlib import Path
 parser = argparse.ArgumentParser()
 parser.add_argument("--g1-input", type=Path, required=True)
 parser.add_argument("--reporter-input", type=Path, required=True)
-parser.add_argument("--candidate-python", required=True)
+parser.add_argument("--python", required=True)
 parser.add_argument("--output", type=Path, required=True)
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
@@ -81,7 +81,7 @@ for variant in (
     record.write_text(json.dumps(data))
     subprocess.run(
         [
-            args.candidate_python,
+            args.python,
             "-c",
             "import sys;sys.path.insert(0,sys.argv[1]);import reports_site;"
             "from pathlib import Path;reports_site.write_published_checksums(Path(sys.argv[2]))",
@@ -102,7 +102,7 @@ for variant in (
         "GITHUB_RUN_ID": "peer-proof",
     }
     result = subprocess.run(
-        [args.candidate_python, str(root / "src/site_action.py")],
+        [args.python, str(root / "src/site_action.py")],
         env=env,
         capture_output=True,
         text=True,

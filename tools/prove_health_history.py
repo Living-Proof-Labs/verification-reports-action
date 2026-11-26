@@ -1,4 +1,4 @@
-"""Restore an already-built genuine candidate page via the real site entry point.
+"""Restore an already-built genuine released-API page via the real site entry point.
 
 Only the GitHub transport is replaced with a local Pages ZIP; no live deploy.
 """
