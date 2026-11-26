@@ -6,10 +6,8 @@ import html
 import json
 import re
 
-from livingproof_capability_report import EvaluatorPresentation, render
-
 from reports_common import SiteError
-from reports_health import document, read_sidecar
+from reports_health import advisory_html, document, read_sidecar
 
 INPUT_FILES = {
     "report": "report-render-input.json",
@@ -18,6 +16,8 @@ INPUT_FILES = {
 
 
 def prepare_inputs(source, record, report, original_html):
+    if "reporter_input" not in record:
+        return {}  # Legacy archive: retain the validated advisory, never invent a peer.
     reference = record.get("reporter_input")
     if not isinstance(reference, dict) or reference.get("format") != "livingproof-reporter-input/1":
         raise SiteError("Health replay requires bound original Reporter input")
@@ -59,6 +59,13 @@ def prototype_html(folder, record, report, original_html, days):
     validated = read_sidecar(folder, record, report, missing_ok=True)
     if validated is None:
         return original_html
+    if "reporter_input" not in record:
+        section = advisory_html(validated[1], record["health"])
+        return re.sub(
+            r"</body\s*>", lambda _: section + "</body>", original_html, count=1, flags=re.I
+        )
+    from livingproof_capability_report import EvaluatorPresentation, render
+
     original = document((folder / ("." + INPUT_FILES["report"])).read_bytes())
     lines = (folder / ("." + INPUT_FILES["integrity_lines"])).read_text().splitlines()
     for key in ("source_bundle", "source_bundle_sha256", "summaries", "decisions"):

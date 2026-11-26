@@ -70,9 +70,40 @@ that release, pin its verified source/wheel provenance through the existing
 conventions, and move these probes into normal CI using retained genuine fixtures.
 Do not pin this unpublished candidate on main.
 
-Before a production Action PR, finish backward-compatible restored-history handling
-and retention behavior for the new original-input descriptor. Old Health-off runs
-must keep their existing path; old Health-on archives lack these newly retained
-inputs and require an explicit migration/compatibility decision, never guessed
-reconstruction or a source-digest rewrite. This staging proof covers fresh ingestion
-and replay, not that release/migration lifecycle.
+## Explicit archive compatibility
+
+- Fresh Health-on archives **without** `reporter_input` use the prior validated
+  advisory section. They do not fabricate a peer or reconstruct a source digest.
+  Health-off archives keep the unchanged path. The Reporter candidate is imported
+  lazily, only for a fully bound new replay.
+- A **present** replay descriptor is a commitment: unknown/malformed descriptors,
+  missing files, bad digests or mismatched original data fail. No silent fallback.
+- Restored published legacy sections and newer peer pages remain byte-identical
+  when still valid. Restore checks the Health sidecar and publication policy,
+  without requiring private replay inputs that are deliberately not published.
+  A visible legacy section or peer with a missing sidecar is refused; tampering
+  still fails the digest check.
+- Existing retention removes expired Health data and regenerates the page from
+  the portable report without a Health result. Neither private inputs nor a
+  guessed replacement peer are needed. An unavailable or damaged original page
+  is not a license to reconstruct unverifiable results.
+
+Normal verification: `task verify` passed 223 Node and 495 Python tests. The 28
+focused tests in `tests/test_health_display.py` and `tests/test_health_history.py`
+cover legacy ingestion, restore, tampering and expiry. Restore tests call the
+actual site Action entry point and actual Pages ZIP extraction; only GitHub
+transport responses are fixtures, not a live hosted restore.
+
+The genuine current legacy input from run 45760910690 rebuilt through
+`src/site_action.py`: all 19 run files matched the pre-staging baseline byte-for-byte.
+The existing staged genuine peer output also passed actual restore and expiry:
+
+```sh
+uv run python staging/prove_history.py \
+  --published-site /path/to/previous-peer-proof/on/site \
+  --output /path/to/new-history-proof
+```
+
+The immutable Reporter release/install and normal production dependency/CI
+integration remain gates before an Action PR. No GitHub mutation or new
+production pin is part of this compatibility staging turn.

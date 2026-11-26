@@ -1439,7 +1439,10 @@ def recheck_restored_run(folder: Path) -> None:
     if (
         health is None
         and page.is_file()
-        and '<section id="health-advisory"' in _read_utf8_text(page)
+        and re.search(
+            r"id=[\"\'](?:health-advisory|evaluator-livingproof-health)[\"\']",
+            _read_utf8_text(page),
+        )
     ):
         raise SiteError(f"restored {page}: Health advisory has no validated sidecar")
     evidence = folder / "evidence"
