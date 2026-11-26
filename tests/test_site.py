@@ -818,6 +818,34 @@ def test_evidence_manifest_controller_artifact_is_published(tmp_path: Path):
     assert site_tool.public_page_problems(reports) == []
 
 
+def _manifest_with_controller_artifact(artifact: dict, **extra: object) -> bytes:
+    document = {
+        "format": "livingproof-evidence-manifest/1.0.0",
+        "configuration": {"profile": {"controller": {"artifact": artifact}}},
+    }
+    document.update(extra)
+    return (json.dumps(document) + "\n").encode()
+
+
+def test_other_manifest_artifact_key_is_refused(tmp_path: Path):
+    payload = _manifest_with_controller_artifact(
+        {"path": "deploy/pre_train/g1/motion.pt"},
+        notes={"artifact": {"name": "motion.pt"}},
+    )
+    _make_run_folder(tmp_path / "in", "hallway", evidence_files={"manifest.json": payload})
+    with pytest.raises(site_tool.SiteError, match="manifest.json mentions an artifact"):
+        site_tool.build(tmp_path / "reports", tmp_path / "in")
+
+
+def test_artifact_wording_inside_controller_artifact_values_is_refused(tmp_path: Path):
+    payload = _manifest_with_controller_artifact(
+        {"path": "deploy/pre_train/g1/motion.pt", "note": "shipped artifact"}
+    )
+    _make_run_folder(tmp_path / "in", "hallway", evidence_files={"manifest.json": payload})
+    with pytest.raises(site_tool.SiteError, match="manifest.json mentions an artifact"):
+        site_tool.build(tmp_path / "reports", tmp_path / "in")
+
+
 def test_artifact_wording_in_rendered_page_text_is_refused(tmp_path: Path):
     reports = tmp_path / "reports"
     reports.mkdir()

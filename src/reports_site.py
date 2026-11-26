@@ -1312,34 +1312,30 @@ def published_text(path: Path) -> bool:
     return path.name in {"SHA256SUMS"}
 
 
-def _drop_structural_artifact(node: object) -> bool:
-    """Remove a provenance object's `artifact` key and value.
-
-    The evidence manifest records the controller as `"artifact": {repo, path, commit, ...}`.
-    That key is structure, not wording on a rendered page.
-    """
-    changed = False
-    if isinstance(node, dict):
-        if isinstance(node.get("artifact"), dict):
-            del node["artifact"]
-            changed = True
-        for child in node.values():
-            changed = _drop_structural_artifact(child) or changed
-    elif isinstance(node, list):
-        for child in node:
-            changed = _drop_structural_artifact(child) or changed
-    return changed
-
-
 def _wording_text(path: Path, text: str) -> str:
+    """Scan text, ignoring only the key name configuration.profile.controller.artifact.
+
+    The evidence manifest records the controller provenance under that key. The key name is
+    structure. Its values, and every other `artifact` key, are still scanned.
+    """
     if path.name != "manifest.json" or "evidence" not in path.parts:
         return text
     try:
         document = json.loads(text)
     except json.JSONDecodeError:
         return text
-    if not _drop_structural_artifact(document):
+    node: object = document
+    for part in ("configuration", "profile", "controller"):
+        if not isinstance(node, dict):
+            return text
+        node = node.get(part)
+    if not isinstance(node, dict) or not isinstance(node.get("artifact"), dict):
         return text
+    # Keep the object's values in the scan. Drop only this key name.
+    stand_in = "kept"
+    while stand_in in node:
+        stand_in += "_"
+    node[stand_in] = node.pop("artifact")
     return json.dumps(document)
 
 
