@@ -62,6 +62,12 @@ def check(base, commit, version=None):
         raise ValueError("Missing published reports section") from exc
     if "verification-reports-action" not in reports:
         raise ValueError("Missing published reports section")
+    try:
+        g1 = fetch("reports/g1/index.html").decode()
+    except OSError as exc:
+        raise ValueError("Missing published reports section") from exc
+    if "unitree-g1" not in g1:
+        raise ValueError("Missing published reports section")
     brand = fetch("assets/brand.css")
     if hashlib.sha256(brand).hexdigest() != identity["brand"]["sha256"]:
         raise ValueError("Published brand checksum mismatch")

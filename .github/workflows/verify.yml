@@ -308,6 +308,14 @@ jobs:
             echo "report still contains placeholder" >&2
             exit 1
           fi
+      - name: Build the G1 report with ./site
+        uses: ./site
+        with:
+          runs-dir: artifacts/smoke-report
+          output-dir: artifacts/g1-site-check
+          reset-history: 'true'
+          restore-history: 'false'
+          upload-artifact: 'false'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: g1-verification-report-plan

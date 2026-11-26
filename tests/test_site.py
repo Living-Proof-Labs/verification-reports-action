@@ -788,6 +788,87 @@ def test_mcap_and_video_pruned_after_configurable_days_keeping_pages_and_checksu
 # ---------------------------------------------------------------- chips, integrity & scrubbing
 
 
+def test_evidence_manifest_controller_artifact_is_published(tmp_path: Path):
+    manifest = {
+        "format": "livingproof-evidence-manifest/1.0.0",
+        "configuration": {
+            "profile": {
+                "controller": {
+                    "publisher": "Unitree Robotics",
+                    "artifact": {
+                        "repo": "https://github.com/unitreerobotics/unitree_rl_gym",
+                        "path": "deploy/pre_train/g1/motion.pt",
+                        "commit": "a" * 40,
+                        "sha256": "b" * 64,
+                        "license": "BSD-3-Clause",
+                    },
+                }
+            }
+        },
+    }
+    payload = (json.dumps(manifest, indent=2) + "\n").encode()
+    _make_run_folder(tmp_path / "in", "hallway", evidence_files={"manifest.json": payload})
+    reports = tmp_path / "reports"
+    site_tool.build(reports, tmp_path / "in")
+    published = json.loads(
+        next(reports.rglob("evidence/manifest.json")).read_text(encoding="utf-8")
+    )
+    stored = published["configuration"]["profile"]["controller"]["artifact"]
+    assert stored["path"] == "deploy/pre_train/g1/motion.pt"
+    assert site_tool.public_page_problems(reports) == []
+
+
+def _manifest_with_controller_artifact(artifact: dict, **extra: object) -> bytes:
+    document = {
+        "format": "livingproof-evidence-manifest/1.0.0",
+        "configuration": {"profile": {"controller": {"artifact": artifact}}},
+    }
+    document.update(extra)
+    return (json.dumps(document) + "\n").encode()
+
+
+def test_other_manifest_artifact_key_is_refused(tmp_path: Path):
+    payload = _manifest_with_controller_artifact(
+        {"path": "deploy/pre_train/g1/motion.pt"},
+        notes={"artifact": {"name": "motion.pt"}},
+    )
+    _make_run_folder(tmp_path / "in", "hallway", evidence_files={"manifest.json": payload})
+    with pytest.raises(site_tool.SiteError, match="manifest.json mentions an artifact"):
+        site_tool.build(tmp_path / "reports", tmp_path / "in")
+
+
+def test_artifact_wording_inside_controller_artifact_values_is_refused(tmp_path: Path):
+    payload = _manifest_with_controller_artifact(
+        {"path": "deploy/pre_train/g1/motion.pt", "note": "shipped artifact"}
+    )
+    _make_run_folder(tmp_path / "in", "hallway", evidence_files={"manifest.json": payload})
+    with pytest.raises(site_tool.SiteError, match="manifest.json mentions an artifact"):
+        site_tool.build(tmp_path / "reports", tmp_path / "in")
+
+
+def test_duplicate_controller_artifact_key_is_refused(tmp_path: Path):
+    payload = (
+        b'{"configuration":{"profile":{"controller":'
+        b'{"artifact":"leaked artifact wording","artifact":{"path":"m"}}}}}\n'
+    )
+    _make_run_folder(tmp_path / "in", "hallway", evidence_files={"manifest.json": payload})
+    with pytest.raises(site_tool.SiteError, match="manifest.json mentions an artifact"):
+        site_tool.build(tmp_path / "reports", tmp_path / "in")
+
+
+def test_artifact_wording_in_rendered_page_text_is_refused(tmp_path: Path):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    page = reports / "index.html"
+    page.write_text("<p>Download the artifact.</p>", encoding="utf-8")
+    assert site_tool.public_page_problems(reports) == ["index.html mentions an artifact"]
+    assert site_tool.html_is_dirty(page.read_text(encoding="utf-8"))
+    page.write_text(
+        "<p><a href='https://github.com/org/repo/actions/runs/1'>run</a></p>", encoding="utf-8"
+    )
+    assert site_tool.public_page_problems(reports) == ["index.html links to /actions/"]
+
+
 def test_actions_urls_and_artifact_wording_are_scrubbed_from_public_files(tmp_path: Path):
     runs_in = tmp_path / "in"
     folder = _make_run_folder(

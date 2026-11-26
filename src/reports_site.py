@@ -1312,6 +1312,48 @@ def published_text(path: Path) -> bool:
     return path.name in {"SHA256SUMS"}
 
 
+class _DuplicateJsonKey(ValueError):
+    """An object in the evidence manifest repeats a key."""
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    document: dict = {}
+    for key, value in pairs:
+        if key in document:
+            raise _DuplicateJsonKey(key)
+        document[key] = value
+    return document
+
+
+def _wording_text(path: Path, text: str) -> str:
+    """Scan text, ignoring only the key name configuration.profile.controller.artifact.
+
+    The evidence manifest records the controller provenance under that key. The key name is
+    structure. Its values, and every other `artifact` key, are still scanned. A repeated key
+    is not a valid object: the parser would keep only the last one and hide the earlier
+    value, so the raw text is scanned instead.
+    """
+    if path.name != "manifest.json" or "evidence" not in path.parts:
+        return text
+    try:
+        document = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+    except (json.JSONDecodeError, _DuplicateJsonKey):
+        return text
+    node: object = document
+    for part in ("configuration", "profile", "controller"):
+        if not isinstance(node, dict):
+            return text
+        node = node.get(part)
+    if not isinstance(node, dict) or not isinstance(node.get("artifact"), dict):
+        return text
+    # Keep the object's values in the scan. Drop only this key name.
+    stand_in = "kept"
+    while stand_in in node:
+        stand_in += "_"
+    node[stand_in] = node.pop("artifact")
+    return json.dumps(document)
+
+
 def public_page_problems(reports_dir: Path) -> list[str]:
     problems = []
     if not reports_dir.is_dir():
@@ -1321,7 +1363,7 @@ def public_page_problems(reports_dir: Path) -> list[str]:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         relative = path.relative_to(reports_dir).as_posix()
-        if ARTIFACT_WORD.search(text):
+        if ARTIFACT_WORD.search(_wording_text(path, text)):
             problems.append(f"{relative} mentions an artifact")
         if "/actions/" in text.lower():
             problems.append(f"{relative} links to /actions/")
