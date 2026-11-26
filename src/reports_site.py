@@ -1312,17 +1312,32 @@ def published_text(path: Path) -> bool:
     return path.name in {"SHA256SUMS"}
 
 
+class _DuplicateJsonKey(ValueError):
+    """An object in the evidence manifest repeats a key."""
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    document: dict = {}
+    for key, value in pairs:
+        if key in document:
+            raise _DuplicateJsonKey(key)
+        document[key] = value
+    return document
+
+
 def _wording_text(path: Path, text: str) -> str:
     """Scan text, ignoring only the key name configuration.profile.controller.artifact.
 
     The evidence manifest records the controller provenance under that key. The key name is
-    structure. Its values, and every other `artifact` key, are still scanned.
+    structure. Its values, and every other `artifact` key, are still scanned. A repeated key
+    is not a valid object: the parser would keep only the last one and hide the earlier
+    value, so the raw text is scanned instead.
     """
     if path.name != "manifest.json" or "evidence" not in path.parts:
         return text
     try:
-        document = json.loads(text)
-    except json.JSONDecodeError:
+        document = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+    except (json.JSONDecodeError, _DuplicateJsonKey):
         return text
     node: object = document
     for part in ("configuration", "profile", "controller"):

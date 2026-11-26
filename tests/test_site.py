@@ -846,6 +846,16 @@ def test_artifact_wording_inside_controller_artifact_values_is_refused(tmp_path:
         site_tool.build(tmp_path / "reports", tmp_path / "in")
 
 
+def test_duplicate_controller_artifact_key_is_refused(tmp_path: Path):
+    payload = (
+        b'{"configuration":{"profile":{"controller":'
+        b'{"artifact":"leaked artifact wording","artifact":{"path":"m"}}}}}\n'
+    )
+    _make_run_folder(tmp_path / "in", "hallway", evidence_files={"manifest.json": payload})
+    with pytest.raises(site_tool.SiteError, match="manifest.json mentions an artifact"):
+        site_tool.build(tmp_path / "reports", tmp_path / "in")
+
+
 def test_artifact_wording_in_rendered_page_text_is_refused(tmp_path: Path):
     reports = tmp_path / "reports"
     reports.mkdir()
