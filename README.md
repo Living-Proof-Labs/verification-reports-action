@@ -244,3 +244,15 @@ off from the same downloaded artifacts, compares report bytes, evidence bytes,
 `grade` and `grades`, and retains `g1-health-off-report` alongside the Health-on
 report. `health-comparison.json` records the actual trial hashes and observed
 metrics; historical corner numbers are not used as the hallway oracle.
+
+`./site` displays a Health advisory on the run page only after checking the
+sidecar digest, source/version provenance, and its report, trial, configuration
+and input-manifest bindings. It shows recorded simulator base-height measurements
+separately from unavailable robot health telemetry. The original portable bundle
+is not rewritten. Generated pages keep the existing grade and evaluator outcomes.
+
+New input runs with a declared but missing, unsafe or invalid sidecar fail the
+site build. Unreferenced sidecars are not published. Validated `health.json` is
+retained with the published run checksums for the evidence retention window,
+then removed; run provenance remains. Older restored runs that never retained a
+sidecar show no Health result. Health-off pages are unchanged.

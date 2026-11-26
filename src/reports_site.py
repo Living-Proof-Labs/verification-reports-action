@@ -31,6 +31,7 @@ from reports_common import (
     listing_path,
     site_path,
 )
+from reports_health import advisory_html, read_sidecar
 from reports_render import (
     ARCHIVED_REPORTS_URL,
     DOCS_HOME_URL,
@@ -913,6 +914,7 @@ def add_run_folder(
             f"Run {run_id!r} in {source} matches exclude-runs; "
             "exclude-runs only applies to restored history, not runs added in the same build."
         )
+    health = read_sidecar(source, record, report_data, verify_inputs=True)
     key = (robot, variant, run_id)
     if key in seen_in_batch:
         raise SiteError(
@@ -929,6 +931,8 @@ def add_run_folder(
         shutil.rmtree(folder)
     folder.mkdir(parents=True, exist_ok=True)
 
+    if health is not None:
+        (folder / "health.json").write_bytes(health[0])
     for name in (*REPORT_FILES, "SHA256SUMS"):
         shutil.copyfile(source / name, folder / name)
     for item in inputs:
@@ -980,6 +984,11 @@ def prune_expired_evidence(reports_dir: Path, now: str, days: int) -> tuple[list
         if not isinstance(created, str) or not evidence_expired(created, now, days):
             continue
         run_folder = record_path.parent
+        sidecar = run_folder / "health.json"
+        if sidecar.is_file() and not sidecar.is_symlink():
+            sidecar.unlink()
+            removed.append(sidecar.relative_to(reports_dir).as_posix())
+            affected.add(run_folder)
         evidence = run_folder / "evidence"
         if evidence.is_dir():
             for path in sorted(evidence.rglob("*")):
@@ -1279,6 +1288,10 @@ def publish_run_page(folder: Path, record: dict, *, now: str, days: int, trial: 
         reports_href="../../../../index.html",
     )
     public = with_spec_provenance(public, record, report)
+    health = read_sidecar(folder, record, report, missing_ok=True)
+    if health is not None:
+        section = advisory_html(health[1], record["health"])
+        public = re.sub(r"</body\s*>", lambda _: section + "</body>", public, count=1, flags=re.I)
     # Checked after every rewrite, so deleting a word cannot assemble new markup.
     public = checked_report_html(public, str(folder / "index.html"))
     if html_is_dirty(public):
@@ -1411,6 +1424,12 @@ def recheck_restored_run(folder: Path) -> None:
     would otherwise be carried into every later deployment. The build fails rather than
     rewriting them; reset-history rebuilds the site from run folders.
     """
+    read_sidecar(
+        folder,
+        read_json_object(folder / "run.json"),
+        read_report(folder / "report.json"),
+        missing_ok=True,
+    )
     evidence = folder / "evidence"
     # The site writes each evidence listing as evidence/<name>.html. A restored one is a
     # page on the Pages origin like report.html, so it gets the same check.
