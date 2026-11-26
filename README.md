@@ -272,4 +272,4 @@ Pinned inputs are preserved. Private rendering inputs are not published. Older
 Health archives without those inputs retain their validated advisory section;
 invalid declared bindings fail instead of falling back. Restored pages need no
 private input, but must retain their validated sidecar until normal evidence expiry.
-See [replay verification and compatibility](staging/README.md).
+See [replay verification and compatibility](docs/health-peer.md).
