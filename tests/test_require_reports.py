@@ -46,10 +46,14 @@ def test_refused_site_build_is_caught_when_index_exists(tmp_path: Path):
 def test_refused_g1_build_is_caught_when_index_exists(tmp_path: Path):
     reports = tmp_path / "reports"
     reports.mkdir()
-    (reports / "index.html").write_text("unitree-g1 badge-fail FAIL", encoding="utf-8")
-    with pytest.raises(SystemExit, match="refused site build"):
-        require_reports.require_g1_build(reports, "failure")
-    require_reports.require_g1_build(reports, "success")
+    for badge in ('class="badge badge-fail"', 'class="badge badge-pass"'):
+        (reports / "index.html").write_text(
+            f"unitree-g1 <span {badge}>grade</span>",
+            encoding="utf-8",
+        )
+        with pytest.raises(SystemExit, match="refused site build"):
+            require_reports.require_g1_build(reports, "failure")
+        require_reports.require_g1_build(reports, "success")
     (reports / "index.html").write_text("unitree-g1", encoding="utf-8")
     with pytest.raises(SystemExit, match="missing the expected report"):
         require_reports.require_g1_build(reports, "success")

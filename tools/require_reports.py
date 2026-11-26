@@ -2,12 +2,15 @@
 """Link the G1 report from the mock index and reject a refused site build."""
 
 import os
+import re
 import sys
 from pathlib import Path
 
 G1_HREF = 'href="g1/"'
 G1_LINK = '<p class="sibling-report"><a href="g1/">Unitree G1 report</a></p>'
 HEADING = "<h1>Verification reports</h1>"
+# reports_render._badge_html emits exactly one of these class attributes.
+GRADE_BADGE = re.compile(r'class="badge badge-(?:pass|fail|warn|muted)"')
 
 
 def link_g1_report(index_path: Path) -> None:
@@ -42,7 +45,7 @@ def require_g1_build(reports: Path, status: str) -> None:
     if status != "success":
         raise SystemExit(f"refused site build: {status}")
     index = (reports / "index.html").read_text(encoding="utf-8")
-    if "unitree-g1" not in index or "FAIL" not in index:
+    if "unitree-g1" not in index or GRADE_BADGE.search(index) is None:
         raise SystemExit("G1 site output is missing the expected report")
 
 
