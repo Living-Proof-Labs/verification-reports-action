@@ -31,7 +31,8 @@ from reports_common import (
     listing_path,
     site_path,
 )
-from reports_health import advisory_html, read_sidecar
+from reports_health import read_sidecar
+from reports_presentation import INPUT_FILES, prepare_inputs, presentation_html
 from reports_render import (
     ARCHIVED_REPORTS_URL,
     DOCS_HOME_URL,
@@ -915,6 +916,7 @@ def add_run_folder(
             "exclude-runs only applies to restored history, not runs added in the same build."
         )
     health = read_sidecar(source, record, report_data, verify_inputs=True)
+    replay = prepare_inputs(source, record, report_data, reporter_html(source)) if health else {}
     key = (robot, variant, run_id)
     if key in seen_in_batch:
         raise SiteError(
@@ -933,6 +935,8 @@ def add_run_folder(
 
     if health is not None:
         (folder / "health.json").write_bytes(health[0])
+        for name, data in replay.items():
+            (folder / ("." + name)).write_bytes(data)
     for name in (*REPORT_FILES, "SHA256SUMS"):
         shutil.copyfile(source / name, folder / name)
     for item in inputs:
@@ -1278,20 +1282,20 @@ def publish_run_page(folder: Path, record: dict, *, now: str, days: int, trial: 
         strip_actions_links(report) | publish_evidence_links(report, links)
     ):
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    # The run's report.html was rendered by report.yml's reporter; republish it scrubbed.
-    # The old multi-robot site re-rendered with whatever reporter binary was on PATH,
-    # which made output depend on the runner; that path is intentionally gone.
-    public = scrub_reporter_html(html_text, record, trial=trial, expired=expired, days=days)
+    # Preserve portable HTML. Only validated, bound optional contributions replay
+    # original inputs through the hash-locked released Reporter presentation API.
+    html_text_for_page = presentation_html(folder, record, report, html_text, days)
+    for name in INPUT_FILES.values():
+        (folder / ("." + name)).unlink(missing_ok=True)
+    public = scrub_reporter_html(
+        html_text_for_page, record, trial=trial, expired=expired, days=days
+    )
     public = with_site_nav(
         public,
         overview_href="../../../../../index.html",
         reports_href="../../../../index.html",
     )
     public = with_spec_provenance(public, record, report)
-    health = read_sidecar(folder, record, report, missing_ok=True)
-    if health is not None:
-        section = advisory_html(health[1], record["health"])
-        public = re.sub(r"</body\s*>", lambda _: section + "</body>", public, count=1, flags=re.I)
     # Checked after every rewrite, so deleting a word cannot assemble new markup.
     public = checked_report_html(public, str(folder / "index.html"))
     if html_is_dirty(public):
@@ -1434,7 +1438,10 @@ def recheck_restored_run(folder: Path) -> None:
     if (
         health is None
         and page.is_file()
-        and '<section id="health-advisory"' in _read_utf8_text(page)
+        and re.search(
+            r"id=[\"\'](?:health-advisory|evaluator-livingproof-health)[\"\']",
+            _read_utf8_text(page),
+        )
     ):
         raise SiteError(f"restored {page}: Health advisory has no validated sidecar")
     evidence = folder / "evidence"

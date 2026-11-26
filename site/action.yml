@@ -108,6 +108,17 @@ runs:
       uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
       with:
         python-version: '3.12'
+    - name: Install hash-locked Reporter in an isolated environment
+      shell: bash
+      env:
+        SITE_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        runtime="$(mktemp -d "$RUNNER_TEMP/reports-site.XXXXXX")"
+        python3 -m venv "$runtime"
+        "$runtime/bin/python" -m pip install --require-hashes -r "$SITE_ACTION_PATH/requirements.txt"
+        "$runtime/bin/python" -m pip check
+        "$runtime/bin/livingproof-capability-report" --version
+        echo "$runtime/bin" >> "$GITHUB_PATH"
     - name: Restore history and build reports section
       id: build
       shell: bash

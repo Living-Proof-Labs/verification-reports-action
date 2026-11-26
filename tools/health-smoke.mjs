@@ -40,6 +40,23 @@ for (const item of plan.definitions) {
     assert.equal(health.robot.status, 'no robot health telemetry');
     assert.deepEqual(health.robot.message_counts, {});
     const offRecord = JSON.parse(readFileSync(path.join(offDir, 'run.json')));
+    // Health-on additionally retains exact private replay inputs. Validate them
+    // against the SAME downloaded producer artifact before excluding this optional
+    // descriptor from metadata parity; no verdict/provenance field is excluded.
+    const originalDir = path.join(process.env.INPUT_VERIFIER_ROOT, 'reports', `${item.artifactPrefix}capability-report-${configuration}`);
+    assert.equal(record.reporter_input.format, 'livingproof-reporter-input/1');
+    assert.deepEqual(Object.keys(record.reporter_input).sort(), ['format', 'integrity_lines', 'report']);
+    for (const [field, retained, original] of [
+      ['report', 'report-render-input.json', 'report.json'],
+      ['integrity_lines', 'report-integrity-lines.txt', 'integrity-lines.txt'],
+    ]) {
+      const bytes = readFileSync(path.join(onDir, retained));
+      assert.deepEqual(bytes, readFileSync(path.join(originalDir, original)));
+      assert.deepEqual(record.reporter_input[field], { path: retained, sha256: sha256(bytes) });
+      assert.equal(existsSync(path.join(offDir, retained)), false);
+    }
+    assert.equal(offRecord.reporter_input, undefined);
+    delete record.reporter_input;
     delete record.health;
     // Each collection has its own timestamp; all outcomes/provenance are equal.
     delete record.run.created;

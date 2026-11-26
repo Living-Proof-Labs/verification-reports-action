@@ -1,0 +1,5 @@
+# Released Reporter v3.16.0, commit c85d4cb79f3551e827580756fad67101030b1118.
+# Wheel digest verified against official SHA256SUMS and release asset metadata.
+livingproof-capability-report @ https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.16.0/livingproof_capability_report-3.16.0-py3-none-any.whl#sha256=bcdb10c64398fbbf8fc049833cc000ce7bf24585702c8388eb5b18ea60876878
+# Same immutable common-library dependency pinned by Reporter's release packaging.
+livingproof-common @ https://github.com/Living-Proof-Labs/livingproof-common/releases/download/v1.0.0/livingproof_common-1.0.0-py3-none-any.whl#sha256=8b7795748b54eeb89610f3716245f45db48ac0474465a5abbf974e7075c1476c
