@@ -344,6 +344,16 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
   assert.match(reportScript, /test ! -e artifacts\/smoke-report\/fixture-hallway/);
   assert.match(reportScript, /test ! -e artifacts\/smoke-report\/fixture-scenario/);
   assert.doesNotMatch(reportScript, /= "PASS"/);
+  const g1Site = check.steps.find((step) => step.uses === './site');
+  assert.ok(g1Site, 'g1-smoke-check must build the real report with ./site');
+  assert.equal(g1Site.with['runs-dir'], 'artifacts/smoke-report');
+  assert.equal(g1Site.with['output-dir'], 'artifacts/g1-site-check');
+  assert.equal(g1Site.with['reset-history'], 'true');
+  assert.equal(g1Site.with['restore-history'], 'false');
+  assert.equal(g1Site.with['upload-artifact'], 'false');
+  const g1DownloadAt = check.steps.indexOf(g1Download);
+  const g1SiteAt = check.steps.indexOf(g1Site);
+  assert.ok(g1DownloadAt !== -1 && g1SiteAt > g1DownloadAt);
 
   const site = verifyWorkflow.jobs['site-smoke'];
   assert.equal(site.needs, 'action-smoke');

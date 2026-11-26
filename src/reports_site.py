@@ -1312,6 +1312,37 @@ def published_text(path: Path) -> bool:
     return path.name in {"SHA256SUMS"}
 
 
+def _drop_structural_artifact(node: object) -> bool:
+    """Remove a provenance object's `artifact` key and value.
+
+    The evidence manifest records the controller as `"artifact": {repo, path, commit, ...}`.
+    That key is structure, not wording on a rendered page.
+    """
+    changed = False
+    if isinstance(node, dict):
+        if isinstance(node.get("artifact"), dict):
+            del node["artifact"]
+            changed = True
+        for child in node.values():
+            changed = _drop_structural_artifact(child) or changed
+    elif isinstance(node, list):
+        for child in node:
+            changed = _drop_structural_artifact(child) or changed
+    return changed
+
+
+def _wording_text(path: Path, text: str) -> str:
+    if path.name != "manifest.json" or "evidence" not in path.parts:
+        return text
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if not _drop_structural_artifact(document):
+        return text
+    return json.dumps(document)
+
+
 def public_page_problems(reports_dir: Path) -> list[str]:
     problems = []
     if not reports_dir.is_dir():
@@ -1321,7 +1352,7 @@ def public_page_problems(reports_dir: Path) -> list[str]:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         relative = path.relative_to(reports_dir).as_posix()
-        if ARTIFACT_WORD.search(text):
+        if ARTIFACT_WORD.search(_wording_text(path, text)):
             problems.append(f"{relative} mentions an artifact")
         if "/actions/" in text.lower():
             problems.append(f"{relative} links to /actions/")
