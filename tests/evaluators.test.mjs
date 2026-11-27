@@ -134,6 +134,30 @@ test('a caller path or an inline list is the declaration', () => {
   assert.match(release, /evaluators: evaluators\.yml/);
 });
 
+test('both health legs run the same evaluators step', () => {
+  const verify = readFileSync(new URL('../.github/workflows/verify.yml', import.meta.url), 'utf8');
+  const report = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
+  const smoke = verify.slice(verify.indexOf('\n  g1-smoke:\n'), verify.indexOf('\n  g1-smoke-check:\n'));
+  const check = verify.slice(verify.indexOf('\n  g1-smoke-check:\n'));
+  const declared = smoke.match(/\n {6}evaluators: (\S+)\s*$/);
+  assert.ok(declared, 'g1-smoke does not pass an evaluators input');
+  assert.match(check, new RegExp(`INPUT_EVALUATORS: ${declared[1]}\\n`));
+  assert.match(check, /INPUT_CALLER_ROOT: \$\{\{ github\.workspace \}\}/);
+  const evaluatorsAt = check.indexOf('src/evaluators_run.py');
+  const compareAt = check.indexOf('node tools/health-smoke.mjs');
+  assert.ok(evaluatorsAt !== -1 && compareAt !== -1 && evaluatorsAt < compareAt);
+  const collect = report.slice(report.indexOf('\n  collect:\n'));
+  assert.match(collect, /INPUT_EVALUATORS: \$\{\{ inputs\.evaluators \}\}/);
+  assert.match(collect, /action\/src\/evaluators_run\.py/);
+  for (const pattern of ['vra-*-verified-*', 'vra-*-links-*', 'vra-*-evaluator-results-*']) {
+    const escaped = pattern.replaceAll('*', '\\*');
+    assert.match(check, new RegExp(`pattern: ${escaped}`));
+    assert.match(collect, new RegExp(`pattern: ${escaped}`));
+  }
+  assert.match(check, new RegExp(`ref: ${VERIFIER_WORKFLOW_SHA}`));
+  assert.match(collect, new RegExp(`ref: ${VERIFIER_WORKFLOW_SHA}`));
+});
+
 test('an inline empty list is no evaluators', () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
   const emptyList = resolveCallerEvaluators('[]', root);

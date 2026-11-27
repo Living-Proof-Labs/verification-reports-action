@@ -344,6 +344,44 @@ jobs:
         with:
           pattern: vra-unitree-g1-stock-mujoco-hallway-video-*
           path: downloaded/video
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vra-*-verified-*
+          path: downloaded/verified
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vra-*-links-*
+          path: downloaded/links
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vra-*-evaluator-results-*
+          path: downloaded/evaluator-results
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: '0.12.23'
+          python-version: '3.12.14'
+      - name: capability-verifier
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: Living-Proof-Labs/capability-verifier
+          ref: 93a490d82ae50e4c551873dfcfaa778adcd5b689
+          path: capability-verifier
+          persist-credentials: false
+      - name: Install capability-verifier
+        working-directory: capability-verifier
+        run: uv sync --locked
+      - id: evaluators
+        working-directory: capability-verifier
+        env:
+          PYTHONPATH: src
+          INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/health-plan/plan.json
+          INPUT_DOWNLOAD_ROOT: ${{ github.workspace }}/downloaded
+          INPUT_EVALUATORS: evaluators.yml
+          INPUT_CALLER_ROOT: ${{ github.workspace }}
+        run: uv run --no-sync python "${{ github.workspace }}/src/evaluators_run.py"
+      - name: Fail when an evaluator declaration produced no provenance
+        if: steps.evaluators.outputs.failed == 'true'
+        run: exit 1
       - name: Compare Health on and off using the same trial artifacts
         env:
           INPUT_PLAN_PATH: artifacts/health-plan/plan.json

@@ -21,6 +21,7 @@ from evaluators_run import (
     load_provenance,
     loader_command,
     main,
+    pin_integrity_clock,
     record_missing,
     render_with_reporter,
     reporter_docker_command,
@@ -699,3 +700,101 @@ def test_a_render_failure_names_the_configuration(tmp_path, monkeypatch, capsys)
     text = (report / "integrity-lines.txt").read_text(encoding="utf-8")
     assert "stock: reporter json exited 1" in text
     assert "stock: reporter json exited 1" in capsys.readouterr().err
+
+
+def _integrity_document(started_at: str) -> dict:
+    return {
+        "format": "livingproof-evaluator-result/1.2.0",
+        "evaluator": {
+            "id": "livingproof-run-integrity",
+            "kind": "integrity",
+            "display_name": "Run Integrity",
+        },
+        "timestamps": {"started_at": started_at, "completed_at": started_at},
+        "integrity": {"run": {"test_system_status": "COMPLETED", "success": True}},
+    }
+
+
+def test_a_result_outcome_writes_integrity_lines(tmp_path):
+    bundle_path = tmp_path / "bundle" / "manifest.json"
+    bundle_path.parent.mkdir(parents=True)
+    bundle_path.write_text(
+        json.dumps({"assessment": {"runs": [{"conclusion": "PASS"}]}}) + "\n", encoding="utf-8"
+    )
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text("{}\n", encoding="utf-8")
+    report = tmp_path / "report"
+    report.mkdir()
+
+    def runner(command, **kwargs):
+        del kwargs
+        out = Path(command[command.index("--out") + 1])
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "evaluators-provenance.json").write_text(
+            json.dumps([{"outcome": "result"}]) + "\n", encoding="utf-8"
+        )
+        target = Path(command[command.index("--bundle") + 1])
+        bundle = json.loads(target.read_text(encoding="utf-8"))
+        bundle["assessment"]["integrity_results"] = {
+            "livingproof-run-integrity": _integrity_document("2099-01-01T00:00:00Z")
+        }
+        target.write_text(json.dumps(bundle) + "\n", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    failed = apply_configuration(
+        lines=["owner/repo@v1.2.3/descriptor.json"],
+        evidence=evidence,
+        bundle_path=bundle_path,
+        report_dir=report,
+        out=tmp_path / "out",
+        provenance_records=_records(),
+        runner=runner,
+        render=_render,
+    )
+    assert failed is False
+    text = (report / "integrity-lines.txt").read_text(encoding="utf-8")
+    assert "Run Integrity: PASS" in text
+
+
+def test_integrity_clock_follows_the_run(tmp_path):
+    bundle_path = tmp_path / "bundle" / "manifest.json"
+    bundle_path.parent.mkdir(parents=True)
+    bundle_path.write_text(
+        json.dumps({"assessment": {"runs": [{"run_id": "walk-hallway-example-20261127T061921Z"}]}})
+        + "\n",
+        encoding="utf-8",
+    )
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text("{}\n", encoding="utf-8")
+    report = tmp_path / "report"
+    report.mkdir()
+
+    def runner(command, **kwargs):
+        del kwargs
+        out = Path(command[command.index("--out") + 1])
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "evaluators-provenance.json").write_text(
+            json.dumps([{"outcome": "result"}]) + "\n", encoding="utf-8"
+        )
+        target = Path(command[command.index("--bundle") + 1])
+        bundle = json.loads(target.read_text(encoding="utf-8"))
+        bundle["assessment"]["integrity_results"] = {
+            "livingproof-run-integrity": _integrity_document("2099-01-01T00:00:00Z")
+        }
+        target.write_text(json.dumps(bundle) + "\n", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    apply_configuration(
+        lines=["owner/repo@v1.2.3/descriptor.json"],
+        evidence=evidence,
+        bundle_path=bundle_path,
+        report_dir=report,
+        out=tmp_path / "out",
+        provenance_records=_records(),
+        runner=runner,
+        render=_render,
+    )
+    stored = json.loads(bundle_path.read_text(encoding="utf-8"))
+    stamps = stored["assessment"]["integrity_results"]["livingproof-run-integrity"]["timestamps"]
+    assert stamps == {"started_at": "2026-11-27T06:19:21Z", "completed_at": "2026-11-27T06:19:21Z"}
+    assert pin_integrity_clock({"assessment": {}}) is False
