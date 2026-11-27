@@ -126,6 +126,7 @@ jobs:
       definitions: tests/fixtures/robot/verifications/*.toml
       output-dir: artifacts/verification-report
       version: ${{ needs.version.outputs.semver-version }}
+      evaluators: evaluators.yml
   action-smoke-check:
     needs: [version, action-smoke]
     if: >-
@@ -217,6 +218,7 @@ jobs:
       artifact-name: g1-verification-report
       health: true
       health-trial: 1
+      evaluators: evaluators.yml
   g1-smoke-check:
     name: Real G1 smoke report
     needs: [version, g1-smoke]

@@ -321,6 +321,7 @@ test('a one-line verifier tag edit is what the plan passes, and the lock file is
         GITHUB_REPOSITORY: 'Example/robot',
         GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567',
         INPUT_DEFINITIONS: 'verifications/*.toml',
+        INPUT_EVALUATORS: 'Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json',
         INPUT_PLAN_PATH: path.join(root, 'plan.json'),
       },
       root,

@@ -6,9 +6,10 @@
 # to a commit other than the capability-verifier SHA above is refused there too.
 # The resolved verifier commit, verifier image, reporter image and scenario-evaluator
 # commit are passed as workflow inputs. The lock cannot carry those fields.
-# evaluators.yml lines are passed as the evaluators input. A non-empty value
-# skips capability-verifier's built-in run-integrity job. The collect job runs
-# the loader when the file has declaration lines.
+# The caller `evaluators` input is a path or a list. Empty means no evaluators:
+# a comment is passed so the built-in run-integrity job stays skipped, and the
+# collect job does not run the loader. This repository's evaluators.yml is not
+# a default.
 name: Verification report
 on:
   workflow_call:
@@ -66,6 +67,14 @@ on:
           The comment job declares pull-requests: write. With comment false it never writes.
         type: boolean
         default: false
+        required: false
+      evaluators:
+        description: >-
+          Caller declaration list. A path in the caller repository, such as
+          evaluators.yml, or the list itself, one line per entry or a YAML list.
+          Empty means no evaluators. This repository's file is not a default.
+        type: string
+        default: ''
         required: false
     outputs:
       report-path:
@@ -147,6 +156,7 @@ jobs:
           INPUT_DEFINITIONS: ${{ inputs.definitions }}
           INPUT_REPOSITORY: ${{ inputs.repository }}
           INPUT_REF: ${{ inputs.ref }}
+          INPUT_EVALUATORS: ${{ inputs.evaluators }}
           INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/verification-plan/plan.json
           WORKFLOW_REPOSITORY: ${{ steps.workflow-source.outputs.repository }}
         run: node "${{ github.workspace }}/action/src/plan.mjs"
@@ -359,6 +369,11 @@ jobs:
         with:
           pattern: vra-*-links-*
           path: downloaded/links
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.plan.outputs.evaluators_run == 'true'
+        with:
+          pattern: vra-*-evaluator-results-*
+          path: downloaded/evaluator-results
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           version: '0.12.23'
@@ -382,6 +397,8 @@ jobs:
           PYTHONPATH: src
           INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/verification-plan/plan.json
           INPUT_DOWNLOAD_ROOT: ${{ github.workspace }}/downloaded
+          INPUT_EVALUATORS: ${{ inputs.evaluators }}
+          INPUT_CALLER_ROOT: ${{ github.workspace }}/caller
         run: uv run --no-sync python "${{ github.workspace }}/action/src/evaluators_run.py"
       - id: collect
         working-directory: caller

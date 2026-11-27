@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 
 /**
  * Passed when evaluators.yml has no declaration lines. It is a comment, so it
@@ -48,4 +49,45 @@ export function readEvaluatorsFile(file) {
     if (error?.code !== 'ENOENT') throw error;
   }
   return evaluatorsDeclaration(text);
+}
+
+function asYamlList(text) {
+  const substantive = String(text)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'));
+  if (substantive.length === 0) return '';
+  if (substantive.some((line) => line.startsWith('- '))) return text;
+  return `${substantive.map((line) => `- ${line}`).join('\n')}\n`;
+}
+
+/**
+ * Caller `evaluators` input. Empty means no evaluators. A single relative path
+ * is a file in the caller repository. Anything else is the list itself.
+ * This repository's evaluators.yml is not a fallback.
+ */
+export function resolveCallerEvaluators(value, root) {
+  const text = typeof value === 'string' ? value : '';
+  if (!text.trim()) return evaluatorsDeclaration('');
+  const single = !/[\r\n]/.test(text);
+  const trimmed = text.trim();
+  if (single && !trimmed.includes('@') && !trimmed.startsWith('-')) {
+    if (path.isAbsolute(trimmed) || trimmed.split(/[/\\]/).includes('..') || trimmed.includes('\\')) {
+      throw new Error(
+        `evaluators path ${JSON.stringify(trimmed)} must be a relative path in the caller repository.`
+      );
+    }
+    const file = path.resolve(root, trimmed);
+    const base = path.resolve(root);
+    if (file !== base && !file.startsWith(`${base}${path.sep}`)) {
+      throw new Error(
+        `evaluators path ${JSON.stringify(trimmed)} must stay inside the caller repository.`
+      );
+    }
+    if (!existsSync(file)) {
+      throw new Error(`evaluators file ${trimmed} was not found in the caller repository.`);
+    }
+    return readEvaluatorsFile(file);
+  }
+  return evaluatorsDeclaration(asYamlList(text));
 }

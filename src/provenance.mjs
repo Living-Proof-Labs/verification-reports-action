@@ -21,7 +21,7 @@ const REPORTER_IMAGE = 'ghcr.io/living-proof-labs/livingproof-capability-report'
  * verifier commit, verifier image, reporter image and scenario-evaluator commit
  * as workflow inputs. Those lock fields are refused when present. The fields
  * v2.13.0 still reads from the lock stay, and must match the resolved tag.
- * Declaration lines in evaluators.yml own every other evaluators entry.
+ * Declaration lines from the caller evaluators input own every other evaluators entry.
  */
 /**
  * required: the trial reads the lock field and does not substitute a default.
@@ -510,7 +510,7 @@ export function assertLockAgrees(pin, resolved) {
 const RESOLVED_EVALUATOR = 'livingproof-evaluator-scenario';
 
 export const IGNORED_EVALUATOR_NOTICE =
-  'notice: a lock evaluators entry is ignored; evaluators.yml declares those lines';
+  'notice: a lock evaluators entry is ignored; the caller evaluators list declares those lines';
 
 export function ignoredEvaluatorNotice(lock) {
   const evaluators = lock?.evaluators;

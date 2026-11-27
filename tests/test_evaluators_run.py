@@ -19,9 +19,11 @@ from evaluators_run import (
     last_stderr_line,
     load_provenance,
     loader_command,
+    main,
     record_missing,
     reporter_docker_command,
     reporter_image,
+    resolve_caller_evaluators,
     run_downloaded,
 )
 
@@ -298,3 +300,230 @@ def test_a_bad_line_fails_with_the_loader_refusal(tmp_path):
 
         shown = "\n".join(integrity_report_lines(bundle))
         assert reason in shown
+
+
+def _strip_integrity(document):
+    copy = json.loads(json.dumps(document))
+    assessment = copy.get("assessment")
+    if isinstance(assessment, dict):
+        assessment.pop("integrity_results", None)
+        assessment.pop("integrity_not_run", None)
+    return copy
+
+
+def _result_document():
+    return {
+        "format": "livingproof-evaluator-result/1.1.0",
+        "evaluator": {"id": "example-scenario", "kind": "scenario", "display_name": "Scenario"},
+        "scenario": {"trial_id": "stock-seed-01"},
+    }
+
+
+def _provenance_runner(command, **kwargs):
+    del kwargs
+    out = Path(command[command.index("--out") + 1])
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "evaluators-provenance.json").write_text('[{"outcome": "result"}]\n', encoding="utf-8")
+    bundle_path = Path(command[command.index("--bundle") + 1])
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    bundle.setdefault("assessment", {})["integrity_results"] = {"added-by-loader": True}
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+    return subprocess.CompletedProcess(command, 0, "", "")
+
+
+def test_scenario_results_are_on_the_bundle_the_loader_and_render_see(tmp_path):
+    document = _result_document()
+    results = tmp_path / "results" / "example-scenario"
+    results.mkdir(parents=True)
+    (results / "stock-seed-01.json").write_text(json.dumps(document) + "\n", encoding="utf-8")
+    bundle_path = tmp_path / "verified" / "bundle" / "manifest.json"
+    bundle_path.parent.mkdir(parents=True)
+    bundle_path.write_text(
+        json.dumps({"results": [{"id": "stock-seed-01"}], "assessment": {}}) + "\n",
+        encoding="utf-8",
+    )
+    evidence = tmp_path / "manifest.json"
+    evidence.write_text("{}\n", encoding="utf-8")
+    report = tmp_path / "report"
+    report.mkdir()
+    seen = {}
+
+    def runner(command, **kwargs):
+        bundle = json.loads(
+            Path(command[command.index("--bundle") + 1]).read_text(encoding="utf-8")
+        )
+        seen["at_loader"] = bundle
+        return _provenance_runner(command, **kwargs)
+
+    def render(image, manifest, report_dir, links):
+        del image, links
+        seen["at_render"] = json.loads(Path(manifest).read_text(encoding="utf-8"))
+        _verdict(report_dir)
+
+    apply_configuration(
+        lines=["owner/repo@v1.2.3/descriptor.json"],
+        evidence=evidence,
+        bundle_path=bundle_path,
+        report_dir=report,
+        out=tmp_path / "out",
+        provenance_records=_records(),
+        results_dir=tmp_path / "results",
+        runner=runner,
+        render=render,
+    )
+    stored = seen["at_loader"]["results"][0]["evaluator_results"]
+    assert stored[0]["scenario"]["trial_id"] == "stock-seed-01"
+    assert (
+        seen["at_render"]["results"][0]["evaluator_results"][0]["evaluator"]["id"]
+        == "example-scenario"
+    )
+
+
+def test_rerendered_report_keeps_the_original_apart_from_integrity(tmp_path):
+    document = _result_document()
+    original = {
+        "summary": "hallway",
+        "results": [{"id": "stock-seed-01", "evaluator_results": [document]}],
+        "assessment": {"grade": "FAIL"},
+    }
+    results = tmp_path / "results" / "example-scenario"
+    results.mkdir(parents=True)
+    (results / "stock-seed-01.json").write_text(json.dumps(document) + "\n", encoding="utf-8")
+    bundle_path = tmp_path / "verified" / "bundle" / "manifest.json"
+    bundle_path.parent.mkdir(parents=True)
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "summary": "hallway",
+                "results": [{"id": "stock-seed-01"}],
+                "assessment": {"grade": "FAIL"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    evidence = tmp_path / "manifest.json"
+    evidence.write_text("{}\n", encoding="utf-8")
+    report = tmp_path / "report"
+    report.mkdir()
+    (report / "report.json").write_text(json.dumps(original) + "\n", encoding="utf-8")
+
+    def render(image, manifest, report_dir, links):
+        del image, links
+        bundle = json.loads(Path(manifest).read_text(encoding="utf-8"))
+        _verdict(report_dir)
+        (report_dir / "report.json").write_text(json.dumps(bundle) + "\n", encoding="utf-8")
+
+    apply_configuration(
+        lines=["owner/repo@v1.2.3/descriptor.json"],
+        evidence=evidence,
+        bundle_path=bundle_path,
+        report_dir=report,
+        out=tmp_path / "out",
+        provenance_records=_records(),
+        results_dir=tmp_path / "results",
+        runner=_provenance_runner,
+        render=render,
+    )
+    rendered = json.loads((report / "report.json").read_text(encoding="utf-8"))
+    assert rendered["assessment"]["integrity_results"] == {"added-by-loader": True}
+    assert _strip_integrity(rendered) == _strip_integrity(original)
+
+
+def test_main_returns_zero_and_records_whether_the_job_should_fail(tmp_path, monkeypatch):
+    output = tmp_path / "github-output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.delenv("INPUT_PLAN_PATH", raising=False)
+    monkeypatch.delenv("INPUT_EVALUATORS", raising=False)
+    assert main() == 0
+    assert output.read_text(encoding="utf-8") == "failed=true\n"
+
+    output.write_text("", encoding="utf-8")
+    plan = tmp_path / "plan.json"
+    plan.write_text('{"definitions": []}\n', encoding="utf-8")
+    monkeypatch.setenv("INPUT_PLAN_PATH", str(plan))
+    monkeypatch.setattr("evaluators_run.run_downloaded", lambda *args, **kwargs: False)
+    assert main() == 0
+    assert output.read_text(encoding="utf-8") == "failed=false\n"
+
+
+def test_empty_input_does_not_read_an_evaluators_file(tmp_path, monkeypatch):
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    (caller / "evaluators.yml").write_text(
+        "- owner/repo@v1.2.3/descriptor.json\n", encoding="utf-8"
+    )
+    captured = []
+
+    def fake_run(plan, download, out_root, runner=None, render=None):
+        del download, out_root, runner, render
+        captured.append(plan["evaluators"]["lines"])
+        return False
+
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        json.dumps({"evaluators": {"lines": ["should-not-stick"]}, "definitions": []}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "github-output.txt"))
+    monkeypatch.setenv("INPUT_PLAN_PATH", str(plan))
+    monkeypatch.setenv("INPUT_CALLER_ROOT", str(caller))
+    monkeypatch.setenv("INPUT_EVALUATORS", "")
+    monkeypatch.setattr("evaluators_run.run_downloaded", fake_run)
+    assert main() == 0
+    assert captured == [[]]
+
+
+def test_a_path_or_a_list_is_passed_to_the_loader(tmp_path, monkeypatch):
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    line = "owner/repo@v1.2.3/descriptor.json"
+    (caller / "mine.yml").write_text(f"- {line}\n", encoding="utf-8")
+    captured = []
+
+    def fake_run(plan, download, out_root, runner=None, render=None):
+        del download, out_root, runner, render
+        captured.append(plan["evaluators"]["lines"])
+        return False
+
+    plan = tmp_path / "plan.json"
+    plan.write_text('{"definitions": []}\n', encoding="utf-8")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "github-output.txt"))
+    monkeypatch.setenv("INPUT_PLAN_PATH", str(plan))
+    monkeypatch.setenv("INPUT_CALLER_ROOT", str(caller))
+    monkeypatch.setattr("evaluators_run.run_downloaded", fake_run)
+    monkeypatch.setenv("INPUT_EVALUATORS", "mine.yml")
+    assert main() == 0
+    assert captured == [[line]]
+    monkeypatch.setenv("INPUT_EVALUATORS", line)
+    captured.clear()
+    assert main() == 0
+    assert captured == [[line]]
+
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append(Path(command[command.index("--lines") + 1]).read_text(encoding="utf-8"))
+        return _provenance_runner(command, **kwargs)
+
+    root = tmp_path / "apply"
+    bundle_path = root / "bundle" / "manifest.json"
+    bundle_path.parent.mkdir(parents=True)
+    bundle_path.write_text('{"results": [{"id": "t"}], "assessment": {}}\n', encoding="utf-8")
+    evidence = root / "evidence.json"
+    evidence.write_text("{}\n", encoding="utf-8")
+    report = root / "report"
+    report.mkdir()
+    apply_configuration(
+        lines=[line],
+        evidence=evidence,
+        bundle_path=bundle_path,
+        report_dir=report,
+        out=root / "out",
+        provenance_records=_records(),
+        runner=runner,
+        render=_render,
+    )
+    assert calls == [f"{line}\n"]
+    assert resolve_caller_evaluators("", caller)["lines"] == []
+    assert resolve_caller_evaluators("mine.yml", caller)["lines"] == [line]

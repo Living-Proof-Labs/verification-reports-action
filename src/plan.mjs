@@ -2,9 +2,8 @@
 import { healthEnabled, resolveHealth } from './health.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { matrixFor, planDefinitions } from './definitions.mjs';
-import { readEvaluatorsFile } from './evaluators.mjs';
+import { resolveCallerEvaluators } from './evaluators.mjs';
 import { githubProvenanceClient } from './github-provenance.mjs';
 import { writeGithubOutput } from './github-output.mjs';
 import { assertPinnedInputs, fixtureProvenance, ignoredEvaluatorNotice, resolvedTrialInputs } from './provenance.mjs';
@@ -18,7 +17,7 @@ export async function writePlan(env = process.env, root = process.cwd(), client 
   if (healthEnabled(env.INPUT_HEALTH) && env.INPUT_MEDIA === 'false') throw new Error('Health requires media: true');
   const plan = planDefinitions(inputs, env, root);
   const resolver = client ?? githubProvenanceClient(env);
-  const declared = readEvaluatorsFile(fileURLToPath(new URL('../evaluators.yml', import.meta.url)));
+  const declared = resolveCallerEvaluators(env.INPUT_EVALUATORS ?? '', root);
   for (const item of plan.definitions) {
     const notice = ignoredEvaluatorNotice(item.lock);
     if (notice) console.error(notice);

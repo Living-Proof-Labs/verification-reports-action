@@ -4,9 +4,11 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { VERIFIER_WORKFLOW_SHA, VERIFIER_WORKFLOW_TAG } from '../src/definitions.mjs';
-import { EVALUATORS_SENTINEL, evaluatorsDeclaration, readEvaluatorsFile } from '../src/evaluators.mjs';
+import { EVALUATORS_SENTINEL, evaluatorsDeclaration, readEvaluatorsFile, resolveCallerEvaluators } from '../src/evaluators.mjs';
 import { writeGithubOutput } from '../src/github-output.mjs';
+import { writePlan } from '../src/plan.mjs';
 
 const ROOT = new URL('..', import.meta.url);
 const LINE = 'Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json';
@@ -74,6 +76,62 @@ test('the report workflow passes the plan lines and still allows fifteen minutes
   const upload = collect.indexOf('actions/upload-artifact');
   const fail = collect.indexOf('Fail when an evaluator declaration produced no provenance');
   assert.ok(upload !== -1 && fail > upload);
+  const uploadBlock = collect.slice(upload, fail);
+  assert.doesNotMatch(uploadBlock, /\n {8}if:/);
+  const failBlock = collect.slice(fail, fail + 500);
+  assert.match(failBlock, /if: steps\.evaluators\.outputs\.failed == 'true'/);
+  assert.match(failBlock, /run: exit 1/);
+  const evaluatorsStep = collect.slice(collect.indexOf('- id: evaluators'), collect.indexOf('- id: collect'));
+  assert.doesNotMatch(evaluatorsStep, /continue-on-error/);
+  assert.match(collect, /pattern: vra-\*-evaluator-results-\*/);
+  assert.match(report, /evaluators:[\s\S]*?default: ''/);
+  assert.doesNotMatch(report, /default: evaluators\.yml/);
+});
+
+test('no evaluators input ignores this repository file', async () => {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  assert.equal(readFileSync(path.join(root, 'evaluators.yml'), 'utf8').includes('@v1.9.0/'), true);
+  const planSource = readFileSync(new URL('../src/plan.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(planSource, /evaluators\.yml/);
+  const absent = resolveCallerEvaluators('', root);
+  assert.deepEqual(absent.lines, []);
+  assert.equal(absent.input, EVALUATORS_SENTINEL);
+  assert.equal(absent.run, false);
+  const dir = mkdtempSync(path.join(tmpdir(), 'vra-no-evaluators-'));
+  try {
+    const planned = await writePlan(
+      {
+        GITHUB_REPOSITORY: 'Living-Proof-Labs/verification-reports-action',
+        GITHUB_SHA: 'a'.repeat(40),
+        WORKFLOW_REPOSITORY: 'Living-Proof-Labs/verification-reports-action',
+        INPUT_DEFINITIONS: 'tests/fixtures/robot/verifications/*.toml',
+        INPUT_PLAN_PATH: path.join(dir, 'plan.json'),
+      },
+      root,
+      { async resolve() { throw new Error('pins are not resolved for a fixture plan'); } },
+    );
+    assert.deepEqual(planned.plan.evaluators.lines, []);
+    assert.equal(planned.outputs.evaluators, EVALUATORS_SENTINEL);
+    assert.equal(planned.outputs.evaluators_run, 'false');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a caller path or an inline list is the declaration', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const fromFile = resolveCallerEvaluators('evaluators.yml', root);
+  assert.deepEqual(fromFile.lines, [LINE]);
+  assert.equal(fromFile.run, true);
+  const inline = resolveCallerEvaluators(LINE, root);
+  assert.deepEqual(inline.lines, [LINE]);
+  const yaml = resolveCallerEvaluators(`- ${LINE}\n`, root);
+  assert.deepEqual(yaml.lines, [LINE]);
+  const verify = readFileSync(new URL('../.github/workflows/verify.yml', import.meta.url), 'utf8');
+  const release = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
+  assert.match(verify, /g1-smoke:[\s\S]*?evaluators: evaluators\.yml/);
+  assert.match(verify, /action-smoke:[\s\S]*?evaluators: evaluators\.yml/);
+  assert.match(release, /evaluators: evaluators\.yml/);
 });
 
 test('action code does not name the run evaluator', () => {

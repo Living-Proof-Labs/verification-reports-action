@@ -23,7 +23,7 @@ A robot `FAIL` or `INSUFFICIENT_EVIDENCE` is a successful run. `status` is `ok` 
 
 ## Pinned inputs
 
-Before any trial, the plan job resolves each input from its release tag and refuses the run when the check fails. The message names the input and the expected and found values. No `report.json` is written, and `walk-hallway` and `scenario` do not start, because both need the plan job. The inputs are capability-verifier, livingproof-sim-mujoco, robot-capability-specs, the livingproof-worlds world, livingproof-evaluator-scenario, and livingproof-capability-report together with its image. Run Integrity is not one of those inputs. It comes from `evaluators.yml`.
+Before any trial, the plan job resolves each input from its release tag and refuses the run when the check fails. The message names the input and the expected and found values. No `report.json` is written, and `walk-hallway` and `scenario` do not start, because both need the plan job. The inputs are capability-verifier, livingproof-sim-mujoco, robot-capability-specs, the livingproof-worlds world, livingproof-evaluator-scenario, and livingproof-capability-report together with its image. Run Integrity is not one of those pins. The caller passes it with the `evaluators` input.
 
 The tag is the pin people edit. The plan resolves each tag, then passes four values into capability-verifier v2.13.0: `verifier-commit`, `verifier-image`, `reporter-image`, and `evaluator-commit`. Those values are the commits and image refs the plan already checked. The lock must not carry the fields they replace. A present field is refused before `plan.json` is written:
 
@@ -77,13 +77,17 @@ The plan step passes `GITHUB_TOKEN` from `github.token` so the release, tag, and
 
 ## Evaluators
 
-`evaluators.yml` at the repository root is a YAML list. Each item is one declaration line. The line format is `owner/repo@vX.Y.Z/path.json`, or the same shape with a 40-character commit in place of the tag. Blank lines and `#` comments are not items. This action joins the items with newlines and passes that text to the `evaluators` input of `walk-hallway.yml` and `scenario.yml`. It does not check the line. capability-verifier refuses a branch name, a short commit, or a relative path, and that refusal is the run's failure reason.
+Run Integrity is declared by the caller, not by a default in this action. The `evaluators` input is either a path in the caller repository or the list itself. Empty means no evaluators: the plan passes a `#` comment so capability-verifier skips its built-in run-integrity job, and the collect job does not install an evaluator or add a Run Integrity card.
 
-The list in this repository has one line, `Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json`. That file is an implementation descriptor. Its schema is [`implementation.schema.json`](https://github.com/Living-Proof-Labs/livingproof-evaluator/blob/v1.9.0/schema/implementation.schema.json) (`Living-Proof-Labs/livingproof-evaluator@v1.9.0/schema/implementation.schema.json`, livingproof-evaluator#74).
+A path such as `evaluators.yml` is a YAML list in the caller repository. Each item is one declaration line. The line format is `owner/repo@vX.Y.Z/path.json`, or the same shape with a 40-character commit in place of the tag. Blank lines and `#` comments are not items. This action joins the items with newlines and passes that text to the `evaluators` input of `walk-hallway.yml` and `scenario.yml`. It does not check the line. capability-verifier refuses a branch name, a short commit, or a relative path, and that refusal is the run's failure reason.
 
-When the list has no items, the plan passes a `#` comment instead of an empty string. The comment keeps capability-verifier from running its built-in run-integrity job. The collect job does not install an evaluator and does not add a Run Integrity card.
+An inline list is the same lines, one per line or as a YAML list, passed directly in `evaluators`.
 
-When the list has items, the collect job checks out capability-verifier v2.13.0, runs the loader on the downloaded evidence, and re-renders the report with the reporter version the lock pins. The loader's exit code is not used. A missing or unreadable provenance file is recorded as Run Integrity NOT RUN (failure), the report is uploaded, and the collect job then fails.
+The descriptor schema is [`implementation.schema.json`](https://github.com/Living-Proof-Labs/livingproof-evaluator/blob/v1.9.0/schema/implementation.schema.json) (`Living-Proof-Labs/livingproof-evaluator@v1.9.0/schema/implementation.schema.json`, livingproof-evaluator#74).
+
+This repository's own smoke passes `evaluators: evaluators.yml`. That file has one line, `Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json`. Other callers do not inherit it.
+
+When the list has items, the collect job checks out capability-verifier v2.13.0, appends the scenario evaluator results onto the verified bundle, runs the loader on the downloaded evidence, and re-renders the report with the reporter version the lock pins. The loader's exit code is not used. A missing or unreadable provenance file is recorded as Run Integrity NOT RUN (failure), the report is uploaded, and the collect job then fails.
 
 ## Example
 
@@ -107,7 +111,23 @@ jobs:
     uses: Living-Proof-Labs/verification-reports-action/.github/workflows/report.yml@<commit> # vX.Y.Z
     with:
       definitions: verifications/*.toml
+      evaluators: evaluators.yml
 ```
+
+`evaluators.yml` in the caller repository:
+
+```yaml
+- Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json
+```
+
+The same list can be inlined instead of a path:
+
+```yaml
+      evaluators: |
+        - Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json
+```
+
+Leave `evaluators` unset when the run should not declare any.
 
 Replace `<commit>` and `vX.Y.Z` with the published release. The definition files live in the robot repository. Each one is a `livingproof-verification-definition` TOML file with a sibling `.lock.json`. `procedure` is `walk-hallway` or `scenario`.
 
@@ -123,6 +143,7 @@ Replace `<commit>` and `vX.Y.Z` with the published release. The definition files
 | `ref` | No | caller SHA | Robot commit. A release tag is rejected. |
 | `media` | No | `true` | Record MCAP and video when capability-verifier records them. |
 | `comment` | No | `false` | Ask capability-verifier to comment on a same-repository pull request. The comment job declares `pull-requests: write`. With this false it never writes. |
+| `evaluators` | No | empty | Path in the caller repository, or the declaration list itself. Empty means no evaluators. |
 
 ## Outputs
 

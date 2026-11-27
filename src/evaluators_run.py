@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -216,6 +217,96 @@ def _require_ran(completed, label: str) -> None:
         raise RuntimeError(f"{label} exited {code}. {detail}")
 
 
+def resolve_caller_evaluators(value: str, root: Path) -> dict:
+    """Same caller input as the plan: empty, a relative path, or the list itself."""
+    text = value or ""
+    if not text.strip():
+        return {"lines": [], "input": "#", "run": False}
+    single = "\n" not in text and "\r" not in text
+    trimmed = text.strip()
+    if single and "@" not in trimmed and not trimmed.startswith("-"):
+        if trimmed.startswith("/") or "\\" in trimmed or ".." in trimmed.split("/"):
+            raise RuntimeError(
+                f"evaluators path {trimmed!r} must be a relative path in the caller repository."
+            )
+        file = (root / trimmed).resolve()
+        base = root.resolve()
+        if file != base and base not in file.parents:
+            raise RuntimeError(
+                f"evaluators path {trimmed!r} must stay inside the caller repository."
+            )
+        if not file.is_file():
+            raise RuntimeError(f"evaluators file {trimmed} was not found in the caller repository.")
+        return _declaration(file.read_text(encoding="utf-8"))
+    return _declaration(text)
+
+
+def _declaration(text: str) -> dict:
+    substantive = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    items = []
+    yaml_list = any(line.startswith("- ") for line in substantive)
+    for line in substantive:
+        if line in {"[]", "---", "-"}:
+            continue
+        if yaml_list:
+            if not line.startswith("- "):
+                raise RuntimeError(f"evaluators list expected '- <line>', found {line!r}.")
+            item = line[2:].strip()
+            if len(item) >= 2 and item[0] == item[-1] and item[0] in {"'", '"'}:
+                item = item[1:-1]
+        else:
+            item = line
+        if item:
+            items.append(item)
+    if not items:
+        return {"lines": [], "input": "#", "run": False}
+    return {"lines": items, "input": "\n".join(items), "run": True}
+
+
+def gather_evaluator_results(
+    parent: Path, prefix: str, configuration: str, staging: Path
+) -> Path | None:
+    """One directory of every evaluator-results artifact for this configuration."""
+    if not parent.is_dir():
+        return None
+    needle = f"{prefix}evaluator-results-"
+    suffix = f"-{configuration}"
+    matches = [
+        child
+        for child in sorted(parent.iterdir())
+        if child.is_dir() and child.name.startswith(needle) and child.name.endswith(suffix)
+    ]
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0]
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    for source in matches:
+        shutil.copytree(source, staging / source.name, symlinks=False)
+    return staging
+
+
+def attach_scenario_results(bundle_path: Path, results_dir: Path | None, report_dir: Path) -> None:
+    """Append scenario and media results before the loader adds Run Integrity.
+
+    The verified bundle is written by the verify job, before capability-verifier's
+    report job runs collect(). Re-rendering that bundle alone drops those results.
+    """
+    if results_dir is None or not results_dir.is_dir():
+        return
+    from capability_verifier.collect import collect
+
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    collect(bundle, results_dir, report_dir, integrity_job=None)
+    bundle_path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+
+
 def artifact_dir(parent: Path, prefix: str, kind: str, configuration: str) -> Path | None:
     if not parent.is_dir():
         return None
@@ -233,6 +324,7 @@ def apply_configuration(
     provenance_records: list,
     media_dir: Path | None = None,
     links: Path | None = None,
+    results_dir: Path | None = None,
     runner=None,
     render=None,
 ) -> bool:
@@ -241,6 +333,7 @@ def apply_configuration(
         return False
     runner = subprocess.run if runner is None else runner
     render = render_with_reporter if render is None else render
+    attach_scenario_results(bundle_path, results_dir, report_dir)
     out.mkdir(parents=True, exist_ok=True)
     lines_file = out / "lines.txt"
     lines_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -313,6 +406,12 @@ def run_downloaded(plan: dict, download: Path, out_root: Path, runner=None, rend
             links_dir = artifact_dir(download / "links", prefix, "links", configuration)
             links = links_dir / "evidence-links.json" if links_dir else None
             out = out_root / str(item.get("id") or "definition") / str(configuration)
+            results_dir = gather_evaluator_results(
+                download / "evaluator-results",
+                prefix,
+                str(configuration),
+                out / "scenario-results",
+            )
             failed = (
                 apply_configuration(
                     lines=lines,
@@ -323,6 +422,7 @@ def run_downloaded(plan: dict, download: Path, out_root: Path, runner=None, rend
                     provenance_records=records,
                     media_dir=media_dir,
                     links=links if links is not None and links.is_file() else None,
+                    results_dir=results_dir,
                     runner=runner,
                     render=render,
                 )
@@ -340,6 +440,10 @@ def main(argv: list[str] | None = None) -> int:
         _write_output("failed", "true")
         return 0
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    if "INPUT_EVALUATORS" in os.environ:
+        caller = Path(os.environ.get("INPUT_CALLER_ROOT") or ".")
+        declared = resolve_caller_evaluators(os.environ.get("INPUT_EVALUATORS") or "", caller)
+        plan["evaluators"] = {"lines": declared["lines"], "input": declared["input"]}
     try:
         failed = run_downloaded(plan, download, download / "evaluator-out")
     except Exception as exc:

@@ -37,7 +37,7 @@ test('action.yml keeps the composite contract aligned with the workflow', () => 
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   assert.match(actionYml, /^name:\s+Living Proof Verification Reports/m);
   assert.match(actionYml, /^  using:\s+composite/m);
-  for (const key of ['definitions', 'output-dir', 'version', 'repository', 'ref', 'media', 'comment']) {
+  for (const key of ['definitions', 'output-dir', 'version', 'repository', 'ref', 'media', 'comment', 'evaluators']) {
     assert.match(actionYml, new RegExp(`^\\s+${key}:`, 'm'));
     assert.match(workflow, new RegExp(`^\\s+${key}:`, 'm'));
     assert.match(readme, new RegExp(`\\| \`${key}\` \\|`));

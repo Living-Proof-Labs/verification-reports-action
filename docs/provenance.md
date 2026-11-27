@@ -15,7 +15,7 @@ The plan job in [`.github/workflows/report.yml`](../.github/workflows/report.yml
 | livingproof-evaluator-scenario | `evaluators.livingproof-evaluator-scenario` | Release, tag commit, source archive sha256, attestation. `commit` in the lock is refused. |
 | livingproof-capability-report | `releases.reporter` | Release, tag commit, image digest, attestation. `commit` must equal the peeled tag. `image` and `digest` in the lock are refused. |
 
-Any other `evaluators` entry in the lock is ignored. `evaluators.yml` declares those lines. The plan prints one notice and does not name the entry.
+Any other `evaluators` entry in the lock is ignored. The caller's `evaluators` input declares those lines. The plan prints one notice and does not name the entry. An empty input declares none.
 
 The tag is read from the definition when the definition has one, and otherwise from the lock. The image name passed to the trial is `ghcr.io/living-proof-labs/capability-verifier-hallway` or `ghcr.io/living-proof-labs/livingproof-capability-report`. The lock does not name it.
 
