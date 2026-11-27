@@ -148,7 +148,7 @@ Leave `evaluators` empty when the run should not declare any. An evaluator that 
 
 The caller's token must be able to read the workflow repository. Plan, fixture, and collect check those scripts out with the caller's `GITHUB_TOKEN` (`contents: read` is enough when this repository is public or the token has been granted access). If the token cannot read the workflow repository, the Workflow source checkout fails before any definition is planned and no verification report is written. The failure is a checkout error: the repository was not found, or the token does not have permission to read it.
 
-This is a reusable workflow, [`.github/workflows/report.yml`](https://github.com/Living-Proof-Labs/verification-reports-action/blob/main/.github/workflows/report.yml), because the runs go through capability-verifier's `walk-hallway.yml` and `scenario.yml`. Those workflows use matrices, container images and separate runners. A composite action is one step in the caller's job and cannot call them.
+This is a reusable workflow, `.github/workflows/report.yml`, because the runs go through capability-verifier's `walk-hallway.yml` and `scenario.yml`. Those workflows use matrices, container images and separate runners. A composite action is one step in the caller's job and cannot call them.
 
 `action.yml` remains for this repository's fixture tests. Any other caller that uses the root composite action is told to call the workflow. The workflow passes no secrets. `GITHUB_TOKEN` is the credential. The interface choice is recorded in [docs/decisions/0001-composite-vs-reusable-workflow.md](docs/decisions/0001-composite-vs-reusable-workflow.md).
 
