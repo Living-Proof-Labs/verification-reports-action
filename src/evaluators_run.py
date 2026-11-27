@@ -142,6 +142,56 @@ def loader_command(
     return command
 
 
+def reporter_docker_command(
+    image: str,
+    manifest: Path,
+    report_dir: Path,
+    links: Path | None,
+    *,
+    text: bool = False,
+    fmt: str | None = None,
+    output: str | None = None,
+) -> list[str]:
+    """Run the image's own entrypoint as this user, with a writable working directory.
+
+    The reporter image's entrypoint is the CLI and its default user is root. A
+    root-owned report cannot be updated by the collect job, so the container
+    uses the current uid and writes under ``/out``.
+    """
+    mounts = [
+        "-v",
+        f"{manifest.parent.resolve()}:/bundle:ro",
+        "-v",
+        f"{report_dir.resolve()}:/out",
+    ]
+    link_args: list[str] = []
+    if links is not None and links.is_file():
+        mounts += ["-v", f"{links.parent.resolve()}:/links:ro"]
+        link_args = ["--evidence-links", f"/links/{links.name}"]
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+        "-w",
+        "/out",
+        *mounts,
+        image,
+    ]
+    if text:
+        return command + ["render", "/out/report.json"]
+    return command + [
+        "render",
+        f"/bundle/{manifest.name}",
+        *link_args,
+        "--format",
+        fmt or "",
+        "-o",
+        f"/out/{output}",
+    ]
+
+
 def render_with_reporter(image: str, manifest: Path, report_dir: Path, links: Path | None) -> None:
     """Render json, markdown, html, and text with the image the lock pinned."""
 
@@ -149,27 +199,12 @@ def render_with_reporter(image: str, manifest: Path, report_dir: Path, links: Pa
         return subprocess.run(command, capture_output=True, text=True, check=False)
 
     report_dir.mkdir(parents=True, exist_ok=True)
-    mounts = ["-v", f"{manifest.parent}:/bundle:ro", "-v", f"{report_dir}:/out"]
-    link_args: list[str] = []
-    if links is not None and links.is_file():
-        mounts += ["-v", f"{links.parent}:/links:ro"]
-        link_args = ["--evidence-links", f"/links/{links.name}"]
-    base = [
-        "docker",
-        "run",
-        "--rm",
-        *mounts,
-        "--entrypoint",
-        "livingproof-capability-report",
-        image,
-    ]
-    manifest_arg = f"/bundle/{manifest.name}"
     for fmt, name in (("json", "report.json"), ("markdown", "report.md"), ("html", "report.html")):
         completed = run(
-            base + ["render", manifest_arg, *link_args, "--format", fmt, "-o", f"/out/{name}"]
+            reporter_docker_command(image, manifest, report_dir, links, fmt=fmt, output=name)
         )
         _require_ran(completed, f"reporter {fmt}")
-    completed = run(base + ["render", "/out/report.json"])
+    completed = run(reporter_docker_command(image, manifest, report_dir, links, text=True))
     _require_ran(completed, "reporter text")
     (report_dir / "report.txt").write_text(completed.stdout or "", encoding="utf-8")
 

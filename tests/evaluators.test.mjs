@@ -35,6 +35,8 @@ function walk(relative) {
 }
 
 test('evaluators.yml is one declaration line and an empty list stays a comment', () => {
+  const raw = readFileSync(new URL('../evaluators.yml', import.meta.url), 'utf8');
+  assert.equal(raw, `- ${LINE}\n`);
   const declared = readEvaluatorsFile(new URL('../evaluators.yml', import.meta.url));
   assert.deepEqual(declared.lines, [LINE]);
   assert.equal(declared.run, true);

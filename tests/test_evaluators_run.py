@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,7 @@ from evaluators_run import (
     load_provenance,
     loader_command,
     record_missing,
+    reporter_docker_command,
     reporter_image,
     run_downloaded,
 )
@@ -94,6 +96,28 @@ def _render(image, manifest, report_dir, links):
     assert "3.16.0" not in image
     assert image.startswith("ghcr.io/living-proof-labs/livingproof-capability-report:3.15.4@")
     _verdict(report_dir)
+
+
+def test_reporter_docker_runs_as_the_current_user_and_keeps_the_image_entrypoint(tmp_path):
+    image = reporter_image(_records())
+    manifest = tmp_path / "bundle" / "manifest.json"
+    manifest.parent.mkdir()
+    manifest.write_text("{}\n", encoding="utf-8")
+    report = tmp_path / "report"
+    report.mkdir()
+    links = tmp_path / "links" / "evidence-links.json"
+    links.parent.mkdir()
+    links.write_text("{}\n", encoding="utf-8")
+    command = reporter_docker_command(
+        image, manifest, report, links, fmt="html", output="report.html"
+    )
+    assert command[command.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
+    assert command[command.index("-w") + 1] == "/out"
+    assert "--entrypoint" not in command
+    assert command[command.index(image) + 1] == "render"
+    assert "3.16.0" not in image
+    text = reporter_docker_command(image, manifest, report, None, text=True)
+    assert text[-2:] == ["render", "/out/report.json"]
 
 
 def test_reporter_image_follows_the_lock_pin():
