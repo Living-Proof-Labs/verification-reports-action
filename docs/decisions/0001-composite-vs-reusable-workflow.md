@@ -8,7 +8,7 @@ The caller-facing interface is the reusable workflow `.github/workflows/report.y
 
 ## Context
 
-Living Proof Verification Reports replaces the central runs in [livingproof-verification](https://github.com/Living-Proof-Labs/livingproof-verification). That repository called capability-verifier at v2.11.4: `walk-hallway.yml` for hallway definitions and `scenario.yml` for scenario definitions. Each definition is a `livingproof-verification-definition/0.1.0` document with a `livingproof-verification-lock/0.2.0` lock. The robot repository that enables this workflow is the robot under test, at the commit GitHub checked out for the run.
+Verification for these robots used to run from one shared repository. That repository called capability-verifier at v2.11.4: `walk-hallway.yml` for hallway definitions and `scenario.yml` for scenario definitions. Each definition is a `livingproof-verification-definition/0.1.0` document with a `livingproof-verification-lock/0.2.0` lock. The robot repository that enables this workflow is the robot under test, at the commit GitHub checked out for the run.
 
 `scenario.yml` is several jobs. The evidence, verify, evaluator, media and report jobs use matrices and container images. `walk-hallway.yml` is a one-job wrapper that calls `scenario.yml`. The report job writes `report.html`, `report.md`, `report.json`, `report.txt` and `SHA256SUMS`. A capability `FAIL` exits 0 there. Trial observations, MCAP and video are separate artifacts.
 

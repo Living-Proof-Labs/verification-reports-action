@@ -2,7 +2,7 @@
 
 # Pinned inputs and provenance
 
-The plan job in [`.github/workflows/report.yml`](../.github/workflows/report.yml) resolves every input from its release tag before a trial starts. `walk-hallway` and `scenario` need that job. When a check fails, the plan step exits and those jobs do not run. Collect requires a successful plan whose provenance statuses are `verified`, `not-published`, `resolved`, or `fixture`, and it does not write a report otherwise.
+The plan job in [`.github/workflows/report.yml`](../.github/workflows/report.yml) resolves every input from its release tag before a trial starts. `walk-hallway` and `scenario` need that job. When a check fails, the message names the input and the expected and found values. No `report.json` is written, and `walk-hallway` and `scenario` do not start, because both need the plan job. Collect requires a successful plan whose provenance statuses are `verified`, `not-published`, `resolved`, or `fixture`, and it does not write a report otherwise.
 
 ## Inputs
 
@@ -15,7 +15,7 @@ The plan job in [`.github/workflows/report.yml`](../.github/workflows/report.yml
 | livingproof-evaluator-scenario | `evaluators.livingproof-evaluator-scenario` | Release, tag commit, source archive sha256, attestation. `commit` in the lock is refused. |
 | livingproof-capability-report | `releases.reporter` | Release, tag commit, image digest, attestation. `commit` must equal the peeled tag. `image` and `digest` in the lock are refused. |
 
-Any other `evaluators` entry in the lock is ignored. The caller's `evaluators` input declares those lines. The plan prints one notice and does not name the entry. An empty input declares none.
+Any other `evaluators` entry in the lock is ignored. The caller's `evaluators` input declares those lines. The plan prints one notice and does not name the entry. An empty input declares none. Run Integrity (`livingproof-evaluator-run`) is not one of those pins. The caller passes it with the `evaluators` input.
 
 The tag is read from the definition when the definition has one, and otherwise from the lock. The image name passed to the trial is `ghcr.io/living-proof-labs/capability-verifier-hallway` or `ghcr.io/living-proof-labs/livingproof-capability-report`. The lock does not name it.
 
@@ -63,10 +63,10 @@ Each input's `status` is one of:
 
 `report.json` and `run.json` both gain `inputs`. Each entry has `name`, `repository`, `tag`, `commit`, `digest`, `status`, and `attestation`. `report.md`, `report.html`, and `report.txt` include a Pinned inputs section. Each line is `name: status (meaning)`, so a verified pin reads differently from one that was not. A failed check does not produce that file.
 
-`status: resolved` can appear on the same input as `attestation: not-published`. The attestation field records the HTTP 404. `resolved` means the release named no commit, so the peeled tag is what was recorded. `status: not-published` with that same attestation field means the 404 happened and the commit was checked against the release.
+`status: resolved` can sit beside `attestation: not-published`. The attestation field records the HTTP 404. `resolved` means the release named no commit, so the peeled tag is what was recorded. `status: not-published` with that same attestation field means the 404 happened and the commit was checked against the release.
 
-A missing Release and a tag that does not peel are failures. They are not stored as `not-published`.
+A missing GitHub Release, or a tag that does not peel to a commit, fails the run as well. That 404 is not recorded as `not-published`.
 
-Source pins hash the codeload archive of the peeled commit. A pin with more than one file hashes a synthetic digest of those file hashes. Those subjects are not what a published attestation names, so the lookup returns HTTP 404 and the pin stays `not-published` until a later change uses a subject the release actually publishes. Image digests and a single file's sha256 can match.
+Source pins hash the codeload archive of the peeled commit. A pin with more than one file hashes a synthetic sha256 of those file hashes. Those subjects are not what a published attestation names, so the lookup returns HTTP 404 and the pin stays `not-published` until a later change uses a subject the release actually publishes. Image digests and a single file's sha256 can match.
 
 The plan step sets `GITHUB_TOKEN` from `github.token`. `contents: read` covers the release, tag, and attestation reads. That token is sent only to `api.github.com`. The codeload archive and the registry token request do not receive it. A `bundle_url` is fetched only from `https://tmaproduction.blob.core.windows.net`, with no token, with redirects refused, with a 30 second timeout, and with the body capped at 16 MiB.

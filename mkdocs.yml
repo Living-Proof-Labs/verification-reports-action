@@ -29,6 +29,7 @@ nav:
   - Start here: index.md
   - Reports: docs/reports.md
   - Provenance: docs/provenance.md
+  - Workflow and site: docs/workflow.md
   - Decisions:
     - Composite vs reusable workflow: docs/decisions/0001-composite-vs-reusable-workflow.md
   - Reference: reference.md
