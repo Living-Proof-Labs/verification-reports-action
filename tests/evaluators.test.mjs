@@ -78,7 +78,7 @@ test('the report workflow passes the plan lines and still allows fifteen minutes
   assert.match(collect, new RegExp(`ref: ${VERIFIER_WORKFLOW_SHA}`));
   assert.match(
     collect,
-    /uses: astral-sh\/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5\.4\.2\n {8}with:/
+    /uses: astral-sh\/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5\.4\.2\n {8}if: needs\.plan\.outputs\.evaluators_run == 'true'\n {8}with:/
   );
   const upload = collect.lastIndexOf('actions/upload-artifact');
   const fail = collect.indexOf('Fail when an evaluator declaration produced no provenance');

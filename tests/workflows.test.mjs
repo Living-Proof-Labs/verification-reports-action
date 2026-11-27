@@ -123,6 +123,17 @@ test('the report workflow calls both verifier procedures and passes no secrets',
   assert.match(reportYml, / {2}walk-hallway:\n {4}needs: plan\n/);
   assert.match(reportYml, / {2}scenario:\n {4}needs: plan\n/);
   assert.match(reportYml, /test ! -e src\/plan\.mjs/);
+  const collect = reportYml.slice(reportYml.indexOf('\n  collect:\n'));
+  const setupUv = [...collect.matchAll(/astral-sh\/setup-uv/g)];
+  assert.ok(setupUv.length > 0, 'collect does not install uv');
+  for (const match of setupUv) {
+    const stepStart = collect.lastIndexOf('\n      - ', match.index);
+    const stepEnd = collect.indexOf('\n      - ', match.index);
+    const step = collect.slice(stepStart, stepEnd === -1 ? undefined : stepEnd);
+    const gated = /if: needs\.plan\.outputs\.evaluators_run == 'true'/.test(step);
+    const ignoreEmpty = /ignore-nothing-to-cache:\s*true/.test(step);
+    assert.ok(gated || ignoreEmpty, 'collect setup-uv must not save an empty cache');
+  }
   assert.doesNotMatch(reportYml, /run: node src\//);
   assert.match(reportYml, /artifact-name:[\s\S]*?default: verification-report/);
   assert.match(reportYml, /name: \$\{\{ inputs\.artifact-name \}\}/);
