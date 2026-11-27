@@ -182,9 +182,18 @@ class PublicationTest(unittest.TestCase):
                 (root / f"{page}.html").write_text(
                     '<link rel="stylesheet" href="assets/brand.css">' + text
                 )
-            (root / "reports/g1").mkdir(parents=True)
+            (root / "reports/g1/unitree-g1/stock-mujoco-hallway/latest").mkdir(parents=True)
             (root / "reports/index.html").write_text("verification-reports-action fixture")
             (root / "reports/g1/index.html").write_text("unitree-g1")
+            (root / "reports/g1/unitree-g1/stock-mujoco-hallway/latest/index.html").write_text(
+                "latest hallway"
+            )
+            index_html = root / "index.html"
+            index_html.write_text(
+                index_html.read_text()
+                + '<a href="reports/g1/unitree-g1/stock-mujoco-hallway/latest/">'
+                + "latest G1 report</a>"
+            )
             handler = functools.partial(SimpleHTTPRequestHandler, directory=directory)
             server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -194,6 +203,15 @@ class PublicationTest(unittest.TestCase):
                 check(url, SHA, "1.2.3")
                 index_page = root / "index.html"
                 original_index = index_page.read_text()
+                index_page.write_text(
+                    original_index.replace(
+                        "reports/g1/unitree-g1/stock-mujoco-hallway/latest/",
+                        "reports/g1/unitree-g1/stock-mujoco-hallway/runs/46062882502/",
+                    )
+                )
+                with self.assertRaisesRegex(ValueError, "reports link returned 404"):
+                    check(url, SHA, "1.2.3")
+                index_page.write_text(original_index)
                 (root / "assets/empty.css").write_bytes(b"")
                 index_page.write_text(
                     original_index + '<link rel="stylesheet" href="assets/empty.css">'

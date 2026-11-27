@@ -35,10 +35,33 @@ test('the release manual publishes the Verify mock and G1 reports with ./site', 
   assert.match(production, /MOCK_STATUS: \$\{\{ steps\.mock-site\.outcome \}\}/);
   assert.match(production, /G1_STATUS: \$\{\{ steps\.g1-site\.outcome \}\}/);
   assert.doesNotMatch(production, /test -f artifacts\/site\/reports/);
-  assert.match(production, /run-id: \$\{\{ github\.event\.workflow_run\.id \}\}/);
+  assert.match(production, /EVENT_RUN: \$\{\{ github\.event\.workflow_run\.id \}\}/);
+  assert.equal(production.split('run-id: ${{ steps.verify-run.outputs.id }}').length - 1, 2);
   assert.match(production, /output-dir: artifacts\/site\/reports\n/);
   assert.match(production, /output-dir: artifacts\/site\/reports\/g1/);
-  assert.match(production, /reset-history: 'true'/);
+  const resetExpr = "reset-history: ${{ inputs.reset_history && 'true' || 'false' }}";
+  assert.equal(production.split(resetExpr).length - 1, 2);
+  assert.doesNotMatch(production, /reset-history: 'true'/);
+  assert.doesNotMatch(production, /reset-history: 'false'/);
+  const mockInputs = production.slice(
+    production.indexOf('runs-dir: artifacts/smoke-report'),
+    production.indexOf('runs-dir: artifacts/g1-smoke-report'),
+  );
+  const g1Inputs = production.slice(production.indexOf('runs-dir: artifacts/g1-smoke-report'));
+  assert.match(mockInputs, /restore-history: auto\n/);
+  assert.match(g1Inputs, /restore-history: 'false'/);
+  assert.doesNotMatch(g1Inputs, /restore-history: auto/);
+  const pagesUpload = production.slice(production.indexOf('actions/upload-pages-artifact@'));
+  const retention = pagesUpload.match(/retention-days:\s*(\d+)/);
+  assert.ok(retention, 'pages artifact retention-days missing');
+  assert.ok(Number(retention[1]) >= 90);
+  assert.equal(retention[1], '90');
+  const resetDefaults = [...docsYml.matchAll(/reset_history:[\s\S]*?\n\s+default: (true|false)/g)].map(
+    (match) => match[1],
+  );
+  assert.deepEqual(resetDefaults, ['false', 'false']);
+  assert.match(releaseYml, /reset_history: false/);
+  assert.doesNotMatch(releaseYml, /reset_history: true/);
   assert.match(production, /actions: read/);
   assert.match(releaseYml, /deploy-docs:[\s\S]*?actions: read/);
   assert.equal(readme.includes(LIVE_REPORT), true);

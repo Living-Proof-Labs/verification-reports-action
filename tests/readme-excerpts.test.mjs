@@ -46,9 +46,8 @@ test('README keeps one Evaluators section and the published G1 report', () => {
   assert.equal(readme.includes('## Migration'), false);
   assert.equal(readme.toLowerCase().includes('earlier history'), false);
   assert.equal(/\breplaces\b/i.test(readme), false);
-  assert.ok(
-    readme.includes(
-      'https://docs.livingprooflabs.com/verification-reports-action/reports/g1/unitree-g1/stock-mujoco-hallway/runs/46062882502/'
-    )
-  );
+  const stable =
+    'https://docs.livingprooflabs.com/verification-reports-action/reports/g1/unitree-g1/stock-mujoco-hallway/latest/';
+  assert.ok(readme.includes(stable));
+  assert.equal(readme.match(/reports\/(?:[^/\s)"']+\/)*runs\/\d+\//), null);
 });

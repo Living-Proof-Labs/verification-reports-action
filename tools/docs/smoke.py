@@ -7,6 +7,7 @@ import json
 import re
 import time
 from html.parser import HTMLParser
+from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit
 from urllib.request import urlopen
 
@@ -15,6 +16,7 @@ class Assets(HTMLParser):
     def __init__(self):
         super().__init__()
         self.urls = []
+        self.hrefs = []
 
     def handle_starttag(self, tag, attributes):
         attrs = dict(attributes)
@@ -22,6 +24,8 @@ class Assets(HTMLParser):
             self.urls.append(attrs["src"])
         if tag == "link" and attrs.get("rel") == "stylesheet":
             self.urls.append(attrs["href"])
+        if tag == "a" and attrs.get("href"):
+            self.hrefs.append(attrs["href"])
 
 
 def check(base, commit, version=None):
@@ -68,6 +72,23 @@ def check(base, commit, version=None):
         raise ValueError("Missing published reports section") from exc
     if "unitree-g1" not in g1:
         raise ValueError("Missing published reports section")
+    landing = Assets()
+    landing.feed(fetch("index.html").decode())
+    seen = set()
+    for href in landing.hrefs:
+        if "reports/" not in href:
+            continue
+        url = urljoin(base, href).split("#", 1)[0]
+        if urlsplit(url).scheme not in {"http", "https"} or url in seen:
+            continue
+        seen.add(url)
+        try:
+            with urlopen(url, timeout=20) as response:
+                status = getattr(response, "status", 200)
+                if status != 200 or not response.read():
+                    raise ValueError(f"reports link returned {status}: {url}")
+        except HTTPError as exc:
+            raise ValueError(f"reports link returned {exc.code}: {url}") from exc
     brand = fetch("assets/brand.css")
     if hashlib.sha256(brand).hexdigest() != identity["brand"]["sha256"]:
         raise ValueError("Published brand checksum mismatch")

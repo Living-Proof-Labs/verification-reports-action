@@ -346,7 +346,7 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
   assert.ok(g1Site, 'g1-smoke-check must build the real report with ./site');
   assert.equal(g1Site.with['runs-dir'], 'artifacts/smoke-report');
   assert.equal(g1Site.with['output-dir'], 'artifacts/g1-site-check');
-  assert.equal(g1Site.with['reset-history'], 'true');
+  assert.equal(g1Site.with['reset-history'], 'false');
   assert.equal(g1Site.with['restore-history'], 'false');
   assert.equal(g1Site.with['upload-artifact'], 'false');
   const g1DownloadAt = check.steps.indexOf(g1Download);
@@ -363,6 +363,8 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
   assert.equal(site.needs, 'action-smoke');
   const siteDownload = site.steps.find((step) => step.uses && step.uses.startsWith('actions/download-artifact@'));
   assert.equal(siteDownload.with.name, 'verification-report');
+  const siteBuild = site.steps.find((step) => step.uses === './site');
+  assert.equal(siteBuild.with['reset-history'], 'true');
 
   assert.equal(reportWorkflow.on.workflow_call.inputs['artifact-name'].default, 'verification-report');
   const collectSteps = reportWorkflow.jobs.collect.steps;

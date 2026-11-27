@@ -89,3 +89,4 @@ jobs:
       release_version: ${{ needs.release.outputs.version }}
       release_tag: ${{ needs.release.outputs.git-tag }}
       release_commit: ${{ needs.release.outputs.commit }}
+      reset_history: false

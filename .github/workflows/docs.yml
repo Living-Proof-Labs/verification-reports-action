@@ -17,6 +17,32 @@ on:
       release_commit:
         required: true
         type: string
+      reset_history:
+        required: false
+        type: boolean
+        default: false
+        description: Skip restored Pages history for this one deploy.
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: Published version to redeploy, without the v prefix.
+        required: true
+        type: string
+      release_tag:
+        description: Published tag, for example v3.9.1.
+        required: true
+        type: string
+      release_commit:
+        description: Full commit SHA of that release. It must be current protected main.
+        required: true
+        type: string
+      reset_history:
+        description: >-
+          Skip restored Pages history for this one deploy. Use when the Pages
+          artifact has expired. This drops the published run list.
+        required: false
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -149,12 +175,28 @@ jobs:
       - run: task -t Taskfile.runtime.yml docs:verify
       # Reuse the mock report action-smoke already uploaded on the Verify run for this commit.
       # docs:verify stays on the manual pages; the reports tree is added afterwards.
+      - name: Choose the Verify run
+        id: verify-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_RUN: ${{ github.event.workflow_run.id }}
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EVENT_RUN" ]; then
+            echo "id=$EVENT_RUN" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          id="$(gh run list --workflow verify.yml --commit "$RELEASE_COMMIT" --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          test -n "$id"
+          test "$id" != null
+          echo "id=$id" >> "$GITHUB_OUTPUT"
       - name: Download the mock robot smoke report
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: verification-report
           path: artifacts/smoke-report
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.verify-run.outputs.id }}
           github-token: ${{ github.token }}
       - name: Build the reports section
         id: mock-site
@@ -162,8 +204,8 @@ jobs:
         with:
           runs-dir: artifacts/smoke-report
           output-dir: artifacts/site/reports
-          reset-history: 'true'
-          restore-history: 'false'
+          reset-history: ${{ inputs.reset_history && 'true' || 'false' }}
+          restore-history: auto
           upload-artifact: 'false'
           site-url: https://docs.livingprooflabs.com/verification-reports-action/
       - name: Link the G1 report from the mock index
@@ -173,15 +215,18 @@ jobs:
         with:
           name: g1-verification-report
           path: artifacts/g1-smoke-report
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.verify-run.outputs.id }}
           github-token: ${{ github.token }}
+      # The mock step restores the published reports/ tree, which already
+      # includes reports/g1. Restoring that same Pages archive again into
+      # reports/g1 would import the mock robot and fail the one-robot check.
       - name: Build the G1 reports section
         id: g1-site
         uses: ./site
         with:
           runs-dir: artifacts/g1-smoke-report
           output-dir: artifacts/site/reports/g1
-          reset-history: 'true'
+          reset-history: ${{ inputs.reset_history && 'true' || 'false' }}
           restore-history: 'false'
           upload-artifact: 'false'
           site-url: https://docs.livingprooflabs.com/verification-reports-action/
@@ -194,6 +239,8 @@ jobs:
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: artifacts/site
+          # GitHub clamps this to the repository or organization maximum.
+          retention-days: 90
   deploy:
     needs: production
     if: ${{ !cancelled() && needs.production.result == 'success' && inputs.release_version != '' && github.ref == 'refs/heads/main' }}

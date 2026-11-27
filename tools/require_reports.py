@@ -40,6 +40,26 @@ def require_published(reports: Path, mock_status: str, g1_status: str) -> None:
         raise SystemExit("G1 index is missing the G1 report")
 
 
+SAMPLE_REPORT = "reports/g1/unitree-g1/stock-mujoco-hallway/latest/"
+RUN_ID_LINK = re.compile(r"reports/(?:[^/\s\"')<>]+/)*runs/[0-9]+/")
+
+
+def require_readme_sample(site: Path, readme: Path) -> None:
+    """The README sample link must be the stable latest page and exist in the built site.
+
+    A pinned run id is not a stable sample. latest/ is the page that always
+    shows the current hallway report.
+    """
+    text = readme.read_text(encoding="utf-8")
+    if RUN_ID_LINK.search(text):
+        raise SystemExit("README links a reports run id")
+    if SAMPLE_REPORT not in text:
+        raise SystemExit("README is missing the stable G1 report link")
+    page = site / SAMPLE_REPORT / "index.html"
+    if not page.is_file():
+        raise SystemExit(f"built site is missing {SAMPLE_REPORT}")
+
+
 def require_g1_build(reports: Path, status: str) -> None:
     """Fail unless the pre-merge G1 site build succeeded and shows the real report."""
     if status != "success":
@@ -54,11 +74,13 @@ def main(argv: list[str]) -> None:
         link_g1_report(Path(argv[2]))
         return
     if len(argv) == 3 and argv[1] == "check":
+        reports = Path(argv[2])
         require_published(
-            Path(argv[2]),
+            reports,
             os.environ.get("MOCK_STATUS", ""),
             os.environ.get("G1_STATUS", ""),
         )
+        require_readme_sample(reports.parent, Path("README.md"))
         return
     if len(argv) == 3 and argv[1] == "g1":
         require_g1_build(Path(argv[2]), os.environ.get("SITE_STATUS", ""))

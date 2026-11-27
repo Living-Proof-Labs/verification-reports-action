@@ -57,3 +57,51 @@ def test_refused_g1_build_is_caught_when_index_exists(tmp_path: Path):
     (reports / "index.html").write_text("unitree-g1", encoding="utf-8")
     with pytest.raises(SystemExit, match="missing the expected report"):
         require_reports.require_g1_build(reports, "success")
+
+
+def test_readme_sample_link_exists_in_the_built_site(tmp_path: Path, monkeypatch):
+    repo = Path(__file__).resolve().parents[1]
+    reports = tmp_path / "site" / "reports"
+    _write_publishable_reports(reports)
+    page = reports / "g1/unitree-g1/stock-mujoco-hallway/latest/index.html"
+    page.parent.mkdir(parents=True)
+    page.write_text("latest hallway", encoding="utf-8")
+    require_reports.require_readme_sample(reports.parent, repo / "README.md")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("MOCK_STATUS", "success")
+    monkeypatch.setenv("G1_STATUS", "success")
+    require_reports.main(["require_reports.py", "check", str(reports)])
+
+
+def test_readme_run_id_link_is_refused(tmp_path: Path):
+    site = tmp_path / "site"
+    page = site / "reports/g1/unitree-g1/stock-mujoco-hallway/latest/index.html"
+    page.parent.mkdir(parents=True)
+    page.write_text("latest hallway", encoding="utf-8")
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        "https://docs.livingprooflabs.com/verification-reports-action/"
+        "reports/g1/unitree-g1/stock-mujoco-hallway/runs/46062882502/\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="run id"):
+        require_reports.require_readme_sample(site, readme)
+    readme.write_text(
+        "https://docs.livingprooflabs.com/verification-reports-action/"
+        "reports/g1/unitree-g1/stock-mujoco-hallway/latest/\n",
+        encoding="utf-8",
+    )
+    page.unlink()
+    with pytest.raises(SystemExit, match="built site is missing"):
+        require_reports.require_readme_sample(site, readme)
+
+
+def _write_publishable_reports(reports: Path) -> None:
+    (reports / "g1").mkdir(parents=True)
+    (reports / "index.html").write_text(
+        "<h1>Verification reports</h1>"
+        '<p class="sibling-report"><a href="g1/">Unitree G1 report</a></p>'
+        "verification-reports-action",
+        encoding="utf-8",
+    )
+    (reports / "g1" / "index.html").write_text("unitree-g1", encoding="utf-8")
