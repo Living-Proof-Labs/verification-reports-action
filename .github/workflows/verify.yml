@@ -459,7 +459,14 @@ jobs:
           else
             test "$ARTIFACT_ONLY" = "false"
           fi
-          grep -Fq "https://docs.livingprooflabs.com/livingproof-verification/reports/index.html" "$INDEX_PATH"
+          if grep -Fq "livingproof-verification/" "$INDEX_PATH"; then
+            echo "reports index still links livingproof-verification" >&2
+            exit 1
+          fi
+          if grep -Fq "Earlier history" "$INDEX_PATH"; then
+            echo "reports index still says Earlier history" >&2
+            exit 1
+          fi
           python3 -c 'import pathlib, sys; t = pathlib.Path(sys.argv[1]).read_text(); assert t.index("fixture-scenario-stock/latest/") < t.index("fixture-hallway-stock/latest/")' "$INDEX_PATH"
           python3 tools/site_fixture.py check "$REPORTS_DIR"
   verification-gate:

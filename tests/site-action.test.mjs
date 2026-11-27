@@ -82,11 +82,8 @@ test('src/site_action.py executes end to end as a standalone process on fixture 
     assert.match(outputs, /^runs-count=3$/m);
 
     const indexHtml = readFileSync(path.join(reportsDir, 'index.html'), 'utf8');
-    assert.ok(
-      indexHtml.includes(
-        'https://docs.livingprooflabs.com/livingproof-verification/reports/index.html'
-      )
-    );
+    assert.equal(indexHtml.includes('livingproof-verification/'), false);
+    assert.equal(indexHtml.includes('Earlier history'), false);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
