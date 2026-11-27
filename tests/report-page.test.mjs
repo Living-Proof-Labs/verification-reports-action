@@ -38,7 +38,8 @@ test('the release manual publishes the Verify mock and G1 reports with ./site', 
   assert.match(production, /run-id: \$\{\{ github\.event\.workflow_run\.id \}\}/);
   assert.match(production, /output-dir: artifacts\/site\/reports\n/);
   assert.match(production, /output-dir: artifacts\/site\/reports\/g1/);
-  assert.match(production, /reset-history: 'true'/);
+  assert.match(production, /reset-history: 'false'/);
+  assert.doesNotMatch(production, /reset-history: 'true'/);
   assert.match(production, /actions: read/);
   assert.match(releaseYml, /deploy-docs:[\s\S]*?actions: read/);
   assert.equal(readme.includes(LIVE_REPORT), true);

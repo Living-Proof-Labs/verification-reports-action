@@ -314,7 +314,7 @@ jobs:
         with:
           runs-dir: artifacts/smoke-report
           output-dir: artifacts/g1-site-check
-          reset-history: 'true'
+          reset-history: 'false'
           restore-history: 'false'
           upload-artifact: 'false'
       - name: Require the G1 site build

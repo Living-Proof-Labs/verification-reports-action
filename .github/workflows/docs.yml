@@ -162,8 +162,8 @@ jobs:
         with:
           runs-dir: artifacts/smoke-report
           output-dir: artifacts/site/reports
-          reset-history: 'true'
-          restore-history: 'false'
+          reset-history: 'false'
+          restore-history: auto
           upload-artifact: 'false'
           site-url: https://docs.livingprooflabs.com/verification-reports-action/
       - name: Link the G1 report from the mock index
@@ -175,13 +175,16 @@ jobs:
           path: artifacts/g1-smoke-report
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
+      # The mock step restores the published reports/ tree, which already
+      # includes reports/g1. Restoring that same Pages archive again into
+      # reports/g1 would import the mock robot and fail the one-robot check.
       - name: Build the G1 reports section
         id: g1-site
         uses: ./site
         with:
           runs-dir: artifacts/g1-smoke-report
           output-dir: artifacts/site/reports/g1
-          reset-history: 'true'
+          reset-history: 'false'
           restore-history: 'false'
           upload-artifact: 'false'
           site-url: https://docs.livingprooflabs.com/verification-reports-action/

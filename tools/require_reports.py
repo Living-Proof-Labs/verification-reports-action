@@ -47,8 +47,8 @@ RUN_ID_LINK = re.compile(r"reports/(?:[^/\s\"')<>]+/)*runs/[0-9]+/")
 def require_readme_sample(site: Path, readme: Path) -> None:
     """The README sample link must be the stable latest page and exist in the built site.
 
-    A run-id URL 404s after the next release, because the docs deploy rebuilds the G1
-    section with reset-history and keeps only latest/.
+    A pinned run id is not a stable sample. latest/ is the page that always
+    shows the current hallway report.
     """
     text = readme.read_text(encoding="utf-8")
     if RUN_ID_LINK.search(text):
