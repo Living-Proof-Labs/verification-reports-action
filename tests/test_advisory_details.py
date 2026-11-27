@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import urllib.error
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -390,6 +391,85 @@ def test_advisory_kind_lines_are_dropped_without_naming_them():
     )
     assert dropped == 1
     assert kept == ["Owner/two@v1.2.3/kept.json"]
+
+
+def _install_recording_opener(redirects: dict[str, str]):
+    """A local opener. No sockets. ``redirects`` maps a URL to a Location."""
+    import io
+    from email.message import EmailMessage
+    from urllib.response import addinfourl
+
+    seen: list[tuple[str, str | None]] = []
+
+    class _Handler(urllib.request.BaseHandler):
+        handler_order = 100
+
+        def http_open(self, req):
+            return self._respond(req)
+
+        def https_open(self, req):
+            return self._respond(req)
+
+        def _respond(self, req):
+            seen.append((req.full_url, req.get_header("Authorization")))
+            location = redirects.get(req.full_url)
+            headers = EmailMessage()
+            if location is not None:
+                headers["Location"] = location
+                response = addinfourl(io.BytesIO(b""), headers, req.full_url, 302)
+            else:
+                response = addinfourl(io.BytesIO(b"{}"), headers, req.full_url, 200)
+            response.msg = "ok"
+            return response
+
+    previous = urllib.request._opener
+    urllib.request.install_opener(
+        urllib.request.build_opener(_Handler, urllib.request.HTTPRedirectHandler)
+    )
+    return seen, previous
+
+
+def test_the_token_is_sent_only_to_api_github_com(monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    seen, previous = _install_recording_opener({})
+    try:
+        from drop_advisory_lines import fetch_bytes
+
+        fetch_bytes("https://api.github.com/repos/Owner/one/git/ref/tags/v1.0.0")
+        fetch_bytes("https://raw.githubusercontent.com/Owner/one/abc/file.json")
+    finally:
+        urllib.request.install_opener(previous)
+    by_url = dict(seen)
+    assert by_url["https://api.github.com/repos/Owner/one/git/ref/tags/v1.0.0"] == (
+        "Bearer test-token"
+    )
+    assert by_url["https://raw.githubusercontent.com/Owner/one/abc/file.json"] is None
+
+
+def test_the_token_is_not_forwarded_on_redirect(monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    cross = "https://api.github.com/repos/Owner/one/git/ref/tags/v1.0.0"
+    downgrade = "https://api.github.com/repos/Owner/one/git/tags/" + "c" * 40
+    seen, previous = _install_recording_opener(
+        {
+            cross: "https://example.test/landed",
+            downgrade: "http://example.test/plain",
+        }
+    )
+    try:
+        from drop_advisory_lines import fetch_bytes
+
+        fetch_bytes(cross)
+        fetch_bytes(downgrade)
+    finally:
+        urllib.request.install_opener(previous)
+    by_url = dict(seen)
+    assert by_url[cross] == "Bearer test-token"
+    assert by_url[downgrade] == "Bearer test-token"
+    assert by_url["https://example.test/landed"] is None
+    assert by_url["http://example.test/plain"] is None
 
 
 def test_a_refused_fetch_names_the_url():

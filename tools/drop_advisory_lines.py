@@ -36,7 +36,8 @@ def fetch_bytes(url: str) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "verification-reports-action"})
     token = _token()
     if token and url.startswith("https://api.github.com/"):
-        request.add_header("Authorization", f"Bearer {token}")
+        # Unredirected: urllib must not copy this header onto a redirected request.
+        request.add_unredirected_header("Authorization", f"Bearer {token}")
         request.add_header("Accept", "application/vnd.github+json")
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
