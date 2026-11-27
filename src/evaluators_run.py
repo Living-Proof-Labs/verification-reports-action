@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 OUTCOMES = frozenset({"result", "refused", "failure"})
@@ -87,10 +88,9 @@ def write_integrity_file(report_dir: Path, bundle: dict) -> None:
     from capability_verifier.collect import integrity_report_lines
 
     lines = integrity_report_lines(bundle)
-    if not lines:
-        return
     report_dir.mkdir(parents=True, exist_ok=True)
-    (report_dir / "integrity-lines.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    text = "\n".join(lines)
+    (report_dir / "integrity-lines.txt").write_text(text + "\n", encoding="utf-8")
 
 
 def place_lines(report_dir: Path) -> None:
@@ -193,21 +193,42 @@ def reporter_docker_command(
     ]
 
 
-def render_with_reporter(image: str, manifest: Path, report_dir: Path, links: Path | None) -> None:
-    """Render json, markdown, html, and text with the image the lock pinned."""
+def render_with_reporter(
+    image: str, manifest: Path, report_dir: Path, links: Path | None, runner=None
+) -> None:
+    """Render into an empty directory, then replace the downloaded report files.
+
+    Reporter 3.15.4 refuses to overwrite an ``-o`` target. The capability-report
+    artifact already holds ``report.json``, ``report.md`` and ``report.html``, so
+    the container writes into a fresh directory mounted at ``/out``.
+    """
 
     def run(command):
+        if runner is not None:
+            return runner(command)
         return subprocess.run(command, capture_output=True, text=True, check=False)
 
     report_dir.mkdir(parents=True, exist_ok=True)
-    for fmt, name in (("json", "report.json"), ("markdown", "report.md"), ("html", "report.html")):
-        completed = run(
-            reporter_docker_command(image, manifest, report_dir, links, fmt=fmt, output=name)
-        )
-        _require_ran(completed, f"reporter {fmt}")
-    completed = run(reporter_docker_command(image, manifest, report_dir, links, text=True))
-    _require_ran(completed, "reporter text")
-    (report_dir / "report.txt").write_text(completed.stdout or "", encoding="utf-8")
+    names = ("report.json", "report.md", "report.html", "report.txt")
+    with tempfile.TemporaryDirectory(prefix="vra-reporter-") as scratch_name:
+        scratch = Path(scratch_name)
+        for fmt, name in (
+            ("json", "report.json"),
+            ("markdown", "report.md"),
+            ("html", "report.html"),
+        ):
+            completed = run(
+                reporter_docker_command(image, manifest, scratch, links, fmt=fmt, output=name)
+            )
+            _require_ran(completed, f"reporter {fmt}")
+        completed = run(reporter_docker_command(image, manifest, scratch, links, text=True))
+        _require_ran(completed, "reporter text")
+        (scratch / "report.txt").write_text(completed.stdout or "", encoding="utf-8")
+        missing = [name for name in names if not (scratch / name).is_file()]
+        if missing:
+            raise RuntimeError(f"reporter left no {', '.join(missing)}")
+        for name in names:
+            shutil.move(scratch / name, report_dir / name)
 
 
 def _require_ran(completed, label: str) -> None:
@@ -314,6 +335,24 @@ def artifact_dir(parent: Path, prefix: str, kind: str, configuration: str) -> Pa
     return direct if direct.is_dir() else None
 
 
+def record_apply_failure(bundle_path: Path, report_dir: Path, reason: str) -> None:
+    """NOT RUN on the original report, so collect still finds integrity-lines.txt."""
+    try:
+        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        bundle = {}
+    if not isinstance(bundle, dict):
+        bundle = {}
+    from capability_verifier.collect import _attach_not_run
+
+    _attach_not_run(bundle, "failure", reason)
+    bundle_path.parent.mkdir(parents=True, exist_ok=True)
+    bundle_path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+    write_integrity_file(report_dir, bundle)
+    place_lines(report_dir)
+    write_report_checksums(report_dir)
+
+
 def apply_configuration(
     *,
     lines: list[str],
@@ -325,6 +364,7 @@ def apply_configuration(
     media_dir: Path | None = None,
     links: Path | None = None,
     results_dir: Path | None = None,
+    configuration: str = "",
     runner=None,
     render=None,
 ) -> bool:
@@ -333,32 +373,40 @@ def apply_configuration(
         return False
     runner = subprocess.run if runner is None else runner
     render = render_with_reporter if render is None else render
-    attach_scenario_results(bundle_path, results_dir, report_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    lines_file = out / "lines.txt"
-    lines_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    command = loader_command(lines_file, evidence, out, bundle_path, media_dir)
-    env = os.environ.copy()
-    env["PYTHONPATH"] = "src"
-    completed = runner(command, capture_output=True, text=True, env=env)
-    stderr = getattr(completed, "stderr", "") or ""
-    code = getattr(completed, "returncode", 0)
-    if stderr:
-        print(stderr, file=sys.stderr, end="" if stderr.endswith("\n") else "\n")
-    provenance = load_provenance(out / "evaluators-provenance.json")
-    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-    failed = classify(provenance, code) == "missing"
-    if failed:
-        record_missing(bundle, stderr)
-        bundle_path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
-    else:
+    try:
+        attach_scenario_results(bundle_path, results_dir, report_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        lines_file = out / "lines.txt"
+        lines_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        command = loader_command(lines_file, evidence, out, bundle_path, media_dir)
+        env = os.environ.copy()
+        env["PYTHONPATH"] = "src"
+        completed = runner(command, capture_output=True, text=True, env=env)
+        stderr = getattr(completed, "stderr", "") or ""
+        code = getattr(completed, "returncode", 0)
+        if stderr:
+            print(stderr, file=sys.stderr, end="" if stderr.endswith("\n") else "\n")
+        provenance = load_provenance(out / "evaluators-provenance.json")
         bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-    image = reporter_image(provenance_records)
-    render(image, bundle_path, report_dir, links)
-    write_integrity_file(report_dir, bundle)
-    place_lines(report_dir)
-    write_report_checksums(report_dir)
-    return failed
+        failed = classify(provenance, code) == "missing"
+        if failed:
+            record_missing(bundle, stderr)
+            bundle_path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+        else:
+            bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        image = reporter_image(provenance_records)
+        render(image, bundle_path, report_dir, links)
+        write_integrity_file(report_dir, bundle)
+        place_lines(report_dir)
+        write_report_checksums(report_dir)
+        return failed
+    except AssertionError:
+        raise
+    except Exception as exc:
+        reason = f"{configuration}: {exc}" if configuration else str(exc)
+        print(f"evaluators: {reason}", file=sys.stderr)
+        record_apply_failure(bundle_path, report_dir, reason)
+        return True
 
 
 def _write_output(key: str, value: str) -> None:
@@ -423,6 +471,7 @@ def run_downloaded(plan: dict, download: Path, out_root: Path, runner=None, rend
                     media_dir=media_dir,
                     links=links if links is not None and links.is_file() else None,
                     results_dir=results_dir,
+                    configuration=str(configuration),
                     runner=runner,
                     render=render,
                 )

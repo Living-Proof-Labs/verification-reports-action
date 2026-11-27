@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -21,6 +22,7 @@ from evaluators_run import (
     loader_command,
     main,
     record_missing,
+    render_with_reporter,
     reporter_docker_command,
     reporter_image,
     resolve_caller_evaluators,
@@ -570,3 +572,130 @@ def test_a_path_or_a_list_is_passed_to_the_loader(tmp_path, monkeypatch):
     assert calls == [f"{line}\n"]
     assert resolve_caller_evaluators("", caller)["lines"] == []
     assert resolve_caller_evaluators("mine.yml", caller)["lines"] == [line]
+
+
+def _out_mount(command) -> Path:
+    args = list(command)
+    for index, arg in enumerate(args):
+        if arg == "-v" and index + 1 < len(args) and args[index + 1].endswith(":/out"):
+            return Path(args[index + 1][: -len(":/out")])
+    raise AssertionError("the reporter command does not mount /out")
+
+
+def test_render_uses_an_empty_directory_when_the_report_already_exists(tmp_path):
+    report = tmp_path / "report"
+    report.mkdir()
+    (report / "report.json").write_text('{"old": true}\n', encoding="utf-8")
+    (report / "report.md").write_text("old md\n", encoding="utf-8")
+    (report / "report.html").write_text("old html\n", encoding="utf-8")
+    (report / "report.txt").write_text("old txt\n", encoding="utf-8")
+    (report / "thresholds.json").write_text("{}\n", encoding="utf-8")
+    manifest = tmp_path / "bundle" / "manifest.json"
+    manifest.parent.mkdir()
+    manifest.write_text("{}\n", encoding="utf-8")
+
+    def runner(command):
+        host = _out_mount(command)
+        args = list(command)
+        if "-o" in args:
+            target = Path(args[args.index("-o") + 1]).name
+            if (host / target).exists():
+                raise FileExistsError(f"[Errno 17] File exists: '/out/{target}'")
+            (host / target).write_text(f"rendered {target}\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return subprocess.CompletedProcess(command, 0, "rendered text\n", "")
+
+    render_with_reporter(reporter_image(_records()), manifest, report, None, runner=runner)
+    assert (report / "report.json").read_text(encoding="utf-8") == "rendered report.json\n"
+    assert (report / "report.md").read_text(encoding="utf-8") == "rendered report.md\n"
+    assert (report / "report.html").read_text(encoding="utf-8") == "rendered report.html\n"
+    assert (report / "report.txt").read_text(encoding="utf-8") == "rendered text\n"
+    assert (report / "thresholds.json").read_text(encoding="utf-8") == "{}\n"
+
+
+def _render_failure_layout(tmp_path, monkeypatch):
+    download = tmp_path / "downloaded"
+    prefix = "vra-demo-"
+    evidence = download / "evidence" / f"{prefix}evidence-stock" / "manifest.json"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("{}\n", encoding="utf-8")
+    bundle_path = download / "verified" / f"{prefix}verified-stock" / "bundle" / "manifest.json"
+    bundle_path.parent.mkdir(parents=True)
+    bundle_path.write_text(
+        json.dumps({"assessment": {"runs": [{"conclusion": "FAIL"}]}}) + "\n", encoding="utf-8"
+    )
+    report = download / "reports" / f"{prefix}capability-report-stock"
+    _verdict(report)
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "evaluators": {
+                    "lines": ["owner/repo@v1.2.3/descriptor.json"],
+                    "input": "owner/repo@v1.2.3/descriptor.json",
+                },
+                "definitions": [
+                    {
+                        "execution": "capability-verifier",
+                        "id": "demo",
+                        "path": "demo.toml",
+                        "artifactPrefix": prefix,
+                        "configurations": ["stock"],
+                        "provenance": _records(),
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "github-output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv("INPUT_PLAN_PATH", str(plan))
+    monkeypatch.setenv("INPUT_DOWNLOAD_ROOT", str(download))
+    monkeypatch.delenv("INPUT_EVALUATORS", raising=False)
+
+    def loader(command, **kwargs):
+        del kwargs
+        out = Path(command[command.index("--out") + 1])
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "evaluators-provenance.json").write_text(
+            '[{"outcome": "result"}]\n', encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def render(image, manifest, report_dir, links):
+        del image, manifest, report_dir, links
+        raise RuntimeError("reporter json exited 1")
+
+    monkeypatch.setattr("evaluators_run.subprocess.run", loader)
+    monkeypatch.setattr("evaluators_run.render_with_reporter", render)
+    return report, bundle_path, output
+
+
+def test_a_render_failure_still_leaves_integrity_lines(tmp_path, monkeypatch, capsys):
+    report, bundle_path, output = _render_failure_layout(tmp_path, monkeypatch)
+    assert main() == 0
+    assert output.read_text(encoding="utf-8") == "failed=true\n"
+    lines = (report / "integrity-lines.txt").read_text(encoding="utf-8")
+    assert "reporter json exited 1" in lines
+    assert "NOT RUN (failure)" in lines
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    missing = bundle["assessment"]["integrity_not_run"]
+    assert missing["job_result"] == "failure"
+    assert "reporter json exited 1" in missing["reason"]
+    page = (report / "report.md").read_text(encoding="utf-8")
+    assert "reporter json exited 1" in page
+    digest = hashlib.sha256((report / "report.md").read_bytes()).hexdigest()
+    assert f"{digest}  report.md" in (report / "SHA256SUMS").read_text(encoding="utf-8")
+    assert "reporter json exited 1" in capsys.readouterr().err
+
+
+def test_a_render_failure_names_the_configuration(tmp_path, monkeypatch, capsys):
+    report, bundle_path, _output = _render_failure_layout(tmp_path, monkeypatch)
+    assert main() == 0
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    assert bundle["assessment"]["integrity_not_run"]["reason"].startswith("stock:")
+    text = (report / "integrity-lines.txt").read_text(encoding="utf-8")
+    assert "stock: reporter json exited 1" in text
+    assert "stock: reporter json exited 1" in capsys.readouterr().err
