@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import urllib.error
 import urllib.parse
 from pathlib import Path
 
@@ -22,7 +23,7 @@ import reports_restore
 import reports_site
 import site_action
 from details_files import cited_details_uris
-from drop_advisory_lines import keep_lines
+from drop_advisory_lines import DropError, keep_lines
 from evaluators_run import apply_configuration, write_report_checksums
 from test_evaluators_run import verifier_src
 from test_site import (
@@ -389,6 +390,16 @@ def test_advisory_kind_lines_are_dropped_without_naming_them():
     )
     assert dropped == 1
     assert kept == ["Owner/two@v1.2.3/kept.json"]
+
+
+def test_a_refused_fetch_names_the_url():
+    url = "https://api.github.com/repos/Owner/one/git/ref/tags/v1.0.0"
+
+    def fetch(requested: str) -> bytes:
+        raise urllib.error.HTTPError(requested, 403, "rate limit exceeded", None, None)
+
+    with pytest.raises(DropError, match=url):
+        keep_lines("Owner/one@v1.0.0/advisory.json\n", fetch)
 
 
 def test_checksums_accept_one_advisory_result_or_a_list(tmp_path):

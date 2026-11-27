@@ -38,22 +38,36 @@ def fetch_bytes(url: str) -> bytes:
     if token and url.startswith("https://api.github.com/"):
         request.add_header("Authorization", f"Bearer {token}")
         request.add_header("Accept", "application/vnd.github+json")
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return response.read()
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        raise DropError(f"{url} was refused: HTTP {exc.code}") from exc
+
+
+def read_url(url: str, fetch=fetch_bytes) -> bytes:
+    """Read ``url``. A refused request is a :class:`DropError` that names it."""
+    try:
+        return fetch(url)
+    except urllib.error.HTTPError as exc:
+        raise DropError(f"{url} was refused: HTTP {exc.code}") from exc
+    except DropError:
+        raise
 
 
 def peel_commit(owner: str, repo: str, ref: str, fetch=fetch_bytes) -> str:
     if SHA.fullmatch(ref):
         return ref
     url = f"https://api.github.com/repos/{owner}/{repo}/git/ref/tags/{ref}"
-    payload = json.loads(fetch(url))
+    payload = json.loads(read_url(url, fetch))
     obj = payload.get("object") if isinstance(payload, dict) else None
     if not isinstance(obj, dict):
         raise DropError(f"{owner}/{repo} tag {ref} did not peel to a commit")
     sha = obj.get("sha")
     kind = obj.get("type")
     if kind == "tag":
-        tag = json.loads(fetch(f"https://api.github.com/repos/{owner}/{repo}/git/tags/{sha}"))
+        tag_url = f"https://api.github.com/repos/{owner}/{repo}/git/tags/{sha}"
+        tag = json.loads(read_url(tag_url, fetch))
         inner = tag.get("object") if isinstance(tag, dict) else None
         sha = inner.get("sha") if isinstance(inner, dict) else None
         kind = inner.get("type") if isinstance(inner, dict) else None
@@ -71,7 +85,7 @@ def descriptor_kind(line: str, fetch=fetch_bytes) -> str:
         raise DropError(f"{line!r} is not a declaration line")
     commit = peel_commit(owner, repo, ref, fetch)
     url = f"https://raw.githubusercontent.com/{owner}/{repo}/{commit}/{path}"
-    document = json.loads(fetch(url))
+    document = json.loads(read_url(url, fetch))
     if not isinstance(document, dict):
         raise DropError(f"{line} descriptor is not an object")
     kind = document.get("kind")

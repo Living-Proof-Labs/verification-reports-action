@@ -150,6 +150,11 @@ test('advisory off re-runs collect on the same artifacts with non-advisory lines
   assert.match(smoke, /evaluators: evaluators\.yml/);
   assert.match(collect, /name: \$\{\{ inputs\.artifact-name \}\}-evaluated-reports/);
   assert.match(check, /python tools\/drop_advisory_lines\.py evaluators\.yml/);
+  const drop = check.slice(
+    check.indexOf('Keep the non-advisory declaration lines'),
+    check.indexOf('- id: evaluators'),
+  );
+  assert.match(drop, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
   assert.match(check, /src\/evaluators_run\.py/);
   assert.match(check, /node src\/collect\.mjs/);
   assert.match(check, /python tools\/compare_integrity\.py/);

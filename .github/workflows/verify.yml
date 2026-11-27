@@ -370,6 +370,8 @@ jobs:
         run: uv sync --locked
       - name: Keep the non-advisory declaration lines
         id: advisory-off
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: python tools/drop_advisory_lines.py evaluators.yml artifacts/advisory-off-lines.txt
       - id: evaluators
         name: Re-run collect without advisory lines
