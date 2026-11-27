@@ -32,34 +32,92 @@ function verifyRunScript() {
 }
 
 function fakeGh(scenario) {
+  const badSha = 'b'.repeat(40);
   return `#!/bin/bash
 set -euo pipefail
 if [ "\${1:-}" = "run" ]; then
+  if [ "${scenario}" = "garbage-list" ]; then
+    echo 'not json'
+    exit 0
+  fi
+  if [ "${scenario}" = "empty-id" ]; then
+    echo '[{"databaseId":null}]'
+    exit 0
+  fi
+  status_filter=""
+  workflow=""
   event=""
   branch=""
+  limit=20
   prev=""
   for arg in "$@"; do
-    if [ "$prev" = "--event" ]; then event="$arg"; fi
-    if [ "$prev" = "--branch" ]; then branch="$arg"; fi
+    case "$prev" in
+      --status) status_filter="$arg" ;;
+      --workflow) workflow="$arg" ;;
+      --event) event="$arg" ;;
+      --branch) branch="$arg" ;;
+      --limit) limit="$arg" ;;
+    esac
     prev="$arg"
   done
-  if [ "$event" = "push" ] && [ "$branch" = "main" ]; then
-    printf '%s\\n' '[{"databaseId":333,"headSha":"${RELEASE_COMMIT}","event":"push","headBranch":"main"}]'
-  elif [ "$event" != "push" ]; then
-    printf '%s\\n' '[{"databaseId":111,"headSha":"${RELEASE_COMMIT}","event":"merge_group","headBranch":"main"}]'
-  else
-    printf '%s\\n' '[{"databaseId":222,"headSha":"${RELEASE_COMMIT}","event":"push","headBranch":"feature"}]'
-  fi
+  ids=""
+  keep() {
+    local id="$1" st="$2" wf="$3" ev="$4" br="$5"
+    if [ -n "$status_filter" ] && [ "$st" != "$status_filter" ]; then return 0; fi
+    if [ -n "$workflow" ] && [ "$wf" != "$workflow" ]; then return 0; fi
+    if [ -n "$event" ] && [ "$ev" != "$event" ]; then return 0; fi
+    if [ -n "$branch" ] && [ "$br" != "$branch" ]; then return 0; fi
+    ids="$ids $id"
+  }
+  keep 106 failure verify.yml push main
+  keep 102 success docs.yml push main
+  keep 111 success verify.yml merge_group main
+  keep 222 success verify.yml push feature
+  keep 333 success verify.yml push main
+  count=0
+  out="["
+  for id in $ids; do
+    if [ "$count" -ge "$limit" ]; then break; fi
+    if [ "$count" -gt 0 ]; then out="$out,"; fi
+    out="$out{\\"databaseId\\":$id}"
+    count=$((count + 1))
+  done
+  printf '%s\\n' "$out]"
   exit 0
 fi
 if [ "\${1:-}" = "api" ]; then
+  if [ "${scenario}" = "garbage-api" ]; then
+    echo 'not json'
+    exit 0
+  fi
   id="\${2##*/}"
+  if [ -z "$id" ]; then id="0"; fi
   sha="${RELEASE_COMMIT}"
   repo="${EXPECTED_REPO}"
-  if [ "${scenario}" = "bad-sha" ]; then sha="${'b'.repeat(40)}"; fi
+  conclusion="success"
+  run_status="completed"
+  event="push"
+  branch="main"
+  case "$id" in
+    106) conclusion="failure" ;;
+    111) event="merge_group" ;;
+    222) branch="feature" ;;
+  esac
+  if [ "${scenario}" = "bad-sha" ]; then sha="${badSha}"; fi
   if [ "${scenario}" = "bad-repo" ]; then repo="Someone/verification-reports-action"; fi
-  if [ "${scenario}" = "empty" ]; then printf '%s\\n' '[]'; exit 0; fi
-  printf '%s\\n' "{\\"head_sha\\":\\"$sha\\",\\"head_repository\\":{\\"full_name\\":\\"$repo\\"},\\"id\\":$id}"
+  if [ "${scenario}" = "bad-conclusion" ]; then conclusion="failure"; fi
+  if [ "${scenario}" = "bad-status" ]; then run_status="in_progress"; fi
+  if [ "${scenario}" = "bad-event" ]; then event="pull_request"; fi
+  if [ "${scenario}" = "bad-branch" ]; then branch="feature"; fi
+  jq -n \\
+    --arg sha "$sha" \\
+    --arg repo "$repo" \\
+    --arg conclusion "$conclusion" \\
+    --arg status "$run_status" \\
+    --arg event "$event" \\
+    --arg branch "$branch" \\
+    --argjson id "$id" \\
+    '{head_sha:$sha,head_repository:{full_name:$repo},conclusion:$conclusion,status:$status,event:$event,head_branch:$branch,id:$id}'
   exit 0
 fi
 echo "unexpected gh command: $*" >&2
@@ -131,6 +189,54 @@ test('dispatch lookup refuses a fork repository', () => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, new RegExp(`Expected repository ${EXPECTED_REPO}`));
   assert.match(result.stderr, /Found Someone\/verification-reports-action/);
+});
+
+test('dispatch lookup requires --status success', () => {
+  const result = runScript({}, 'match');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.output, 'id=333\n');
+});
+
+test('dispatch lookup requires the verify workflow', () => {
+  const result = runScript({}, 'match');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.output, 'id=333\n');
+});
+
+test('dispatch lookup refuses a run that did not succeed', () => {
+  const result = runScript({}, 'bad-conclusion');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Expected conclusion success/);
+  assert.match(result.stderr, /Found failure/);
+});
+
+test('dispatch lookup refuses a run that is not completed', () => {
+  const result = runScript({}, 'bad-status');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Expected status completed/);
+  assert.match(result.stderr, /Found in_progress/);
+});
+
+test('dispatch lookup refuses an event that is not push', () => {
+  const result = runScript({}, 'bad-event');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Expected event push/);
+  assert.match(result.stderr, /Found pull_request/);
+});
+
+test('dispatch lookup refuses a branch that is not main', () => {
+  const result = runScript({}, 'bad-branch');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Expected head_branch main/);
+  assert.match(result.stderr, /Found feature/);
+});
+
+test('garbage gh output stops before a run id is chosen', () => {
+  for (const scenario of ['garbage-list', 'empty-id', 'garbage-api']) {
+    const result = runScript({}, scenario);
+    assert.notEqual(result.status, 0, scenario);
+    assert.equal(result.output, '', `${scenario} wrote ${JSON.stringify(result.output)}`);
+  }
 });
 
 test('dispatch lookup refuses when no push to main exists', () => {
