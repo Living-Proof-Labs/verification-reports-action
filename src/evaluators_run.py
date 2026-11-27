@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -22,7 +21,6 @@ from pathlib import Path
 
 OUTCOMES = frozenset({"result", "refused", "failure"})
 REPORTER_IMAGE = "ghcr.io/living-proof-labs/livingproof-capability-report"
-_RUN_CLOCK = re.compile(r"(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$")
 
 
 def last_stderr_line(stderr: str) -> str:
@@ -76,41 +74,6 @@ def reporter_image(records: list) -> str:
     if not digest.startswith("sha256:") or tag == "":
         raise RuntimeError(f"reporter image is not a resolved ref. found {image}")
     return image
-
-
-def pin_integrity_clock(bundle: dict) -> bool:
-    """Stamp integrity results with the run id's clock.
-
-    The evaluator records the collect machine's clock. Health on and Health off
-    each run the declaration, so a wall clock would make the two reports differ.
-    """
-    assessment = bundle.get("assessment")
-    if not isinstance(assessment, dict):
-        return False
-    clock = None
-    runs = assessment.get("runs")
-    for run in runs if isinstance(runs, list) else []:
-        if not isinstance(run, dict):
-            continue
-        match = _RUN_CLOCK.search(str(run.get("run_id") or ""))
-        if match:
-            year, month, day, hour, minute, second = match.groups()
-            clock = f"{year}-{month}-{day}T{hour}:{minute}:{second}Z"
-            break
-    stored = assessment.get("integrity_results")
-    if clock is None or not isinstance(stored, dict):
-        return False
-    changed = False
-    for document in stored.values():
-        stamps = document.get("timestamps") if isinstance(document, dict) else None
-        if not isinstance(stamps, dict):
-            continue
-        if stamps.get("started_at") == clock and stamps.get("completed_at") == clock:
-            continue
-        stamps["started_at"] = clock
-        stamps["completed_at"] = clock
-        changed = True
-    return changed
 
 
 def record_missing(bundle: dict, stderr: str) -> str:
@@ -431,8 +394,6 @@ def apply_configuration(
             bundle_path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
         else:
             bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-            if pin_integrity_clock(bundle):
-                bundle_path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
         image = reporter_image(provenance_records)
         render(image, bundle_path, report_dir, links)
         write_integrity_file(report_dir, bundle)

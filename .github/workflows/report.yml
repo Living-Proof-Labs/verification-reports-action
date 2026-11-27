@@ -400,6 +400,14 @@ jobs:
           INPUT_EVALUATORS: ${{ inputs.evaluators }}
           INPUT_CALLER_ROOT: ${{ github.workspace }}/caller
         run: uv run --no-sync python "${{ github.workspace }}/action/src/evaluators_run.py"
+      - name: Upload the evaluated capability reports
+        if: needs.plan.outputs.evaluators_run == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ inputs.artifact-name }}-evaluated-reports
+          path: downloaded/reports
+          retention-days: 30
+          if-no-files-found: error
       - id: collect
         working-directory: caller
         env:

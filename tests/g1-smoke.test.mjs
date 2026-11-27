@@ -366,7 +366,12 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
 
   assert.equal(reportWorkflow.on.workflow_call.inputs['artifact-name'].default, 'verification-report');
   const collectSteps = reportWorkflow.jobs.collect.steps;
-  const reportUpload = collectSteps.find((step) => step.uses && step.uses.startsWith('actions/upload-artifact@'));
+  const reportUpload = collectSteps.find(
+    (step) =>
+      step.uses &&
+      step.uses.startsWith('actions/upload-artifact@') &&
+      step.with?.name === '${{ inputs.artifact-name }}',
+  );
   assert.equal(reportUpload.with.name, '${{ inputs.artifact-name }}');
   const declarationFailure = collectSteps.find(
     (step) => step.name === 'Fail when an evaluator declaration produced no provenance',

@@ -73,7 +73,7 @@ test('the report workflow passes the plan lines and still allows fifteen minutes
     collect,
     /uses: astral-sh\/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5\.4\.2\n {8}with:/
   );
-  const upload = collect.indexOf('actions/upload-artifact');
+  const upload = collect.lastIndexOf('actions/upload-artifact');
   const fail = collect.indexOf('Fail when an evaluator declaration produced no provenance');
   assert.ok(upload !== -1 && fail > upload);
   const uploadBlock = collect.slice(upload, fail);
@@ -134,28 +134,24 @@ test('a caller path or an inline list is the declaration', () => {
   assert.match(release, /evaluators: evaluators\.yml/);
 });
 
-test('both health legs run the same evaluators step', () => {
+test('health off reuses the one evaluated report instead of running the loader again', () => {
   const verify = readFileSync(new URL('../.github/workflows/verify.yml', import.meta.url), 'utf8');
   const report = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
   const smoke = verify.slice(verify.indexOf('\n  g1-smoke:\n'), verify.indexOf('\n  g1-smoke-check:\n'));
   const check = verify.slice(verify.indexOf('\n  g1-smoke-check:\n'));
-  const declared = smoke.match(/\n {6}evaluators: (\S+)\s*$/);
-  assert.ok(declared, 'g1-smoke does not pass an evaluators input');
-  assert.match(check, new RegExp(`INPUT_EVALUATORS: ${declared[1]}\\n`));
-  assert.match(check, /INPUT_CALLER_ROOT: \$\{\{ github\.workspace \}\}/);
-  const evaluatorsAt = check.indexOf('src/evaluators_run.py');
-  const compareAt = check.indexOf('node tools/health-smoke.mjs');
-  assert.ok(evaluatorsAt !== -1 && compareAt !== -1 && evaluatorsAt < compareAt);
   const collect = report.slice(report.indexOf('\n  collect:\n'));
-  assert.match(collect, /INPUT_EVALUATORS: \$\{\{ inputs\.evaluators \}\}/);
-  assert.match(collect, /action\/src\/evaluators_run\.py/);
-  for (const pattern of ['vra-*-verified-*', 'vra-*-links-*', 'vra-*-evaluator-results-*']) {
-    const escaped = pattern.replaceAll('*', '\\*');
-    assert.match(check, new RegExp(`pattern: ${escaped}`));
-    assert.match(collect, new RegExp(`pattern: ${escaped}`));
-  }
-  assert.match(check, new RegExp(`ref: ${VERIFIER_WORKFLOW_SHA}`));
-  assert.match(collect, new RegExp(`ref: ${VERIFIER_WORKFLOW_SHA}`));
+  const artifact = smoke.match(/\n {6}artifact-name: (\S+)\n/);
+  assert.ok(artifact, 'g1-smoke does not name its report artifact');
+  const evaluated = `${artifact[1]}-evaluated-reports`;
+  assert.match(collect, /name: \$\{\{ inputs\.artifact-name \}\}-evaluated-reports/);
+  assert.match(collect, /path: downloaded\/reports/);
+  const evaluatorsAt = collect.indexOf('- id: evaluators');
+  const uploadAt = collect.indexOf('inputs.artifact-name }}-evaluated-reports');
+  const collectAt = collect.indexOf('- id: collect');
+  assert.ok(evaluatorsAt !== -1 && uploadAt > evaluatorsAt && collectAt > uploadAt);
+  assert.match(check, new RegExp(`name: ${evaluated}\\n`));
+  assert.doesNotMatch(check, /evaluators_run\.py/);
+  assert.doesNotMatch(check, /pattern: vra-unitree-g1-stock-mujoco-hallway-capability-report-/);
 });
 
 test('an inline empty list is no evaluators', () => {

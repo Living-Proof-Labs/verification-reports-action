@@ -21,7 +21,6 @@ from evaluators_run import (
     load_provenance,
     loader_command,
     main,
-    pin_integrity_clock,
     record_missing,
     render_with_reporter,
     reporter_docker_command,
@@ -702,7 +701,7 @@ def test_a_render_failure_names_the_configuration(tmp_path, monkeypatch, capsys)
     assert "stock: reporter json exited 1" in capsys.readouterr().err
 
 
-def _integrity_document(started_at: str) -> dict:
+def _integrity_document(started_at: str, completed_at: str | None = None) -> dict:
     return {
         "format": "livingproof-evaluator-result/1.2.0",
         "evaluator": {
@@ -710,7 +709,10 @@ def _integrity_document(started_at: str) -> dict:
             "kind": "integrity",
             "display_name": "Run Integrity",
         },
-        "timestamps": {"started_at": started_at, "completed_at": started_at},
+        "timestamps": {
+            "started_at": started_at,
+            "completed_at": started_at if completed_at is None else completed_at,
+        },
         "integrity": {"run": {"test_system_status": "COMPLETED", "success": True}},
     }
 
@@ -756,7 +758,9 @@ def test_a_result_outcome_writes_integrity_lines(tmp_path):
     assert "Run Integrity: PASS" in text
 
 
-def test_integrity_clock_follows_the_run(tmp_path):
+def test_evaluator_timestamps_reach_the_bundle_unchanged(tmp_path):
+    started_at = "2099-01-01T00:00:01Z"
+    completed_at = "2099-01-01T00:00:09Z"
     bundle_path = tmp_path / "bundle" / "manifest.json"
     bundle_path.parent.mkdir(parents=True)
     bundle_path.write_text(
@@ -779,7 +783,7 @@ def test_integrity_clock_follows_the_run(tmp_path):
         target = Path(command[command.index("--bundle") + 1])
         bundle = json.loads(target.read_text(encoding="utf-8"))
         bundle["assessment"]["integrity_results"] = {
-            "livingproof-run-integrity": _integrity_document("2099-01-01T00:00:00Z")
+            "livingproof-run-integrity": _integrity_document(started_at, completed_at)
         }
         target.write_text(json.dumps(bundle) + "\n", encoding="utf-8")
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -796,5 +800,4 @@ def test_integrity_clock_follows_the_run(tmp_path):
     )
     stored = json.loads(bundle_path.read_text(encoding="utf-8"))
     stamps = stored["assessment"]["integrity_results"]["livingproof-run-integrity"]["timestamps"]
-    assert stamps == {"started_at": "2026-11-27T06:19:21Z", "completed_at": "2026-11-27T06:19:21Z"}
-    assert pin_integrity_clock({"assessment": {}}) is False
+    assert stamps == {"started_at": started_at, "completed_at": completed_at}
