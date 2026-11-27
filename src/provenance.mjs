@@ -17,10 +17,11 @@ const VERIFIER_IMAGE = 'ghcr.io/living-proof-labs/capability-verifier-hallway';
 const REPORTER_IMAGE = 'ghcr.io/living-proof-labs/livingproof-capability-report';
 
 /**
- * The tag is what people edit. capability-verifier v2.12.5 takes the resolved
+ * The tag is what people edit. capability-verifier v2.13.0 takes the resolved
  * verifier commit, verifier image, reporter image and scenario-evaluator commit
  * as workflow inputs. Those lock fields are refused when present. The fields
- * v2.12.5 still reads from the lock stay, and must match the resolved tag.
+ * v2.13.0 still reads from the lock stay, and must match the resolved tag.
+ * Declaration lines in evaluators.yml own every other evaluators entry.
  */
 /**
  * required: the trial reads the lock field and does not substitute a default.
@@ -82,22 +83,6 @@ const SPECS = [
       ),
   },
   {
-    name: 'livingproof-evaluator-run',
-    lockField: 'evaluators.livingproof-evaluator-run',
-    expectedRepository: 'Living-Proof-Labs/livingproof-evaluator-run',
-    defaultRepository: 'Living-Proof-Labs/livingproof-evaluator-run',
-    defaultTag: 'v1.5.0',
-    kind: 'source',
-    fields: { repository: 'optional', tag: 'optional', commit: 'optional' },
-    read: (lock, sources) =>
-      fromRelease(
-        lock.evaluators?.['livingproof-evaluator-run'],
-        sources?.evaluators?.['livingproof-evaluator-run'],
-        false,
-        { lockFieldsOnly: true }
-      ),
-  },
-  {
     name: 'livingproof-capability-report',
     lockField: 'releases.reporter',
     expectedRepository: 'Living-Proof-Labs/livingproof-capability-report',
@@ -131,14 +116,8 @@ function lockRaw(entry) {
 }
 
 function fromRelease(lockEntry, tomlEntry, withFiles = false, options = {}) {
-  // evaluator-run: scenario.yml reads each lock field on its own and substitutes
-  // its default when that field is absent. The definition must not fill the gap.
-  const repository = options.lockFieldsOnly
-    ? text(lockEntry?.repository)
-    : text(tomlEntry?.repository) || text(lockEntry?.repository);
-  const tag = options.lockFieldsOnly
-    ? text(lockEntry?.tag)
-    : text(tomlEntry?.tag) || text(lockEntry?.tag);
+  const repository = text(tomlEntry?.repository) || text(lockEntry?.repository);
+  const tag = text(tomlEntry?.tag) || text(lockEntry?.tag);
   if (!repository && !tag && !lockEntry && !tomlEntry) return null;
   const files = {};
   const raw = lockRaw(lockEntry);
@@ -447,7 +426,7 @@ function imageInput(name, tag, digest, label, pattern) {
 }
 
 /**
- * The four inputs capability-verifier v2.12.5 scenario.yml accepts. Built from
+ * The four inputs capability-verifier v2.13.0 scenario.yml accepts. Built from
  * the commits and image digests the action already resolved from the tags.
  */
 export function resolvedTrialInputs(records) {
@@ -507,13 +486,6 @@ export function assertLockAgrees(pin, resolved) {
   if (pin.lockField === 'world' && raw.commit != null && raw.commit !== resolved.commit) {
     disagree(pin, `${pin.lockField}.commit`, resolved.commit, raw.commit);
   }
-  if (
-    pin.lockField === 'evaluators.livingproof-evaluator-run' &&
-    raw.commit != null &&
-    raw.commit !== resolved.commit
-  ) {
-    disagree(pin, `${pin.lockField}.commit`, resolved.commit, raw.commit);
-  }
   if (pin.lockField === 'world' && typeof raw.sha256 === 'string' && raw.sha256 !== fileHash) {
     disagree(pin, `${pin.lockField}.sha256`, fileHash, raw.sha256);
   }
@@ -532,6 +504,20 @@ export function assertLockAgrees(pin, resolved) {
     const found = resolved.files?.[pin.parametersFile] || '';
     if (parametersSha !== found) disagree(pin, 'sources.parameters.sha256', found || 'the file sha256', parametersSha);
   }
+}
+
+/** The one evaluator the trial still resolves. Every other lock evaluators entry is ignored. */
+const RESOLVED_EVALUATOR = 'livingproof-evaluator-scenario';
+
+export const IGNORED_EVALUATOR_NOTICE =
+  'notice: a lock evaluators entry is ignored; evaluators.yml declares those lines';
+
+export function ignoredEvaluatorNotice(lock) {
+  const evaluators = lock?.evaluators;
+  if (!evaluators || typeof evaluators !== 'object' || Array.isArray(evaluators)) return null;
+  const extra = Object.keys(evaluators).filter((key) => key !== RESOLVED_EVALUATOR);
+  if (extra.length === 0) return null;
+  return IGNORED_EVALUATOR_NOTICE;
 }
 
 export function collectPins(item) {
@@ -577,7 +563,6 @@ function entryFor(spec, lock) {
   if (spec.name === 'robot-capability-specs') return lock.releases?.specs;
   if (spec.name === 'livingproof-worlds') return lock.world;
   if (spec.name === 'livingproof-evaluator-scenario') return lock.evaluators?.['livingproof-evaluator-scenario'];
-  if (spec.name === 'livingproof-evaluator-run') return lock.evaluators?.['livingproof-evaluator-run'];
   if (spec.name === 'livingproof-capability-report') return lock.releases?.reporter;
   return null;
 }

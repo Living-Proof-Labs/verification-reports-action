@@ -135,8 +135,8 @@ def presentation_html(folder, record, report, original_html, days):
         retention=days,
     )
     # Replay the producer's existing post-render annotation, not a newly inferred verdict.
-    # capability-verifier v2.12.5 collect.py place_integrity_lines,
-    # commit e6a1ba347c525b62abf0644b610562b7bfb390d9.
+    # capability-verifier v2.13.0 collect.py place_integrity_lines,
+    # commit 93a490d82ae50e4c551873dfcfaa778adcd5b689.
     shown = "".join(
         f"<p class='stored-status integrity-status'>{html.escape(line, quote=False)}</p>"
         for line in lines

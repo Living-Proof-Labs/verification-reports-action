@@ -23,9 +23,9 @@ A robot `FAIL` or `INSUFFICIENT_EVIDENCE` is a successful run. `status` is `ok` 
 
 ## Pinned inputs
 
-Before any trial, the plan job resolves each input from its release tag and refuses the run when the check fails. The message names the input and the expected and found values. No `report.json` is written, and `walk-hallway` and `scenario` do not start, because both need the plan job. The inputs are capability-verifier, livingproof-sim-mujoco, robot-capability-specs, the livingproof-worlds world, livingproof-evaluator-scenario, livingproof-evaluator-run, and livingproof-capability-report together with its image.
+Before any trial, the plan job resolves each input from its release tag and refuses the run when the check fails. The message names the input and the expected and found values. No `report.json` is written, and `walk-hallway` and `scenario` do not start, because both need the plan job. The inputs are capability-verifier, livingproof-sim-mujoco, robot-capability-specs, the livingproof-worlds world, livingproof-evaluator-scenario, and livingproof-capability-report together with its image. Run Integrity is not one of those inputs. It comes from `evaluators.yml`.
 
-The tag is the pin people edit. The plan resolves each tag, then passes four values into capability-verifier v2.12.5: `verifier-commit`, `verifier-image`, `reporter-image`, and `evaluator-commit`. Those values are the commits and image refs the plan already checked. The lock must not carry the fields they replace. A present field is refused before `plan.json` is written:
+The tag is the pin people edit. The plan resolves each tag, then passes four values into capability-verifier v2.13.0: `verifier-commit`, `verifier-image`, `reporter-image`, and `evaluator-commit`. Those values are the commits and image refs the plan already checked. The lock must not carry the fields they replace. A present field is refused before `plan.json` is written:
 
 - `releases.verifier.commit`, `releases.verifier.image`, and `releases.verifier.digest`
 - `releases.reporter.image` and `releases.reporter.digest`
@@ -33,7 +33,7 @@ The tag is the pin people edit. The plan resolves each tag, then passes four val
 
 A one-line edit of the verifier tag, or of the livingproof-evaluator-scenario tag, needs no relock of those fields. The trial runs the commit and image the new tag resolved to.
 
-These fields stay in the lock. capability-verifier v2.12.5 still reads them, and the plan refuses when one disagrees with the tag it resolved:
+These fields stay in the lock. capability-verifier v2.13.0 still reads them, and the plan refuses when one disagrees with the tag it resolved:
 
 - `releases.runner.commit`
 - `releases.specs.commit` and `releases.specs.files`
@@ -41,7 +41,7 @@ These fields stay in the lock. capability-verifier v2.12.5 still reads them, and
 - `sources.parameters.sha256`
 - `releases.reporter.commit`
 
-A one-line edit of the runner, specs, or world tag that leaves the old commit or hashes in place is refused. `releases.reporter.commit` stays for the same reason: v2.12.5 does not take a reporter commit input, and `repin --check` still requires that commit. `sources.parameters.sha256` is the hash of `specs/scenarios/<scenario id>/parameters.json` at the specs commit. `sources.parameters.path` is the path in the robot repository and is not hashed.
+A one-line edit of the runner, specs, or world tag that leaves the old commit or hashes in place is refused. `releases.reporter.commit` stays for the same reason: v2.13.0 does not take a reporter commit input, and `repin --check` still requires that commit. `sources.parameters.sha256` is the hash of `specs/scenarios/<scenario id>/parameters.json` at the specs commit. `sources.parameters.path` is the path in the robot repository and is not hashed.
 
 ## Migration
 
@@ -56,7 +56,7 @@ Every lock published before this release is refused before a trial. Drop these s
 - `releases.reporter.digest`
 - `evaluators.livingproof-evaluator-scenario.commit`
 
-Set `releases.verifier.tag` to `v2.12.5`. The plan resolves that tag and passes the commit and the image. Leave the kept fields in place: `releases.runner.commit`, `releases.specs.commit`, `releases.specs.files`, `world.commit`, `world.sha256`, `sources.world.sha256`, `sources.parameters.sha256`, and `releases.reporter.commit`.
+Set `releases.verifier.tag` to `v2.13.0`. The plan resolves that tag and passes the commit and the image. Leave the kept fields in place: `releases.runner.commit`, `releases.specs.commit`, `releases.specs.files`, `world.commit`, `world.sha256`, `sources.world.sha256`, `sources.parameters.sha256`, and `releases.reporter.commit`. A lock entry under `evaluators` other than `livingproof-evaluator-scenario` is ignored. The plan prints one notice and does not name the entry.
 
 `report.json` and `run.json` each record `inputs`: repository, tag, commit, digest, and `status` for every pin. The same status line is written into `report.md`, `report.html`, and `report.txt` under "Pinned inputs", as `name: status (meaning)`.
 
@@ -71,9 +71,19 @@ Set `releases.verifier.tag` to `v2.12.5`. The plan resolves that tag and passes 
 
 `status: resolved` can sit beside `attestation: not-published` on the same input. The attestation field means the attestations API returned HTTP 404. `resolved` means the release also named no commit, so the report records the peeled tag. That pin is not verified. `status: not-published` with the same attestation field means HTTP 404 as well, and the commit was checked against the release.
 
-Source pins (livingproof-sim-mujoco and both evaluators) use the sha256 of the codeload archive of the peeled commit as the digest they ask GitHub to attest. A specs pin with more than one file uses a synthetic sha256 of those file hashes. Neither value is a subject a real attestation names, so those pins stay `not-published` until a later change asks for a subject the release actually publishes. An image pin uses the registry digest, and a single-file pin uses that file's sha256. Those can match.
+Source pins (livingproof-sim-mujoco and livingproof-evaluator-scenario) use the sha256 of the codeload archive of the peeled commit as the digest they ask GitHub to attest. A specs pin with more than one file uses a synthetic sha256 of those file hashes. Neither value is a subject a real attestation names, so those pins stay `not-published` until a later change asks for a subject the release actually publishes. An image pin uses the registry digest, and a single-file pin uses that file's sha256. Those can match.
 
 The plan step passes `GITHUB_TOKEN` from `github.token` so the release, tag, and attestation reads are authenticated. `contents: read` is enough. The token is sent only to `api.github.com`. The check rules are in [docs/provenance.md](docs/provenance.md).
+
+## Evaluators
+
+`evaluators.yml` at the repository root is a YAML list. Each item is one declaration line. The line format is `owner/repo@vX.Y.Z/path.json`, or the same shape with a 40-character commit in place of the tag. Blank lines and `#` comments are not items. This action joins the items with newlines and passes that text to the `evaluators` input of `walk-hallway.yml` and `scenario.yml`. It does not check the line. capability-verifier refuses a branch name, a short commit, or a relative path, and that refusal is the run's failure reason.
+
+The list in this repository has one line, `Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json`. That file is an implementation descriptor. Its schema is [`implementation.schema.json`](https://github.com/Living-Proof-Labs/livingproof-evaluator/blob/v1.9.0/schema/implementation.schema.json) (`Living-Proof-Labs/livingproof-evaluator@v1.9.0/schema/implementation.schema.json`, livingproof-evaluator#74).
+
+When the list has no items, the plan passes a `#` comment instead of an empty string. The comment keeps capability-verifier from running its built-in run-integrity job. The collect job does not install an evaluator and does not add a Run Integrity card.
+
+When the list has items, the collect job checks out capability-verifier v2.13.0, runs the loader on the downloaded evidence, and re-renders the report with the reporter version the lock pins. The loader's exit code is not used. A missing or unreadable provenance file is recorded as Run Integrity NOT RUN (failure), the report is uploaded, and the collect job then fails.
 
 ## Example
 
@@ -201,7 +211,7 @@ Every site build re-checks the runs it restores from the last GitHub Pages deplo
 
 ## Release
 
-`Verify` runs on pull requests, merge groups, and pushes to `main`. Pull requests into `main` get a unique candidate version from `semantic-release-candidate.yml`. The mock robot smoke runs the report workflow on this repository's fixture definitions and uploads `smoke-report-<version>` from the `verification-report` artifact. The real G1 smoke runs the report workflow on the Unitree G1 stock MuJoCo hallway, `Living-Proof-Labs/livingproof-unitree-g1` at `v2.3.34`, with one trial, through capability-verifier and livingproof-evaluator-run. It uploads `g1-smoke-report-<version>` from the `g1-verification-report` artifact. The site smoke job builds the static `reports/` section from the mock report. Each release publishes that report and the real G1 smoke report from the same Verify run: [mock robot report](https://docs.livingprooflabs.com/verification-reports-action/reports/), [Unitree G1 report](https://docs.livingprooflabs.com/verification-reports-action/reports/g1/).
+`Verify` runs on pull requests, merge groups, and pushes to `main`. Pull requests into `main` get a unique candidate version from `semantic-release-candidate.yml`. The mock robot smoke runs the report workflow on this repository's fixture definitions and uploads `smoke-report-<version>` from the `verification-report` artifact. The real G1 smoke runs the report workflow on the Unitree G1 stock MuJoCo hallway, `Living-Proof-Labs/livingproof-unitree-g1` at `v2.3.34`, with one trial, through capability-verifier. Run Integrity comes from `evaluators.yml`. It uploads `g1-smoke-report-<version>` from the `g1-verification-report` artifact. The site smoke job builds the static `reports/` section from the mock report. Each release publishes that report and the real G1 smoke report from the same Verify run: [mock robot report](https://docs.livingprooflabs.com/verification-reports-action/reports/), [Unitree G1 report](https://docs.livingprooflabs.com/verification-reports-action/reports/g1/).
 
 After `Verify` succeeds for a push to `main`, `Release` runs. The `release` job tags that commit and publishes the GitHub release. `post-release` runs only when `release` publishes (`published == 'true'`), calls this workflow on the fixture definitions in `tests/fixtures/robot/verifications/` with the published `version`, and `post-release-check` checks out `git-tag`.
 

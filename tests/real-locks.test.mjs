@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { parseToml, VERIFIER_WORKFLOW_SHA, VERIFIER_WORKFLOW_TAG } from '../src/definitions.mjs';
-import { checkPin, collectPins, resolvedTrialInputs } from '../src/provenance.mjs';
+import { checkPin, collectPins, ignoredEvaluatorNotice, resolvedTrialInputs } from '../src/provenance.mjs';
 import { imageDigestFromBody } from '../src/github-provenance.mjs';
 
 // Commits and digests recorded from a read-only live resolve on 2026-11-24.
@@ -50,7 +50,7 @@ function evidenceFor(pin, recorded) {
 }
 
 const VERIFIER_RELEASE = JSON.parse(
-  readFileSync(new URL('./fixtures/releases/capability-verifier-v2.12.5.json', import.meta.url), 'utf8')
+  readFileSync(new URL('./fixtures/releases/capability-verifier-v2.13.0.json', import.meta.url), 'utf8')
 );
 
 function dropPassedFields(lock) {
@@ -75,9 +75,17 @@ for (const id of LOCKS) {
     const { item, recorded } = loadLock(id);
     item.lock = dropPassedFields(item.lock);
     const pins = collectPins(item);
-    assert.equal(pins.length, recorded.length);
+    const comparable = recorded.filter((entry) => pins.some((pin) => pin.name === entry.name));
+    assert.equal(pins.length, comparable.length);
+    assert.ok(recorded.some((entry) => !pins.some((pin) => pin.name === entry.name)));
+    const notice = ignoredEvaluatorNotice(item.lock);
+    assert.equal(typeof notice, 'string');
+    for (const key of Object.keys(item.lock.evaluators)) {
+      if (key === 'livingproof-evaluator-scenario') continue;
+      assert.equal(notice.includes(key), false);
+    }
     const records = [];
-    for (const expected of recorded) {
+    for (const expected of comparable) {
       const pin = pins.find((entry) => entry.name === expected.name);
       const evidence =
         expected.name === 'capability-verifier'

@@ -92,7 +92,10 @@ test('workflow keeps a single simulator job and compares off/on from its artifac
   assert.match(workflow, /run: node tools\/health-smoke.mjs/);
   const report = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
   assert.match(report, /INPUT_HEALTH: \$\{\{ inputs.health \}\}/);
-  assert.match(report, /if: inputs.health/);
+  assert.match(
+    report,
+    /uses: astral-sh\/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5\.4\.2\n {8}with:\n {10}version: '0\.12\.23'/
+  );
 });
 
 // Refusal must precede final assembly, preserving an existing output directory.

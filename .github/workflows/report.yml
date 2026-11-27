@@ -6,6 +6,9 @@
 # to a commit other than the capability-verifier SHA above is refused there too.
 # The resolved verifier commit, verifier image, reporter image and scenario-evaluator
 # commit are passed as workflow inputs. The lock cannot carry those fields.
+# evaluators.yml lines are passed as the evaluators input. A non-empty value
+# skips capability-verifier's built-in run-integrity job. The collect job runs
+# the loader when the file has declaration lines.
 name: Verification report
 on:
   workflow_call:
@@ -90,6 +93,8 @@ jobs:
       hallway_count: ${{ steps.plan.outputs.hallway_count }}
       scenario: ${{ steps.plan.outputs.scenario }}
       scenario_count: ${{ steps.plan.outputs.scenario_count }}
+      evaluators: ${{ steps.plan.outputs.evaluators }}
+      evaluators_run: ${{ steps.plan.outputs.evaluators_run }}
     steps:
       - name: Caller repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -226,7 +231,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.hallway) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9 # v2.12.5
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@93a490d82ae50e4c551873dfcfaa778adcd5b689 # v2.13.0
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}
@@ -240,6 +245,7 @@ jobs:
       check: false
       comment: ${{ inputs.comment }}
       media: ${{ inputs.media }}
+      evaluators: ${{ needs.plan.outputs.evaluators }}
   scenario:
     needs: plan
     if: needs.plan.outputs.scenario_count != '0'
@@ -252,7 +258,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.scenario) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9 # v2.12.5
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@93a490d82ae50e4c551873dfcfaa778adcd5b689 # v2.13.0
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}
@@ -266,6 +272,7 @@ jobs:
       check: false
       comment: ${{ inputs.comment }}
       media: ${{ inputs.media }}
+      evaluators: ${{ needs.plan.outputs.evaluators }}
   collect:
     needs: [plan, fixture, walk-hallway, scenario]
     if: >-
@@ -342,11 +349,40 @@ jobs:
         with:
           pattern: vra-*-video-*
           path: downloaded/video
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.plan.outputs.evaluators_run == 'true'
+        with:
+          pattern: vra-*-verified-*
+          path: downloaded/verified
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.plan.outputs.evaluators_run == 'true'
+        with:
+          pattern: vra-*-links-*
+          path: downloaded/links
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-        if: inputs.health
         with:
           version: '0.12.23'
           python-version: '3.12.14'
+      - name: capability-verifier
+        if: needs.plan.outputs.evaluators_run == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: Living-Proof-Labs/capability-verifier
+          ref: 93a490d82ae50e4c551873dfcfaa778adcd5b689
+          path: capability-verifier
+          persist-credentials: false
+      - name: Install capability-verifier
+        if: needs.plan.outputs.evaluators_run == 'true'
+        working-directory: capability-verifier
+        run: uv sync --locked
+      - id: evaluators
+        if: needs.plan.outputs.evaluators_run == 'true'
+        working-directory: capability-verifier
+        env:
+          PYTHONPATH: src
+          INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/verification-plan/plan.json
+          INPUT_DOWNLOAD_ROOT: ${{ github.workspace }}/downloaded
+        run: uv run --no-sync python "${{ github.workspace }}/action/src/evaluators_run.py"
       - id: collect
         working-directory: caller
         env:
@@ -363,3 +399,6 @@ jobs:
           path: ${{ inputs.output-dir }}
           retention-days: 30
           if-no-files-found: error
+      - name: Fail when an evaluator declaration produced no provenance
+        if: steps.evaluators.outputs.failed == 'true'
+        run: exit 1
