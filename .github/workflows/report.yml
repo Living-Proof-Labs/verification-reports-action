@@ -6,6 +6,10 @@
 # to a commit other than the capability-verifier SHA above is refused there too.
 # The resolved verifier commit, verifier image, reporter image and scenario-evaluator
 # commit are passed as workflow inputs. The lock cannot carry those fields.
+# The caller `evaluators` input is a path or a list. Empty means no evaluators:
+# a comment is passed so the built-in run-integrity job stays skipped, and the
+# collect job does not run the loader. This repository's evaluators.yml is not
+# a default.
 name: Verification report
 on:
   workflow_call:
@@ -64,6 +68,14 @@ on:
         type: boolean
         default: false
         required: false
+      evaluators:
+        description: >-
+          Caller declaration list. A path in the caller repository, such as
+          evaluators.yml, or the list itself, one line per entry or a YAML list.
+          Empty means no evaluators. This repository's file is not a default.
+        type: string
+        default: ''
+        required: false
     outputs:
       report-path:
         description: Directory of the written reports, also uploaded under artifact-name.
@@ -90,6 +102,8 @@ jobs:
       hallway_count: ${{ steps.plan.outputs.hallway_count }}
       scenario: ${{ steps.plan.outputs.scenario }}
       scenario_count: ${{ steps.plan.outputs.scenario_count }}
+      evaluators: ${{ steps.plan.outputs.evaluators }}
+      evaluators_run: ${{ steps.plan.outputs.evaluators_run }}
     steps:
       - name: Caller repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -142,6 +156,7 @@ jobs:
           INPUT_DEFINITIONS: ${{ inputs.definitions }}
           INPUT_REPOSITORY: ${{ inputs.repository }}
           INPUT_REF: ${{ inputs.ref }}
+          INPUT_EVALUATORS: ${{ inputs.evaluators }}
           INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/verification-plan/plan.json
           WORKFLOW_REPOSITORY: ${{ steps.workflow-source.outputs.repository }}
         run: node "${{ github.workspace }}/action/src/plan.mjs"
@@ -226,7 +241,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.hallway) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9 # v2.12.5
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@93a490d82ae50e4c551873dfcfaa778adcd5b689 # v2.13.0
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}
@@ -240,6 +255,7 @@ jobs:
       check: false
       comment: ${{ inputs.comment }}
       media: ${{ inputs.media }}
+      evaluators: ${{ needs.plan.outputs.evaluators }}
   scenario:
     needs: plan
     if: needs.plan.outputs.scenario_count != '0'
@@ -252,7 +268,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.scenario) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9 # v2.12.5
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@93a490d82ae50e4c551873dfcfaa778adcd5b689 # v2.13.0
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}
@@ -266,6 +282,7 @@ jobs:
       check: false
       comment: ${{ inputs.comment }}
       media: ${{ inputs.media }}
+      evaluators: ${{ needs.plan.outputs.evaluators }}
   collect:
     needs: [plan, fixture, walk-hallway, scenario]
     if: >-
@@ -342,11 +359,55 @@ jobs:
         with:
           pattern: vra-*-video-*
           path: downloaded/video
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.plan.outputs.evaluators_run == 'true'
+        with:
+          pattern: vra-*-verified-*
+          path: downloaded/verified
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.plan.outputs.evaluators_run == 'true'
+        with:
+          pattern: vra-*-links-*
+          path: downloaded/links
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.plan.outputs.evaluators_run == 'true'
+        with:
+          pattern: vra-*-evaluator-results-*
+          path: downloaded/evaluator-results
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-        if: inputs.health
         with:
           version: '0.12.23'
           python-version: '3.12.14'
+      - name: capability-verifier
+        if: needs.plan.outputs.evaluators_run == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: Living-Proof-Labs/capability-verifier
+          ref: 93a490d82ae50e4c551873dfcfaa778adcd5b689
+          path: capability-verifier
+          persist-credentials: false
+      - name: Install capability-verifier
+        if: needs.plan.outputs.evaluators_run == 'true'
+        working-directory: capability-verifier
+        run: uv sync --locked
+      - id: evaluators
+        if: needs.plan.outputs.evaluators_run == 'true'
+        working-directory: capability-verifier
+        env:
+          PYTHONPATH: src
+          INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/verification-plan/plan.json
+          INPUT_DOWNLOAD_ROOT: ${{ github.workspace }}/downloaded
+          INPUT_EVALUATORS: ${{ inputs.evaluators }}
+          INPUT_CALLER_ROOT: ${{ github.workspace }}/caller
+        run: uv run --no-sync python "${{ github.workspace }}/action/src/evaluators_run.py"
+      - name: Upload the evaluated capability reports
+        if: needs.plan.outputs.evaluators_run == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ inputs.artifact-name }}-evaluated-reports
+          path: downloaded/reports
+          retention-days: 30
+          if-no-files-found: error
       - id: collect
         working-directory: caller
         env:
@@ -363,3 +424,6 @@ jobs:
           path: ${{ inputs.output-dir }}
           retention-days: 30
           if-no-files-found: error
+      - name: Fail when an evaluator declaration produced no provenance
+        if: steps.evaluators.outputs.failed == 'true'
+        run: exit 1

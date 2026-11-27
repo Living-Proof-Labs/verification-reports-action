@@ -32,7 +32,7 @@
     },
     "verifier": {
       "repository": "Living-Proof-Labs/capability-verifier",
-      "tag": "v2.12.5"
+      "tag": "v2.13.0"
     },
     "reporter": {
       "repository": "Living-Proof-Labs/livingproof-capability-report",

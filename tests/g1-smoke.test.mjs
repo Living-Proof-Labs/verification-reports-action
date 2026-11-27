@@ -234,7 +234,7 @@ test('the stock hallway definition and lock pin G1 v2.3.34 for one trial', () =>
   assert.equal(lock.procedure, 'walk-hallway');
   assert.equal(lock.releases.runner.tag, 'v3.9.7');
   assert.equal(lock.releases.runner.commit, RUNNER_COMMIT);
-  assert.equal(lock.releases.verifier.tag, 'v2.12.5');
+  assert.equal(lock.releases.verifier.tag, 'v2.13.0');
   assert.equal(lock.releases.verifier.commit, undefined);
   assert.equal(lock.releases.verifier.image, undefined);
   assert.equal(lock.releases.verifier.digest, undefined);
@@ -254,10 +254,8 @@ test('the G1 definition is planned through capability-verifier, not the fixture 
   const loaded = loadDefinition(definitionPath, root);
   const pins = collectPins(loaded);
   const verifier = pins.find((pin) => pin.name === 'capability-verifier');
-  const evaluatorRun = pins.find((pin) => pin.name === 'livingproof-evaluator-run');
-  assert.equal(verifier.tag, 'v2.12.5');
-  assert.equal(evaluatorRun.tag, 'v1.8.6');
-  assert.equal(evaluatorRun.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
+  assert.equal(pins.some((pin) => pin.name === 'livingproof-evaluator-run'), false);
+  assert.equal(verifier.tag, 'v2.13.0');
 
   const plan = planDefinitions(
     {
@@ -367,7 +365,18 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
   assert.equal(siteDownload.with.name, 'verification-report');
 
   assert.equal(reportWorkflow.on.workflow_call.inputs['artifact-name'].default, 'verification-report');
-  assert.equal(reportWorkflow.jobs.collect.steps.at(-1).with.name, '${{ inputs.artifact-name }}');
+  const collectSteps = reportWorkflow.jobs.collect.steps;
+  const reportUpload = collectSteps.find(
+    (step) =>
+      step.uses &&
+      step.uses.startsWith('actions/upload-artifact@') &&
+      step.with?.name === '${{ inputs.artifact-name }}',
+  );
+  assert.equal(reportUpload.with.name, '${{ inputs.artifact-name }}');
+  const declarationFailure = collectSteps.find(
+    (step) => step.name === 'Fail when an evaluator declaration produced no provenance',
+  );
+  assert.ok(collectSteps.indexOf(declarationFailure) > collectSteps.indexOf(reportUpload));
   const planArtifactName =
     "${{ inputs.artifact-name == 'verification-report' && 'verification-plan' || format('{0}-plan', inputs.artifact-name) }}";
   const planSteps = ['plan', 'fixture', 'collect'].flatMap((jobName) =>
@@ -387,11 +396,11 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
   assert.notEqual(fixtureDownload.with.pattern, 'vra-fixture-*');
   assert.equal(
     reportWorkflow.jobs['walk-hallway'].uses,
-    'Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9',
+    'Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@93a490d82ae50e4c551873dfcfaa778adcd5b689',
   );
   assert.equal(
     reportWorkflow.jobs.scenario.uses,
-    'Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9',
+    'Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@93a490d82ae50e4c551873dfcfaa778adcd5b689',
   );
   assert.equal(reportWorkflow.jobs['walk-hallway'].with['evaluator-commit'], '${{ matrix.evaluator_commit }}');
   assert.equal(reportWorkflow.jobs.scenario.with['evaluator-commit'], '${{ matrix.evaluator_commit }}');

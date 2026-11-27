@@ -33,6 +33,7 @@ jobs:
       definitions: tests/fixtures/robot/verifications/*.toml
       output-dir: artifacts/released-report
       version: ${{ needs.release.outputs.version }}
+      evaluators: evaluators.yml
   post-release-check:
     needs: [release, post-release]
     if: needs.release.outputs.published == 'true' && needs.post-release.result == 'success'

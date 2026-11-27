@@ -85,11 +85,11 @@ test('the report workflow calls both verifier procedures and passes no secrets',
   assert.match(reportYml, /^on:\n {2}workflow_call:/m);
   assert.match(
     reportYml,
-    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/walk-hallway\.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9 # v2\.12\.5/
+    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/walk-hallway\.yml@93a490d82ae50e4c551873dfcfaa778adcd5b689 # v2\.13\.0/
   );
   assert.match(
     reportYml,
-    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/scenario\.yml@e6a1ba347c525b62abf0644b610562b7bfb390d9 # v2\.12\.5/
+    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/scenario\.yml@93a490d82ae50e4c551873dfcfaa778adcd5b689 # v2\.13\.0/
   );
   const walkHallway = reportYml.slice(reportYml.indexOf('\n  walk-hallway:\n'), reportYml.indexOf('\n  scenario:\n'));
   const scenario = reportYml.slice(reportYml.indexOf('\n  scenario:\n'), reportYml.indexOf('\n  collect:\n'));

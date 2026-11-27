@@ -12,7 +12,7 @@ import { checkPin, collectPins, resolvedTrialInputs } from '../src/provenance.mj
 
 const OTHER = '1111111111111111111111111111111111111111';
 const RELEASE = JSON.parse(
-  readFileSync(new URL('./fixtures/releases/capability-verifier-v2.12.5.json', import.meta.url), 'utf8')
+  readFileSync(new URL('./fixtures/releases/capability-verifier-v2.13.0.json', import.meta.url), 'utf8')
 );
 const EVALUATOR_RELEASE = JSON.parse(
   readFileSync(new URL('./fixtures/releases/evaluator-scenario-v1.5.3.json', import.meta.url), 'utf8')
@@ -107,7 +107,7 @@ function passReal(lock, mutate = () => {}) {
   return records;
 }
 
-test('the v2.12.5 release fixture is the commit and hallway digest the workflow pins', () => {
+test('the pinned verifier release fixture is the commit and hallway digest the workflow pins', () => {
   assert.equal(RELEASE.tagCommit, VERIFIER_WORKFLOW_SHA);
   assert.equal(RELEASE.tag, VERIFIER_WORKFLOW_TAG);
   assert.equal(imageDigestFromBody(RELEASE.body, RELEASE.image), RELEASE.digest);
@@ -145,14 +145,14 @@ test('each passed field on the real unitree lock is refused even when the value 
   }
 });
 
-test('a one-line verifier tag edit on the real lock passes the v2.12.5 commit and image', () => {
+test('a one-line verifier tag edit on the real lock passes the pinned commit and image', () => {
   const lock = dropPassedFields(realLock());
   assert.equal(lock.releases.verifier.tag, 'v2.11.4');
   lock.releases.verifier.tag = VERIFIER_WORKFLOW_TAG;
   const records = passReal(lock);
   const inputs = resolvedTrialInputs(records);
   assert.equal(inputs.verifier_commit, RELEASE.tagCommit);
-  assert.equal(inputs.verifier_image, `${RELEASE.image}:2.12.5@${RELEASE.digest}`);
+  assert.equal(inputs.verifier_image, `${RELEASE.image}:${RELEASE.tag.slice(1)}@${RELEASE.digest}`);
   const reporter = recordedByName().get('livingproof-capability-report');
   assert.equal(
     inputs.reporter_image,
@@ -258,7 +258,7 @@ test('the real sources.parameters and sources.world hashes are refused when they
   assert.throws(() => passReal(world), /livingproof-worlds: sources\.world\.sha256 differs from the resolved tag/);
 });
 
-test('a reporter commit and an evaluator-run commit that disagree with the real tag are refused', () => {
+test('a reporter commit that disagrees with the real tag is refused, and an extra evaluators entry is not', () => {
   const reporter = dropPassedFields(realLock());
   reporter.releases.verifier.tag = VERIFIER_WORKFLOW_TAG;
   assert.throws(
@@ -272,15 +272,13 @@ test('a reporter commit and an evaluator-run commit that disagree with the real 
     new RegExp(`livingproof-capability-report: releases\\.reporter\\.commit differs from the resolved tag\\. expected ${OTHER}`)
   );
 
-  const evaluatorRun = dropPassedFields(realLock());
-  evaluatorRun.releases.verifier.tag = VERIFIER_WORKFLOW_TAG;
-  evaluatorRun.evaluators['livingproof-evaluator-run'].commit = OTHER;
-  assert.throws(
-    () => passReal(evaluatorRun),
-    new RegExp(
-      `livingproof-evaluator-run: evaluators\\.livingproof-evaluator-run\\.commit differs from the resolved tag\\. expected ${recordedByName().get('livingproof-evaluator-run').commit}, found ${OTHER}`
-    )
-  );
+  const extra = dropPassedFields(realLock());
+  extra.releases.verifier.tag = VERIFIER_WORKFLOW_TAG;
+  const key = Object.keys(extra.evaluators).find((name) => name !== 'livingproof-evaluator-scenario');
+  extra.evaluators[key].commit = OTHER;
+  const records = passReal(extra);
+  assert.equal(records.some((record) => record.name === key), false);
+  assert.equal(records.some((record) => record.name === 'livingproof-evaluator-scenario'), true);
 });
 
 test('resolved trial inputs reject a commit or image ref capability-verifier would not accept', () => {
@@ -323,6 +321,7 @@ test('a one-line verifier tag edit is what the plan passes, and the lock file is
         GITHUB_REPOSITORY: 'Example/robot',
         GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567',
         INPUT_DEFINITIONS: 'verifications/*.toml',
+        INPUT_EVALUATORS: 'Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json',
         INPUT_PLAN_PATH: path.join(root, 'plan.json'),
       },
       root,
@@ -339,7 +338,10 @@ test('a one-line verifier tag edit is what the plan passes, and the lock file is
     const scenario = JSON.parse(planned.outputs.scenario);
     assert.equal(scenario.length, 1);
     assert.equal(scenario[0].verifier_commit, RELEASE.tagCommit);
-    assert.equal(scenario[0].verifier_image, `${RELEASE.image}:2.12.5@${RELEASE.digest}`);
+    assert.equal(scenario[0].verifier_image, `${RELEASE.image}:${RELEASE.tag.slice(1)}@${RELEASE.digest}`);
+    assert.equal(planned.outputs.evaluators_run, 'true');
+    assert.match(planned.outputs.evaluators, /@v1\.9\.0\//);
+    assert.equal(planned.plan.evaluators.lines.length, 1);
     assert.equal(scenario[0].evaluator_commit, EVALUATOR_RELEASE.tagCommit);
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -32,6 +32,7 @@ import {
   checkPin,
   collectPins,
   fixtureProvenance,
+  ignoredEvaluatorNotice,
   runIfProvenancePasses,
 } from '../src/provenance.mjs';
 import { pinnedInputLine, renderReport, writeConfiguration } from '../src/report.mjs';
@@ -1033,7 +1034,7 @@ test('a captured cli/cli attestation verifies from bundle_url after a foreign en
   assert.equal(selected.gitCommit, 'e1219499a578b69e3437adaa31cd60614e23c802');
   assert.equal(selected.subjectDigest, digest);
 
-  const lowered = collectPins(item()).find((entry) => entry.name === 'livingproof-evaluator-run');
+  const lowered = collectPins(item()).find((entry) => entry.name === 'livingproof-sim-mujoco');
   const pin = { ...lowered, repository: 'cli/cli' };
   const evidence = passingEvidence(pin);
   evidence.attestation = {
@@ -1256,7 +1257,6 @@ test('a repository other than the expected one is refused', async () => {
     [['releases', 'runner'], 'Living-Proof-Labs/livingproof-sim-mujoco', 'livingproof-sim-mujoco'],
     [['releases', 'specs'], 'Living-Proof-Labs/robot-capability-specs', 'robot-capability-specs'],
     [['evaluators', 'livingproof-evaluator-scenario'], 'Living-Proof-Labs/livingproof-evaluator-scenario', 'livingproof-evaluator-scenario'],
-    [['evaluators', 'livingproof-evaluator-run'], 'Living-Proof-Labs/livingproof-evaluator-run', 'livingproof-evaluator-run'],
     [['world'], 'Living-Proof-Labs/livingproof-worlds', 'livingproof-worlds'],
   ];
   for (const [parts, repository, repoName] of fields) {
@@ -1334,33 +1334,19 @@ test('missing, non-string, and empty lock fields are refused', async () => {
   }
 });
 
-test('a tag-only evaluator-run lock passes', async () => {
+test('a tag-only runner and world lock still passes', async () => {
   const lock = sampleLock();
-  delete lock.evaluators['livingproof-evaluator-run'].commit;
   delete lock.releases.runner.commit;
   delete lock.world.commit;
   delete lock.releases.specs.files;
   const records = await assertPinnedInputs(item(lock), client());
-  const evaluatorRun = records.find((record) => record.name === 'livingproof-evaluator-run');
-  assert.equal(evaluatorRun.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
-  assert.equal(evaluatorRun.tag, 'v1.8.6');
-  assert.equal(evaluatorRun.commit, COMMIT);
-  assert.equal(evaluatorRun.status, 'not-published');
   assert.equal(records.find((record) => record.name === 'livingproof-sim-mujoco').status, 'not-published');
   assert.equal(records.find((record) => record.name === 'livingproof-worlds').status, 'not-published');
-
-  delete lock.evaluators['livingproof-evaluator-run'].repository;
-  delete lock.evaluators['livingproof-evaluator-run'].tag;
-  const omitted = await assertPinnedInputs(item(lock), client());
-  const fallback = omitted.find((record) => record.name === 'livingproof-evaluator-run');
-  assert.equal(fallback.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
-  assert.equal(fallback.tag, 'v1.5.0');
+  assert.equal(records.find((record) => record.name === 'livingproof-evaluator-scenario').status, 'not-published');
 });
 
 test('a present optional lock field must still be valid', async () => {
   const optional = [
-    [['evaluators', 'livingproof-evaluator-run'], 'commit', 'livingproof-evaluator-run'],
-    [['evaluators', 'livingproof-evaluator-run'], 'repository', 'livingproof-evaluator-run'],
     [['releases', 'runner'], 'commit', 'livingproof-sim-mujoco'],
     [['world'], 'commit', 'livingproof-worlds'],
   ];
@@ -1380,162 +1366,21 @@ test('a present optional lock field must still be valid', async () => {
   }
 });
 
-test('a definition cannot steer the evaluator-run default', async () => {
+test('a lock evaluators entry other than the scenario evaluator is ignored', async () => {
   const lock = sampleLock();
-  delete lock.evaluators['livingproof-evaluator-run'];
-  const steered = {
-    evaluators: {
-      'livingproof-evaluator-run': {
-        repository: 'Living-Proof-Labs/livingproof-evaluator-run',
-        tag: 'v1.8.11',
-      },
-    },
-  };
-  await assert.rejects(
-    () => assertPinnedInputs(item(lock, steered), client()),
-    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.tag is not what scenario\.yml runs\. expected v1\.5\.0, found v1\.8\.11/
-  );
-  await assert.rejects(
-    () =>
-      assertPinnedInputs(
-        item(lock, {
-          evaluators: {
-            'livingproof-evaluator-run': {
-              repository: 'Living-Proof-Labs/something-else',
-              tag: 'v1.5.0',
-            },
-          },
-        }),
-        client()
-      ),
-    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.repository is not what scenario\.yml runs\. expected Living-Proof-Labs\/livingproof-evaluator-run, found Living-Proof-Labs\/something-else/
-  );
-  const matched = await assertPinnedInputs(
-    item(lock, {
-      evaluators: {
-        'livingproof-evaluator-run': {
-          repository: 'Living-Proof-Labs/livingproof-evaluator-run',
-          tag: 'v1.5.0',
-        },
-      },
-    }),
-    client()
-  );
-  const record = matched.find((entry) => entry.name === 'livingproof-evaluator-run');
-  assert.equal(record.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
-  assert.equal(record.tag, 'v1.5.0');
-  assert.equal(record.commit, COMMIT);
-});
-
-test('a full evaluator-run lock with a different definition tag is refused', async () => {
-  const lock = sampleLock();
-  lock.evaluators['livingproof-evaluator-run'].tag = 'v1.8.11';
-  await assert.rejects(
-    () =>
-      assertPinnedInputs(
-        item(lock, {
-          evaluators: {
-            'livingproof-evaluator-run': {
-              repository: 'Living-Proof-Labs/livingproof-evaluator-run',
-              tag: 'v1.8.12',
-            },
-          },
-        }),
-        client()
-      ),
-    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.tag differs from the definition\. expected v1\.8\.12, found v1\.8\.11/
-  );
-});
-
-test('a full evaluator-run lock with a different definition repository is refused', async () => {
-  const lock = sampleLock();
-  lock.evaluators['livingproof-evaluator-run'].tag = 'v1.8.11';
-  await assert.rejects(
-    () =>
-      assertPinnedInputs(
-        item(lock, {
-          evaluators: {
-            'livingproof-evaluator-run': {
-              repository: 'Living-Proof-Labs/something-else',
-              tag: 'v1.8.11',
-            },
-          },
-        }),
-        client()
-      ),
-    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.repository differs from the definition\. expected Living-Proof-Labs\/something-else, found Living-Proof-Labs\/livingproof-evaluator-run/
-  );
-});
-
-test('a full evaluator-run lock with a matching definition passes', async () => {
-  const lock = sampleLock();
-  lock.evaluators['livingproof-evaluator-run'].tag = 'v1.8.11';
-  const records = await assertPinnedInputs(
-    item(lock, {
-      evaluators: {
-        'livingproof-evaluator-run': {
-          repository: 'Living-Proof-Labs/livingproof-evaluator-run',
-          tag: 'v1.8.11',
-        },
-      },
-    }),
-    client()
-  );
-  const record = records.find((entry) => entry.name === 'livingproof-evaluator-run');
-  assert.equal(record.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
-  assert.equal(record.tag, 'v1.8.11');
-  assert.equal(record.commit, COMMIT);
-});
-
-test('an evaluator-run tag is defaulted on its own when the lock has a repository', async () => {
-  const lock = sampleLock();
-  delete lock.evaluators['livingproof-evaluator-run'].tag;
-  await assert.rejects(
-    () =>
-      assertPinnedInputs(
-        item(lock, {
-          evaluators: {
-            'livingproof-evaluator-run': {
-              repository: 'Living-Proof-Labs/livingproof-evaluator-run',
-              tag: 'v1.8.11',
-            },
-          },
-        }),
-        client()
-      ),
-    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.tag is not what scenario\.yml runs\. expected v1\.5\.0, found v1\.8\.11/
-  );
+  const key = 'example-evaluator';
+  lock.evaluators[key] = { repository: 'Living-Proof-Labs/example', tag: 'v9.9.9', commit: 'not-a-commit' };
   const records = await assertPinnedInputs(item(lock), client());
-  const record = records.find((entry) => entry.name === 'livingproof-evaluator-run');
-  assert.equal(record.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
-  assert.equal(record.tag, 'v1.5.0');
-  assert.equal(record.commit, COMMIT);
-});
-
-test('an evaluator-run repository is defaulted on its own when the lock has a tag', async () => {
-  const lock = sampleLock();
-  delete lock.evaluators['livingproof-evaluator-run'].repository;
-  await assert.rejects(
-    () =>
-      assertPinnedInputs(
-        item(lock, {
-          evaluators: {
-            'livingproof-evaluator-run': { repository: 'Evil-Org/livingproof-evaluator-run', tag: 'v1.8.6' },
-          },
-        }),
-        client()
-      ),
-    /livingproof-evaluator-run: evaluators\.livingproof-evaluator-run\.repository is not what scenario\.yml runs\. expected Living-Proof-Labs\/livingproof-evaluator-run, found Evil-Org\/livingproof-evaluator-run/
-  );
-});
-
-test('evaluator-run uses the default repository when the lock omits it', async () => {
-  const lock = sampleLock();
-  delete lock.evaluators['livingproof-evaluator-run'].repository;
-  const records = await assertPinnedInputs(item(lock), client());
-  const record = records.find((entry) => entry.name === 'livingproof-evaluator-run');
-  assert.equal(record.repository, 'Living-Proof-Labs/livingproof-evaluator-run');
-  assert.equal(record.tag, 'v1.8.6');
+  assert.equal(records.some((record) => record.name === key || record.lockField === `evaluators.${key}`), false);
+  assert.deepEqual(records.map((record) => record.name), REQUIRED_INPUTS);
+  const notice = ignoredEvaluatorNotice(lock);
+  assert.equal(typeof notice, 'string');
+  assert.equal(notice.split('\n').length, 1);
+  assert.equal(notice.includes(key), false);
+  assert.equal(notice.includes('example'), false);
+  const plan = readFileSync(new URL('../src/plan.mjs', import.meta.url), 'utf8');
+  assert.match(plan, /ignoredEvaluatorNotice\(item\.lock\)/);
+  assert.match(plan, /if \(notice\) console\.error\(notice\)/);
 });
 
 test('a world sha256 that differs from the released world file is refused', async () => {

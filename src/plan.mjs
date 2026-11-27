@@ -3,9 +3,10 @@ import { healthEnabled, resolveHealth } from './health.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { matrixFor, planDefinitions } from './definitions.mjs';
+import { resolveCallerEvaluators } from './evaluators.mjs';
 import { githubProvenanceClient } from './github-provenance.mjs';
 import { writeGithubOutput } from './github-output.mjs';
-import { assertPinnedInputs, fixtureProvenance, resolvedTrialInputs } from './provenance.mjs';
+import { assertPinnedInputs, fixtureProvenance, ignoredEvaluatorNotice, resolvedTrialInputs } from './provenance.mjs';
 
 export async function writePlan(env = process.env, root = process.cwd(), client = null) {
   const inputs = {
@@ -16,13 +17,18 @@ export async function writePlan(env = process.env, root = process.cwd(), client 
   if (healthEnabled(env.INPUT_HEALTH) && env.INPUT_MEDIA === 'false') throw new Error('Health requires media: true');
   const plan = planDefinitions(inputs, env, root);
   const resolver = client ?? githubProvenanceClient(env);
+  const declared = resolveCallerEvaluators(env.INPUT_EVALUATORS ?? '', root);
   for (const item of plan.definitions) {
+    const notice = ignoredEvaluatorNotice(item.lock);
+    if (notice) console.error(notice);
     if (item.execution === 'fixture') item.provenance = fixtureProvenance(item);
     else item.provenance = await assertPinnedInputs(item, resolver);
   }
   const health = healthEnabled(env.INPUT_HEALTH) ? await resolveHealth(resolver, env.INPUT_HEALTH_TRIAL ?? '1') : null;
+  const verifierCount = plan.definitions.filter((item) => item.execution === 'capability-verifier').length;
   const serialised = {
     ...(health ? { health } : {}),
+    evaluators: { lines: declared.lines, input: declared.input },
     robot: plan.robot,
     definitions: plan.definitions.map((item) => ({
       id: item.id,
@@ -55,6 +61,8 @@ export async function writePlan(env = process.env, root = process.cwd(), client 
     scenario: JSON.stringify(scenario),
     scenario_count: String(scenario.length),
     'plan-path': planPath,
+    evaluators: declared.input,
+    evaluators_run: declared.run && verifierCount > 0 ? 'true' : 'false',
   };
   writeGithubOutput(env, outputs);
   return { plan: serialised, outputs, planPath };
