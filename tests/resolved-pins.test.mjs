@@ -12,7 +12,7 @@ import { checkPin, collectPins, resolvedTrialInputs } from '../src/provenance.mj
 
 const OTHER = '1111111111111111111111111111111111111111';
 const RELEASE = JSON.parse(
-  readFileSync(new URL('./fixtures/releases/capability-verifier-v2.13.0.json', import.meta.url), 'utf8')
+  readFileSync(new URL('./fixtures/releases/capability-verifier-v2.14.0.json', import.meta.url), 'utf8')
 );
 const EVALUATOR_RELEASE = JSON.parse(
   readFileSync(new URL('./fixtures/releases/evaluator-scenario-v1.5.3.json', import.meta.url), 'utf8')

@@ -53,14 +53,6 @@ on:
         type: boolean
         default: true
         required: false
-      health:
-        description: Attach advisory Health from one existing recorded trial per configuration. Requires media.
-        type: boolean
-        default: false
-      health-trial:
-        description: Positive trial index to evaluate without rerunning simulation.
-        type: number
-        default: 1
       comment:
         description: >-
           Ask capability-verifier to comment on a same-repository pull request.
@@ -150,9 +142,7 @@ jobs:
         env:
           # contents: read is enough. The client sends this only to api.github.com.
           GITHUB_TOKEN: ${{ github.token }}
-          INPUT_HEALTH: ${{ inputs.health }}
           INPUT_MEDIA: ${{ inputs.media }}
-          INPUT_HEALTH_TRIAL: ${{ inputs.health-trial }}
           INPUT_DEFINITIONS: ${{ inputs.definitions }}
           INPUT_REPOSITORY: ${{ inputs.repository }}
           INPUT_REF: ${{ inputs.ref }}
@@ -241,7 +231,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.hallway) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@93a490d82ae50e4c551873dfcfaa778adcd5b689 # v2.13.0
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@bd6be5217b52b1348b4dc23613ee06d44bed9519 # v2.14.0
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}
@@ -268,7 +258,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.scenario) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@93a490d82ae50e4c551873dfcfaa778adcd5b689 # v2.13.0
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@bd6be5217b52b1348b4dc23613ee06d44bed9519 # v2.14.0
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}
@@ -375,6 +365,7 @@ jobs:
           pattern: vra-*-evaluator-results-*
           path: downloaded/evaluator-results
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        if: needs.plan.outputs.evaluators_run == 'true'
         with:
           version: '0.12.23'
           python-version: '3.12.14'
@@ -383,7 +374,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: Living-Proof-Labs/capability-verifier
-          ref: 93a490d82ae50e4c551873dfcfaa778adcd5b689
+          ref: bd6be5217b52b1348b4dc23613ee06d44bed9519
           path: capability-verifier
           persist-credentials: false
       - name: Install capability-verifier
@@ -411,7 +402,6 @@ jobs:
       - id: collect
         working-directory: caller
         env:
-          INPUT_HEALTH: ${{ inputs.health }}
           INPUT_PLAN_PATH: ${{ github.workspace }}/artifacts/verification-plan/plan.json
           INPUT_OUTPUT_DIR: ${{ github.workspace }}/${{ inputs.output-dir }}
           INPUT_VERSION: ${{ inputs.version }}

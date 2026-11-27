@@ -29,7 +29,7 @@ from evaluators_run import (
     run_downloaded,
 )
 
-PIN = "93a490d82ae50e4c551873dfcfaa778adcd5b689"
+PIN = "bd6be5217b52b1348b4dc23613ee06d44bed9519"
 
 
 def verifier_src() -> Path:
@@ -78,7 +78,7 @@ def _records():
     return [
         {
             "name": "livingproof-capability-report",
-            "tag": "v3.15.4",
+            "tag": "v3.17.0",
             "digest": "sha256:" + "ab" * 32,
         }
     ]
@@ -98,7 +98,7 @@ def _verdict(report_dir: Path) -> None:
 def _render(image, manifest, report_dir, links):
     del manifest, links
     assert "3.16.0" not in image
-    assert image.startswith("ghcr.io/living-proof-labs/livingproof-capability-report:3.15.4@")
+    assert image.startswith("ghcr.io/living-proof-labs/livingproof-capability-report:3.17.0@")
     _verdict(report_dir)
 
 
@@ -128,7 +128,7 @@ def test_reporter_image_follows_the_lock_pin():
     image = reporter_image(_records())
     assert (
         image
-        == "ghcr.io/living-proof-labs/livingproof-capability-report:3.15.4@" + "sha256:" + "ab" * 32
+        == "ghcr.io/living-proof-labs/livingproof-capability-report:3.17.0@" + "sha256:" + "ab" * 32
     )
     assert "3.16.0" not in image
 
@@ -137,10 +137,16 @@ def test_media_dir_is_an_argument_only_when_the_caller_has_one(tmp_path):
     evidence = tmp_path / "manifest.json"
     bundle = tmp_path / "bundle.json"
     out = tmp_path / "out"
-    without = loader_command(tmp_path / "lines.txt", evidence, out, bundle, None)
+    without = loader_command(
+        tmp_path / "lines.txt", evidence, out, bundle, tmp_path / "report", None
+    )
+    assert "--report-dir" in without
+    assert without[without.index("--report-dir") + 1] == str(tmp_path / "report")
     assert "--media-dir" not in without
     assert without[5:7] == ["capability_verifier.evaluators", "run"]
-    with_media = loader_command(tmp_path / "lines.txt", evidence, out, bundle, tmp_path / "mcap")
+    with_media = loader_command(
+        tmp_path / "lines.txt", evidence, out, bundle, tmp_path / "report", tmp_path / "mcap"
+    )
     assert with_media[-2:] == ["--media-dir", str(tmp_path / "mcap")]
 
 

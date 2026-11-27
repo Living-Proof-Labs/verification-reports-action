@@ -17,6 +17,7 @@ from collections.abc import Iterable
 from datetime import timedelta
 from pathlib import Path, PurePosixPath
 
+from details_files import DetailsPathError, cited_details_uris, read_cited_details, safe_relative
 from reports_common import (
     ARTIFACT_WORD,
     COMMIT_SHA,
@@ -31,8 +32,6 @@ from reports_common import (
     listing_path,
     site_path,
 )
-from reports_health import read_sidecar
-from reports_presentation import INPUT_FILES, prepare_inputs, presentation_html
 from reports_render import (
     ARCHIVED_REPORTS_URL,
     DOCS_HOME_URL,
@@ -894,6 +893,26 @@ def parse_exclude_runs(raw: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(validate_exclude_run_id(entry) for entry in tokens))
 
 
+def _publish_cited_details(source: Path, folder: Path, report: object) -> None:
+    """Copy advisory details files cited by the report. They are report files.
+
+    Each path must be listed in the run's SHA256SUMS, stay relative, not be a
+    symlink, and match that sha. They are not evidence and are not expired here.
+    """
+    if not isinstance(report, dict):
+        return
+    listed = _parse_sha256sums(source / "SHA256SUMS")
+    for uri in cited_details_uris(report):
+        try:
+            data = read_cited_details(source, uri, listed)
+            relative = safe_relative(uri)
+        except DetailsPathError as exc:
+            raise SiteError(str(exc)) from exc
+        destination = folder.joinpath(*relative.parts)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+
+
 def add_run_folder(
     reports_dir: Path,
     source: Path,
@@ -915,8 +934,6 @@ def add_run_folder(
             f"Run {run_id!r} in {source} matches exclude-runs; "
             "exclude-runs only applies to restored history, not runs added in the same build."
         )
-    health = read_sidecar(source, record, report_data, verify_inputs=True)
-    replay = prepare_inputs(source, record, report_data, reporter_html(source)) if health else {}
     key = (robot, variant, run_id)
     if key in seen_in_batch:
         raise SiteError(
@@ -933,16 +950,13 @@ def add_run_folder(
         shutil.rmtree(folder)
     folder.mkdir(parents=True, exist_ok=True)
 
-    if health is not None:
-        (folder / "health.json").write_bytes(health[0])
-        for name, data in replay.items():
-            (folder / ("." + name)).write_bytes(data)
     for name in (*REPORT_FILES, "SHA256SUMS"):
         shutil.copyfile(source / name, folder / name)
     for item in inputs:
         destination = folder.joinpath(*PurePosixPath(item["path"]).parts)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(item["bytes"])
+    _publish_cited_details(source, folder, report_data)
 
     if inputs:
         record["grading_inputs"] = [
@@ -988,11 +1002,6 @@ def prune_expired_evidence(reports_dir: Path, now: str, days: int) -> tuple[list
         if not isinstance(created, str) or not evidence_expired(created, now, days):
             continue
         run_folder = record_path.parent
-        sidecar = run_folder / "health.json"
-        if sidecar.is_file() and not sidecar.is_symlink():
-            sidecar.unlink()
-            removed.append(sidecar.relative_to(reports_dir).as_posix())
-            affected.add(run_folder)
         evidence = run_folder / "evidence"
         if evidence.is_dir():
             for path in sorted(evidence.rglob("*")):
@@ -1282,11 +1291,8 @@ def publish_run_page(folder: Path, record: dict, *, now: str, days: int, trial: 
         strip_actions_links(report) | publish_evidence_links(report, links)
     ):
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    # Preserve portable HTML. Only validated, bound optional contributions replay
-    # original inputs through the hash-locked released Reporter presentation API.
-    html_text_for_page = presentation_html(folder, record, report, html_text, days)
-    for name in INPUT_FILES.values():
-        (folder / ("." + name)).unlink(missing_ok=True)
+    # The page is the Reporter's HTML. This action adds no card.
+    html_text_for_page = html_text
     public = scrub_reporter_html(
         html_text_for_page, record, trial=trial, expired=expired, days=days
     )
@@ -1428,22 +1434,6 @@ def recheck_restored_run(folder: Path) -> None:
     would otherwise be carried into every later deployment. The build fails rather than
     rewriting them; reset-history rebuilds the site from run folders.
     """
-    health = read_sidecar(
-        folder,
-        read_json_object(folder / "run.json"),
-        read_report(folder / "report.json"),
-        missing_ok=True,
-    )
-    page = folder / "index.html"
-    if (
-        health is None
-        and page.is_file()
-        and re.search(
-            r"id=[\"\'](?:health-advisory|evaluator-livingproof-health)[\"\']",
-            _read_utf8_text(page),
-        )
-    ):
-        raise SiteError(f"restored {page}: Health advisory has no validated sidecar")
     evidence = folder / "evidence"
     # The site writes each evidence listing as evidence/<name>.html. A restored one is a
     # page on the Pages origin like report.html, so it gets the same check.

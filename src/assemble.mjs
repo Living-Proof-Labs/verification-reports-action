@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ReportError, assertConfigurationSlug, sha256 } from './definitions.mjs';
 import {
@@ -26,20 +26,89 @@ function copyOptional(source, destination) {
   return true;
 }
 
-export function preserveReporterInput(reportArtifact, directory) {
-  const reference = { format: 'livingproof-reporter-input/1' };
-  for (const [key, from, to] of [
-    ['report', 'report.json', 'report-render-input.json'],
-    ['integrity_lines', 'integrity-lines.txt', 'report-integrity-lines.txt'],
-  ]) {
-    const bytes = readFileSync(path.join(reportArtifact, from));
-    writeFileSync(path.join(directory, to), bytes);
-    reference[key] = { path: to, sha256: sha256(bytes) };
+function resultsOf(stored) {
+  if (stored == null) return [];
+  if (Array.isArray(stored)) return stored.filter((item) => item && typeof item === 'object');
+  if (typeof stored !== 'object') return [];
+  if (stored.advisory && typeof stored.advisory === 'object') return [stored];
+  if (stored.evaluator && typeof stored.evaluator === 'object' && stored.format) return [stored];
+  const documents = [];
+  for (const item of Object.values(stored)) {
+    if (Array.isArray(item)) documents.push(...item.filter((entry) => entry && typeof entry === 'object'));
+    else if (item && typeof item === 'object') documents.push(item);
   }
-  return reference;
+  return documents;
 }
 
-export function assembleVerifierDefinition(item, downloadRoot, outputDir, env, version, health = new Map()) {
+export function citedDetailsUris(report) {
+  const bundle = report?.source_bundle && typeof report.source_bundle === 'object' ? report.source_bundle : report;
+  const stored = bundle?.assessment?.advisory_results;
+  const uris = [];
+  for (const document of resultsOf(stored)) {
+    const details = document?.advisory?.details_file;
+    if (details && typeof details.uri === 'string' && details.uri) uris.push(details.uri);
+  }
+  return uris;
+}
+
+export function safeDetailsParts(uri) {
+  if (typeof uri !== 'string' || uri === '' || uri.includes('\\') || uri.includes('\u0000')) {
+    throw new ReportError(`cited details path ${JSON.stringify(uri)} is not a relative path`);
+  }
+  if (uri.startsWith('/')) {
+    throw new ReportError(`cited details path ${JSON.stringify(uri)} is absolute`);
+  }
+  const parts = uri.split('/');
+  if (parts.some((part) => part === '' || part === '.' || part === '..')) {
+    throw new ReportError(`cited details path ${JSON.stringify(uri)} is not a relative path`);
+  }
+  return parts;
+}
+
+function checksumMap(directory) {
+  const text = readFileSync(path.join(directory, 'SHA256SUMS'), 'utf8');
+  const listed = {};
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    const match = line.match(/^([0-9a-f]{64})  (.+)$/);
+    if (!match) throw new ReportError(`${directory}: SHA256SUMS has an unreadable line`);
+    listed[match[2]] = match[1];
+  }
+  return listed;
+}
+
+export function copyCitedDetails(reportArtifact, directory, report) {
+  const listed = checksumMap(reportArtifact);
+  for (const uri of citedDetailsUris(report)) {
+    const parts = safeDetailsParts(uri);
+    const relative = parts.join('/');
+    if (!Object.hasOwn(listed, relative)) {
+      throw new ReportError(`cited details file ${relative} is not listed in SHA256SUMS`);
+    }
+    let current = reportArtifact;
+    for (const part of parts) {
+      current = path.join(current, part);
+      if (!existsSync(current) && !lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink()) {
+        throw new ReportError(`cited details file ${relative} is missing`);
+      }
+      if (lstatSync(current).isSymbolicLink()) {
+        throw new ReportError(`cited details file ${relative} is a symlink`);
+      }
+    }
+    const bytes = readFileSync(current);
+    const digest = sha256(bytes);
+    if (digest !== listed[relative]) {
+      throw new ReportError(
+        `cited details file ${relative} does not match SHA256SUMS: sha256 is ${digest}, not ${listed[relative]}`
+      );
+    }
+    const destination = path.join(directory, ...parts);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    writeFileSync(destination, bytes);
+  }
+}
+
+export function assembleVerifierDefinition(item, downloadRoot, outputDir, env, version) {
   for (const configuration of item.configurations ?? []) {
     assertConfigurationSlug(configuration, item.path ?? 'collect');
   }
@@ -90,6 +159,7 @@ export function assembleVerifierDefinition(item, downloadRoot, outputDir, env, v
       }
     }
     const report = JSON.parse(readFileSync(path.join(directory, 'report.json'), 'utf8'));
+    copyCitedDetails(reportArtifact, directory, report);
     const summaries = readSummaries(report, path.join(directory, 'report.json'));
     const record = buildRunRecord({
       item,
@@ -98,16 +168,6 @@ export function assembleVerifierDefinition(item, downloadRoot, outputDir, env, v
       env,
       version,
     });
-    const advisory = health.get(`${item.id}/${configuration}`);
-    if (advisory) {
-      writeFileSync(path.join(directory, 'health.json'), advisory.bytes);
-      record.health = advisory.record;
-    }
-    // Preserve the exact render input before JSON stamping normalizes numeric tokens.
-    // Staging contract only: publish neither these raw files nor an unreleased dependency.
-    if (advisory) {
-      record.reporter_input = preserveReporterInput(reportArtifact, directory);
-    }
     stampReportInputs(directory, record.inputs);
     writeFileSync(path.join(directory, 'run.json'), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
     writeChecksums(directory);

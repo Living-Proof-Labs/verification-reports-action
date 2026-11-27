@@ -85,11 +85,11 @@ test('the report workflow calls both verifier procedures and passes no secrets',
   assert.match(reportYml, /^on:\n {2}workflow_call:/m);
   assert.match(
     reportYml,
-    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/walk-hallway\.yml@93a490d82ae50e4c551873dfcfaa778adcd5b689 # v2\.13\.0/
+    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/walk-hallway\.yml@bd6be5217b52b1348b4dc23613ee06d44bed9519 # v2\.14\.0/
   );
   assert.match(
     reportYml,
-    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/scenario\.yml@93a490d82ae50e4c551873dfcfaa778adcd5b689 # v2\.13\.0/
+    /uses: Living-Proof-Labs\/capability-verifier\/\.github\/workflows\/scenario\.yml@bd6be5217b52b1348b4dc23613ee06d44bed9519 # v2\.14\.0/
   );
   const walkHallway = reportYml.slice(reportYml.indexOf('\n  walk-hallway:\n'), reportYml.indexOf('\n  scenario:\n'));
   const scenario = reportYml.slice(reportYml.indexOf('\n  scenario:\n'), reportYml.indexOf('\n  collect:\n'));
@@ -123,6 +123,17 @@ test('the report workflow calls both verifier procedures and passes no secrets',
   assert.match(reportYml, / {2}walk-hallway:\n {4}needs: plan\n/);
   assert.match(reportYml, / {2}scenario:\n {4}needs: plan\n/);
   assert.match(reportYml, /test ! -e src\/plan\.mjs/);
+  const collect = reportYml.slice(reportYml.indexOf('\n  collect:\n'));
+  const setupUv = [...collect.matchAll(/astral-sh\/setup-uv/g)];
+  assert.ok(setupUv.length > 0, 'collect does not install uv');
+  for (const match of setupUv) {
+    const stepStart = collect.lastIndexOf('\n      - ', match.index);
+    const stepEnd = collect.indexOf('\n      - ', match.index);
+    const step = collect.slice(stepStart, stepEnd === -1 ? undefined : stepEnd);
+    const gated = /if: needs\.plan\.outputs\.evaluators_run == 'true'/.test(step);
+    const ignoreEmpty = /ignore-nothing-to-cache:\s*true/.test(step);
+    assert.ok(gated || ignoreEmpty, 'collect setup-uv must not save an empty cache');
+  }
   assert.doesNotMatch(reportYml, /run: node src\//);
   assert.match(reportYml, /artifact-name:[\s\S]*?default: verification-report/);
   assert.match(reportYml, /name: \$\{\{ inputs\.artifact-name \}\}/);

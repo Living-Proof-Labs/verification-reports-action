@@ -25,7 +25,7 @@ A robot `FAIL` or `INSUFFICIENT_EVIDENCE` is a successful run. `status` is `ok` 
 
 Before any trial, the plan job resolves each input from its release tag and refuses the run when the check fails. The message names the input and the expected and found values. No `report.json` is written, and `walk-hallway` and `scenario` do not start, because both need the plan job. The inputs are capability-verifier, livingproof-sim-mujoco, robot-capability-specs, the livingproof-worlds world, livingproof-evaluator-scenario, and livingproof-capability-report together with its image. Run Integrity is not one of those pins. The caller passes it with the `evaluators` input.
 
-The tag is the pin people edit. The plan resolves each tag, then passes four values into capability-verifier v2.13.0: `verifier-commit`, `verifier-image`, `reporter-image`, and `evaluator-commit`. Those values are the commits and image refs the plan already checked. The lock must not carry the fields they replace. A present field is refused before `plan.json` is written:
+The tag is the pin people edit. The plan resolves each tag, then passes four values into capability-verifier v2.14.0: `verifier-commit`, `verifier-image`, `reporter-image`, and `evaluator-commit`. Those values are the commits and image refs the plan already checked. The lock must not carry the fields they replace. A present field is refused before `plan.json` is written:
 
 - `releases.verifier.commit`, `releases.verifier.image`, and `releases.verifier.digest`
 - `releases.reporter.image` and `releases.reporter.digest`
@@ -33,7 +33,7 @@ The tag is the pin people edit. The plan resolves each tag, then passes four val
 
 A one-line edit of the verifier tag, or of the livingproof-evaluator-scenario tag, needs no relock of those fields. The trial runs the commit and image the new tag resolved to.
 
-These fields stay in the lock. capability-verifier v2.13.0 still reads them, and the plan refuses when one disagrees with the tag it resolved:
+These fields stay in the lock. capability-verifier v2.14.0 still reads them, and the plan refuses when one disagrees with the tag it resolved:
 
 - `releases.runner.commit`
 - `releases.specs.commit` and `releases.specs.files`
@@ -41,7 +41,7 @@ These fields stay in the lock. capability-verifier v2.13.0 still reads them, and
 - `sources.parameters.sha256`
 - `releases.reporter.commit`
 
-A one-line edit of the runner, specs, or world tag that leaves the old commit or hashes in place is refused. `releases.reporter.commit` stays for the same reason: v2.13.0 does not take a reporter commit input, and `repin --check` still requires that commit. `sources.parameters.sha256` is the hash of `specs/scenarios/<scenario id>/parameters.json` at the specs commit. `sources.parameters.path` is the path in the robot repository and is not hashed.
+A one-line edit of the runner, specs, or world tag that leaves the old commit or hashes in place is refused. `releases.reporter.commit` stays for the same reason: v2.14.0 does not take a reporter commit input, and `repin --check` still requires that commit. `sources.parameters.sha256` is the hash of `specs/scenarios/<scenario id>/parameters.json` at the specs commit. `sources.parameters.path` is the path in the robot repository and is not hashed.
 
 ## Migration
 
@@ -56,7 +56,7 @@ Every lock published before this release is refused before a trial. Drop these s
 - `releases.reporter.digest`
 - `evaluators.livingproof-evaluator-scenario.commit`
 
-Set `releases.verifier.tag` to `v2.13.0`. The plan resolves that tag and passes the commit and the image. Leave the kept fields in place: `releases.runner.commit`, `releases.specs.commit`, `releases.specs.files`, `world.commit`, `world.sha256`, `sources.world.sha256`, `sources.parameters.sha256`, and `releases.reporter.commit`. A lock entry under `evaluators` other than `livingproof-evaluator-scenario` is ignored. The plan prints one notice and does not name the entry.
+Set `releases.verifier.tag` to `v2.14.0`. The plan resolves that tag and passes the commit and the image. Leave the kept fields in place: `releases.runner.commit`, `releases.specs.commit`, `releases.specs.files`, `world.commit`, `world.sha256`, `sources.world.sha256`, `sources.parameters.sha256`, and `releases.reporter.commit`. A lock entry under `evaluators` other than `livingproof-evaluator-scenario` is ignored. The plan prints one notice and does not name the entry.
 
 `report.json` and `run.json` each record `inputs`: repository, tag, commit, digest, and `status` for every pin. The same status line is written into `report.md`, `report.html`, and `report.txt` under "Pinned inputs", as `name: status (meaning)`.
 
@@ -85,9 +85,16 @@ An inline list is the same lines, one per line or as a YAML list, passed directl
 
 The descriptor schema is [`implementation.schema.json`](https://github.com/Living-Proof-Labs/livingproof-evaluator/blob/v1.9.0/schema/implementation.schema.json) (`Living-Proof-Labs/livingproof-evaluator@v1.9.0/schema/implementation.schema.json`, livingproof-evaluator#74).
 
-This repository's own smoke passes `evaluators: evaluators.yml`. That file has one line, `Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json`. Other callers do not inherit it.
+This repository's own smoke passes `evaluators: evaluators.yml`. That file has one line per evaluator:
 
-When the list has items, the collect job checks out capability-verifier v2.13.0, appends the scenario evaluator results onto the verified bundle, runs the loader on the downloaded evidence, and re-renders the report with the reporter version the lock pins. The loader's exit code is not used. A missing or unreadable provenance file is recorded as Run Integrity NOT RUN (failure), the report is uploaded, and the collect job then fails.
+```
+- Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json
+- Living-Proof-Labs/livingproof-evaluator-health@v1.2.0/livingproof-evaluator.json
+```
+
+Other callers do not inherit it. An evaluator that reads recorded media needs `media: true`.
+
+When the list has items, the collect job checks out capability-verifier v2.14.0, appends the scenario evaluator results onto the verified bundle, runs the loader on the downloaded evidence, and re-renders the report with the reporter version the lock pins. The loader's exit code is not used. A missing or unreadable provenance file is recorded as Run Integrity NOT RUN (failure), the report is uploaded, and the collect job then fails.
 
 ## Example
 
@@ -249,58 +256,12 @@ task verify
 
 [Apache-2.0](LICENSE).
 
-### Advisory Health attachment
+## Evaluators
 
-The reusable `report.yml` accepts `health: true` (default `false`) and
-`health-trial: 1` (a positive trial index, per configuration). Keep `media: true`.
-Health evaluates the existing evidence and MCAP artifacts; it never runs another
-simulation. It requires real recorded evidence and refuses mismatched robot,
-configuration, run, trial or observation bindings before final assembly.
+One line in `evaluators.yml` is one evaluator. The Health line is:
 
-The Action resolves immutable Evaluator Health `v1.1.2` at
-`7441d6d7c7dc529d12cf0be0a4dc6225faa85cad` through its normal release, source digest
-and attestation checks, then installs that source in an isolated Python 3.12.14
-environment. Each configuration retains the unchanged evaluator output as
-`health.json`, with its digest, trial identity and source provenance in
-`run.json.health` and the portable `SHA256SUMS`.
+```
+Living-Proof-Labs/livingproof-evaluator-health@v1.2.0/livingproof-evaluator.json
+```
 
-This attachment is advisory: it changes no `grade`, `grades`, Scenario or Run
-Integrity outcome and adds no report UI. Empty robot telemetry is unavailable,
-not a healthy verdict. Missing or invalid required inputs fail collection rather
-than silently dropping an opted-in attachment. Health off keeps the existing
-collection path and requires no Health installation or release lookup.
-
-The existing real G1 smoke runs once with Health on. Its check reassembles Health
-off from the same downloaded artifacts, compares report bytes, evidence bytes,
-`grade` and `grades`, and retains `g1-health-off-report` alongside the Health-on
-report. `health-comparison.json` records the actual trial hashes and observed
-metrics; historical corner numbers are not used as the hallway oracle.
-
-`./site` displays a Health advisory on the run page only after checking the
-sidecar digest, source/version provenance, and its report, trial, configuration
-and input-manifest bindings. It shows recorded simulator base-height measurements
-separately from unavailable robot health telemetry. The original portable bundle
-is not rewritten. Generated pages keep the existing grade and evaluator outcomes.
-
-New input runs with a declared but missing, unsafe or invalid sidecar fail the
-site build. Unreferenced sidecars are not published. Validated `health.json` is
-retained with the published run checksums for the evidence retention window,
-then removed; run provenance remains. Older restored runs that never retained a
-sidecar show no Health result. Health-off pages are unchanged.
-
-### Optional evaluator peers
-
-New Health-on reports retain bound original rendering inputs. `./site` uses the
-released Reporter v3.16.0 typed presentation API to show Health as a third peer in
-the summary's Evaluators strip, alongside Scenario and Run Integrity. Its neutral
-**Advisory** cue is not PASS/FAIL and never affects grade. Each evaluator contributes
-independently; absent Health creates no placeholder. The three peers reflow on
-mobile and their details remain keyboard-accessible without JavaScript.
-
-The site Action installs a separate hash-locked Python runtime from
-`site/requirements.txt`. Original report/evidence files, Integrity annotations and
-Pinned inputs are preserved. Private rendering inputs are not published. Older
-Health archives without those inputs retain their validated advisory section;
-invalid declared bindings fail instead of falling back. Restored pages need no
-private input, but must retain their validated sidecar until normal evidence expiry.
-See [replay verification and compatibility](docs/health-peer.md).
+The Reporter draws each advisory card from the result. This action does not. Set `media: true` for an evaluator that reads recorded media.
