@@ -14,7 +14,7 @@ Robot teams who want a reviewable report on each change.
 
 ## See a real report
 
-A published Unitree G1 run, the stock MuJoCo hallway, is here: <https://docs.livingprooflabs.com/verification-reports-action/reports/g1/unitree-g1/stock-mujoco-hallway/runs/46062882502/>.
+The latest published Unitree G1 report, the stock MuJoCo hallway, is here: <https://docs.livingprooflabs.com/verification-reports-action/reports/g1/unitree-g1/stock-mujoco-hallway/latest/>.
 
 Every published report is listed at <https://docs.livingprooflabs.com/verification-reports-action/reports/>.
 
