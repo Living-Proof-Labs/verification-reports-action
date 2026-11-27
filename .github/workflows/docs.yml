@@ -187,9 +187,52 @@ jobs:
             echo "id=$EVENT_RUN" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          id="$(gh run list --workflow verify.yml --commit "$RELEASE_COMMIT" --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
-          test -n "$id"
-          test "$id" != null
+          expected_repo="Living-Proof-Labs/verification-reports-action"
+          listed="$(gh run list \
+            --repo "$expected_repo" \
+            --workflow verify.yml \
+            --commit "$RELEASE_COMMIT" \
+            --status success \
+            --event push \
+            --branch main \
+            --limit 1 \
+            --json databaseId)"
+          id="$(jq -r 'if type == "array" and length > 0 then .[0].databaseId // empty else empty end' <<<"$listed")"
+          if [ -z "$id" ] || [ "$id" = "null" ]; then
+            echo "No Verify run to deploy. Expected a successful push to main of ${expected_repo} at ${RELEASE_COMMIT}. Found none." >&2
+            exit 1
+          fi
+          details="$(gh api "repos/${expected_repo}/actions/runs/${id}")"
+          head_sha="$(jq -r '.head_sha // "none"' <<<"$details")"
+          found_repo="$(jq -r '.head_repository.full_name // "none"' <<<"$details")"
+          conclusion="$(jq -r '.conclusion // "none"' <<<"$details")"
+          run_status="$(jq -r '.status // "none"' <<<"$details")"
+          event="$(jq -r '.event // "none"' <<<"$details")"
+          branch="$(jq -r '.head_branch // "none"' <<<"$details")"
+          if [ "$head_sha" != "$RELEASE_COMMIT" ]; then
+            echo "Verify run ${id} is not the release commit. Expected headSha ${RELEASE_COMMIT}. Found ${head_sha}." >&2
+            exit 1
+          fi
+          if [ "$found_repo" != "$expected_repo" ]; then
+            echo "Verify run ${id} is not from this repository. Expected repository ${expected_repo}. Found ${found_repo}." >&2
+            exit 1
+          fi
+          if [ "$conclusion" != "success" ]; then
+            echo "Verify run ${id} did not succeed. Expected conclusion success. Found ${conclusion}." >&2
+            exit 1
+          fi
+          if [ "$run_status" != "completed" ]; then
+            echo "Verify run ${id} is not finished. Expected status completed. Found ${run_status}." >&2
+            exit 1
+          fi
+          if [ "$event" != "push" ]; then
+            echo "Verify run ${id} is not a push. Expected event push. Found ${event}." >&2
+            exit 1
+          fi
+          if [ "$branch" != "main" ]; then
+            echo "Verify run ${id} is not on main. Expected head_branch main. Found ${branch}." >&2
+            exit 1
+          fi
           echo "id=$id" >> "$GITHUB_OUTPUT"
       - name: Download the mock robot smoke report
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
