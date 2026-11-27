@@ -6,21 +6,21 @@ The manual is built from this page and the `docs/` folder, and it is published a
 
 ## What it does
 
-Living Proof Verification Reports writes a verification report for your robot from your own CI, on your own runners. The definitions stay in your robot repository, and each change can produce a report you can review. A robot FAIL is a green run with a grade: the report was written, and the grade says how the robot did.
+Living Proof Verification Reports runs your robot's verifications in your own CI, on your own runners, and writes a report for each change that you can review. The definitions stay in your robot repository. If the robot fails a check, the CI run still passes: the report was written, and its grade tells you how the robot did.
 
 ## Who it's for
 
-Robot teams who want a reviewable report on each change.
+Robot teams who want evidence, not just a pass/fail, on every change. If you already keep your robot in GitHub and run CI there, you can add a report to each pull request without new infrastructure. You can add checks such as run quality or system health one line at a time.
 
 ## See a real report
 
-The latest published Unitree G1 report, the stock MuJoCo hallway, is here: <https://docs.livingprooflabs.com/verification-reports-action/reports/g1/unitree-g1/stock-mujoco-hallway/latest/>.
+To see what you'll get, open a published Unitree G1 run of the stock MuJoCo hallway: <https://docs.livingprooflabs.com/verification-reports-action/reports/g1/unitree-g1/stock-mujoco-hallway/latest/>.
 
 Every published report is listed at <https://docs.livingprooflabs.com/verification-reports-action/reports/>.
 
 ## Quick start
 
-Add one job to the workflow in your robot repository. Pin this action to a release, either `@vX.Y.Z` or a 40-character commit SHA with a `# vX.Y.Z` comment. The calling job needs `contents: read` and `pull-requests: write`.
+Add one job to the workflow in your robot repository. Pin the action to a release so your reports don't change under you. Use `@vX.Y.Z`, or for the strictest pin, the release's 40-character commit SHA with a `# vX.Y.Z` comment. The calling job needs `contents: read`, and `pull-requests: write`, because the verifier's optional PR-comment step declares it. Nothing is posted unless you set `comment: true`.
 
 ```yaml
 name: Verification report
@@ -41,11 +41,11 @@ jobs:
       evaluators: evaluators.yml
 ```
 
-Replace `vX.Y.Z` with the release you want. Put the definition files in the robot repository. Each one is a `livingproof-verification-definition` TOML file with a sibling `.lock.json`. Add `merge_group` to `on:` when the repository uses a merge queue. Longer notes on that job are in [docs/workflow.md](docs/workflow.md).
+Replace `vX.Y.Z` with the release you want. Put your definition files in the robot repository. Each is a `livingproof-verification-definition` TOML file with a `.lock.json` beside it. Add `merge_group` to `on:` when the repository uses a merge queue. Longer notes on that job are in [docs/workflow.md](docs/workflow.md).
 
 ## The real G1 example
 
-This repository runs that hallway itself. The `g1-smoke` job in [`.github/workflows/verify.yml`](https://github.com/Living-Proof-Labs/verification-reports-action/blob/main/.github/workflows/verify.yml#L198-L219) calls the workflow on `Living-Proof-Labs/livingproof-unitree-g1`. A robot repository writes `uses: Living-Proof-Labs/verification-reports-action/.github/workflows/report.yml@<release>` instead of `uses: ./.github/workflows/report.yml`.
+To see the whole thing working end to end, look at how this repository verifies a real robot. This repository runs that hallway itself. The `g1-smoke` job in [`.github/workflows/verify.yml`](https://github.com/Living-Proof-Labs/verification-reports-action/blob/main/.github/workflows/verify.yml#L198-L219) calls the workflow on `Living-Proof-Labs/livingproof-unitree-g1`. A robot repository writes `uses: Living-Proof-Labs/verification-reports-action/.github/workflows/report.yml@<release>` instead of `uses: ./.github/workflows/report.yml`.
 
 Excerpt from `.github/workflows/verify.yml`:
 
@@ -111,11 +111,13 @@ recording = { max_gap_seconds = 0.05 }
 
 ## Evaluators
 
-How declarative runs work. Each evaluator is one line, `owner/repo@<vX.Y.Z or 40-hex sha>/path.json`, naming a descriptor validated against `livingproof-evaluator-implementation/1`. Your repository runs everything on its own runners. Adding an evaluator means adding one line.
+An evaluator is a check that reads a run and adds a card to the report, such as whether the run completed or how healthy the robot was throughout. You choose which ones run by listing them in `evaluators.yml`. Each evaluator is one line, so adding one means adding a line. Everything runs on your own runners.
 
-The Health descriptor is [`livingproof-evaluator.json`](https://github.com/Living-Proof-Labs/livingproof-evaluator-health/blob/v1.2.0/livingproof-evaluator.json). The schema is [`implementation.schema.json`](https://github.com/Living-Proof-Labs/livingproof-evaluator/blob/main/schema/implementation.schema.json). The explainer is [`implementation-descriptor.md`](https://github.com/Living-Proof-Labs/livingproof-evaluator/blob/main/docs/implementation-descriptor.md).
+Each line has the form `owner/repo@<vX.Y.Z or 40-hex sha>/path.json`, pinned like the action itself, and points at a descriptor validated against `livingproof-evaluator-implementation/1`.
 
-Leave `evaluators` empty when the run should not declare any. An evaluator that reads recorded media needs `media: true`. The report draws each card from that evaluator's result. How a path or an inline list is passed on is in [docs/workflow.md](docs/workflow.md).
+If you want to write your own evaluator, start with the Health descriptor [`livingproof-evaluator.json`](https://github.com/Living-Proof-Labs/livingproof-evaluator-health/blob/v1.2.0/livingproof-evaluator.json), the schema [`implementation.schema.json`](https://github.com/Living-Proof-Labs/livingproof-evaluator/blob/main/schema/implementation.schema.json), and the explainer [`implementation-descriptor.md`](https://github.com/Living-Proof-Labs/livingproof-evaluator/blob/main/docs/implementation-descriptor.md).
+
+Leave `evaluators` empty when the run should not declare any. An evaluator that reads recorded media needs `media: true`. How a path or an inline list is passed on is in [docs/workflow.md](docs/workflow.md).
 
 ## Reference
 
