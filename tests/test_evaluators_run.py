@@ -446,6 +446,49 @@ def test_main_returns_zero_and_records_whether_the_job_should_fail(tmp_path, mon
     assert main() == 0
     assert output.read_text(encoding="utf-8") == "failed=false\n"
 
+    output.write_text("", encoding="utf-8")
+    monkeypatch.setattr("evaluators_run.run_downloaded", lambda *args, **kwargs: True)
+    assert main() == 0
+    assert output.read_text(encoding="utf-8") == "failed=true\n"
+
+
+def test_main_returns_zero_when_the_download_run_raises(tmp_path, monkeypatch):
+    output = tmp_path / "github-output.txt"
+    plan = tmp_path / "plan.json"
+    plan.write_text('{"definitions": []}\n', encoding="utf-8")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv("INPUT_PLAN_PATH", str(plan))
+    monkeypatch.delenv("INPUT_EVALUATORS", raising=False)
+
+    def boom(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("provenance is missing")
+
+    monkeypatch.setattr("evaluators_run.run_downloaded", boom)
+    assert main() == 0
+    assert output.read_text(encoding="utf-8") == "failed=true\n"
+
+
+def test_missing_evaluators_path_returns_zero_and_records_failure(tmp_path, monkeypatch):
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    plan = tmp_path / "plan.json"
+    plan.write_text('{"definitions": []}\n', encoding="utf-8")
+    output = tmp_path / "github-output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv("INPUT_PLAN_PATH", str(plan))
+    monkeypatch.setenv("INPUT_CALLER_ROOT", str(caller))
+    monkeypatch.setenv("INPUT_EVALUATORS", "missing.yml")
+    assert main() == 0
+    assert output.read_text(encoding="utf-8") == "failed=true\n"
+
+
+def test_inline_empty_list_is_the_sentinel(tmp_path):
+    declared = resolve_caller_evaluators("[]", tmp_path)
+    assert declared["lines"] == []
+    assert declared["run"] is False
+    assert declared["input"] == "#"
+
 
 def test_empty_input_does_not_read_an_evaluators_file(tmp_path, monkeypatch):
     caller = tmp_path / "caller"

@@ -134,6 +134,14 @@ test('a caller path or an inline list is the declaration', () => {
   assert.match(release, /evaluators: evaluators\.yml/);
 });
 
+test('an inline empty list is no evaluators', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const emptyList = resolveCallerEvaluators('[]', root);
+  assert.deepEqual(emptyList.lines, []);
+  assert.equal(emptyList.run, false);
+  assert.equal(emptyList.input, EVALUATORS_SENTINEL);
+});
+
 test('action code does not name the run evaluator', () => {
   const hits = [];
   for (const relative of ['src', 'action.yml', '.github/workflows']) {

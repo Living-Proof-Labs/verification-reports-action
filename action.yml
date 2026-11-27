@@ -43,13 +43,6 @@ inputs:
       The comment job declares pull-requests: write. With comment false it never writes.
     required: false
     default: 'false'
-  evaluators:
-    description: >-
-      Caller declaration list. A path in the caller repository, such as
-      evaluators.yml, or the list itself. Empty means no evaluators.
-      This repository's file is not a default.
-    required: false
-    default: ''
 outputs:
   report-path:
     description: Directory of the written reports.
@@ -76,6 +69,5 @@ runs:
         INPUT_REF: ${{ inputs.ref }}
         INPUT_MEDIA: ${{ inputs.media }}
         INPUT_COMMENT: ${{ inputs.comment }}
-        INPUT_EVALUATORS: ${{ inputs.evaluators }}
         WORKFLOW_REPOSITORY: ${{ github.action_repository }}
       run: node "${{ github.action_path }}/src/run.mjs"

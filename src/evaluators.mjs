@@ -68,7 +68,7 @@ function asYamlList(text) {
  */
 export function resolveCallerEvaluators(value, root) {
   const text = typeof value === 'string' ? value : '';
-  if (!text.trim()) return evaluatorsDeclaration('');
+  if (!text.trim() || text.trim() === '[]') return evaluatorsDeclaration('');
   const single = !/[\r\n]/.test(text);
   const trimmed = text.trim();
   if (single && !trimmed.includes('@') && !trimmed.startsWith('-')) {

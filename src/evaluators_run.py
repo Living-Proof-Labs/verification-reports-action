@@ -220,7 +220,7 @@ def _require_ran(completed, label: str) -> None:
 def resolve_caller_evaluators(value: str, root: Path) -> dict:
     """Same caller input as the plan: empty, a relative path, or the list itself."""
     text = value or ""
-    if not text.strip():
+    if not text.strip() or text.strip() == "[]":
         return {"lines": [], "input": "#", "run": False}
     single = "\n" not in text and "\r" not in text
     trimmed = text.strip()
@@ -440,11 +440,11 @@ def main(argv: list[str] | None = None) -> int:
         _write_output("failed", "true")
         return 0
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    if "INPUT_EVALUATORS" in os.environ:
-        caller = Path(os.environ.get("INPUT_CALLER_ROOT") or ".")
-        declared = resolve_caller_evaluators(os.environ.get("INPUT_EVALUATORS") or "", caller)
-        plan["evaluators"] = {"lines": declared["lines"], "input": declared["input"]}
     try:
+        if "INPUT_EVALUATORS" in os.environ:
+            caller = Path(os.environ.get("INPUT_CALLER_ROOT") or ".")
+            declared = resolve_caller_evaluators(os.environ.get("INPUT_EVALUATORS") or "", caller)
+            plan["evaluators"] = {"lines": declared["lines"], "input": declared["input"]}
         failed = run_downloaded(plan, download, download / "evaluator-out")
     except Exception as exc:
         print(f"evaluators: {exc}", file=sys.stderr)
