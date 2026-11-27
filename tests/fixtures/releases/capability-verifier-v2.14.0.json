@@ -1,0 +1,11 @@
+{
+  "repository": "Living-Proof-Labs/capability-verifier",
+  "tag": "v2.14.0",
+  "target_commitish": "main",
+  "tagCommit": "bd6be5217b52b1348b4dc23613ee06d44bed9519",
+  "tagObjectType": "commit",
+  "changelogCommit": "ff6fee34dcc2cc1538141752f9ddeb88785522a2",
+  "image": "ghcr.io/living-proof-labs/capability-verifier-hallway",
+  "digest": "sha256:3f97c6910e27a98ba97dc114e8d537b2c1acdcd728696186428fa3e48ae3019c",
+  "body": "## [2.14.0](https://github.com/Living-Proof-Labs/capability-verifier/compare/v2.13.0...v2.14.0) (2026-11-27)\n\n### feat\n\n* keep advisory bundle fields inside the reporter's rules ([ff6fee3](https://github.com/Living-Proof-Labs/capability-verifier/commit/ff6fee34dcc2cc1538141752f9ddeb88785522a2))\n* place advisory evaluator results in the bundle by kind ([390a0ac](https://github.com/Living-Proof-Labs/capability-verifier/commit/390a0ac2c067965b5f966bd2ebe2362df8616345)), closes [#265](https://github.com/Living-Proof-Labs/capability-verifier/issues/265)\n* place advisory evaluator results in the bundle by kind (va[#54](https://github.com/Living-Proof-Labs/capability-verifier/issues/54) slice 2c) ([#266](https://github.com/Living-Proof-Labs/capability-verifier/issues/266)) ([bd6be52](https://github.com/Living-Proof-Labs/capability-verifier/commit/bd6be5217b52b1348b4dc23613ee06d44bed9519))\n* record advisory provenance and the evaluator's refusal reason ([e6c5534](https://github.com/Living-Proof-Labs/capability-verifier/commit/e6c55346547353fe117f0ecacc38cb2c20e5e768))\n\n### fix\n\n* check advisory details files on the loader run path ([e65f25f](https://github.com/Living-Proof-Labs/capability-verifier/commit/e65f25fa84a1214b36d2c6102a300b2520a8da36))\n* refuse only the advisory evaluator on a report copy conflict ([f8094ba](https://github.com/Living-Proof-Labs/capability-verifier/commit/f8094ba09d4168141ec0524662bd17c33a670009))\n* start each evaluator run in a fresh output directory ([3dab517](https://github.com/Living-Proof-Labs/capability-verifier/commit/3dab51735abafd270c7439fde130c5c72b2f4400))\n\n\n## Hallway image (linux/amd64, linux/arm64 index)\n\n`ghcr.io/living-proof-labs/capability-verifier-hallway:2.14.0@sha256:3f97c6910e27a98ba97dc114e8d537b2c1acdcd728696186428fa3e48ae3019c`\n"
+}

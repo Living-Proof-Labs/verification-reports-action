@@ -22,8 +22,8 @@ jsonschema-specifications==2025.9.1 \
     --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe \
     --hash=sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d
     # via jsonschema
-livingproof-capability-report @ https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.16.0/livingproof_capability_report-3.16.0-py3-none-any.whl#sha256=bcdb10c64398fbbf8fc049833cc000ce7bf24585702c8388eb5b18ea60876878 \
-    --hash=sha256:bcdb10c64398fbbf8fc049833cc000ce7bf24585702c8388eb5b18ea60876878
+livingproof-capability-report @ https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.17.0/livingproof_capability_report-3.17.0-py3-none-any.whl#sha256=6d5baaca63f4a7fc6ac79113985ea6b3c05982243fe3730295e678483e6de095 \
+    --hash=sha256:6d5baaca63f4a7fc6ac79113985ea6b3c05982243fe3730295e678483e6de095
     # via -r site/requirements.in
 livingproof-common @ https://github.com/Living-Proof-Labs/livingproof-common/releases/download/v1.0.0/livingproof_common-1.0.0-py3-none-any.whl#sha256=8b7795748b54eeb89610f3716245f45db48ac0474465a5abbf974e7075c1476c \
     --hash=sha256:8b7795748b54eeb89610f3716245f45db48ac0474465a5abbf974e7075c1476c

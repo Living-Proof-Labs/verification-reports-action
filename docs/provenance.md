@@ -30,13 +30,13 @@ For each input the plan asks GitHub for the Release named by the tag, peels the 
 
 `contents: read` is the workflow permission. The plan does not ask for `attestations: read`, because every caller of this reusable workflow would have to grant that permission before the plan job could start.
 
-The capability-verifier `uses:` lines stay a full commit SHA. GitHub rejects an expression there, so the plan cannot swap the called workflow. After the tag peels, that commit must be `93a490d82ae50e4c551873dfcfaa778adcd5b689` (`v2.13.0`). Any other commit fails before a trial. Renovate's GitHub Actions manager bumps that one line, SHA and `# vX.Y.Z` comment together. The lock's verifier tag must peel to the same commit. No lock hash is rewritten.
+The capability-verifier `uses:` lines stay a full commit SHA. GitHub rejects an expression there, so the plan cannot swap the called workflow. After the tag peels, that commit must be `bd6be5217b52b1348b4dc23613ee06d44bed9519` (`v2.14.0`). Any other commit fails before a trial. Renovate's GitHub Actions manager bumps that one line, SHA and `# vX.Y.Z` comment together. The lock's verifier tag must peel to the same commit. No lock hash is rewritten.
 
 ## Tag bump
 
-capability-verifier v2.13.0 accepts `verifier-commit`, `verifier-image`, `reporter-image`, and `evaluator-commit`. The plan passes the commit and the `image:semver@sha256` ref it resolved. The lock fields those inputs replace are refused when present: `releases.verifier.commit`, `releases.verifier.image`, `releases.verifier.digest`, `releases.reporter.image`, `releases.reporter.digest`, and `evaluators.livingproof-evaluator-scenario.commit`. A one-line edit of the verifier tag or the scenario-evaluator tag therefore needs no relock of a commit or digest.
+capability-verifier v2.14.0 accepts `verifier-commit`, `verifier-image`, `reporter-image`, and `evaluator-commit`. The plan passes the commit and the `image:semver@sha256` ref it resolved. The lock fields those inputs replace are refused when present: `releases.verifier.commit`, `releases.verifier.image`, `releases.verifier.digest`, `releases.reporter.image`, `releases.reporter.digest`, and `evaluators.livingproof-evaluator-scenario.commit`. A one-line edit of the verifier tag or the scenario-evaluator tag therefore needs no relock of a commit or digest.
 
-These fields stay, because v2.13.0 still reads them and has no input for them. A value that differs from the resolved tag is refused:
+These fields stay, because v2.14.0 still reads them and has no input for them. A value that differs from the resolved tag is refused:
 
 - `releases.runner.commit`
 - `releases.specs.commit` and `releases.specs.files`

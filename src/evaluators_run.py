@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 OUTCOMES = frozenset({"result", "refused", "failure"})
 REPORTER_IMAGE = "ghcr.io/living-proof-labs/livingproof-capability-report"
@@ -99,27 +99,61 @@ def place_lines(report_dir: Path) -> None:
     place_integrity_lines(report_dir)
 
 
-def write_report_checksums(report_dir: Path) -> None:
-    """Hash report.* and thresholds.json, the files capability-verifier sums after placement."""
+def write_report_checksums(report_dir: Path, bundle: dict | None = None) -> None:
+    """Hash report files, thresholds.json, and each cited advisory details file.
+
+    Details files come from ``bundle.assessment.advisory_results``. One result
+    or a list is accepted. Only the cited relative paths are listed, not a glob.
+    """
+    from details_files import DetailsPathError, cited_details_uris, safe_relative
+
     lines = []
+    seen: set[str] = set()
+
+    def add(relative: str, data: bytes) -> None:
+        if relative in seen:
+            return
+        seen.add(relative)
+        lines.append(f"{hashlib.sha256(data).hexdigest()}  {relative}")
+
     for name in sorted(path.name for path in report_dir.glob("report.*") if path.is_file()):
-        digest = hashlib.sha256((report_dir / name).read_bytes()).hexdigest()
-        lines.append(f"{digest}  {name}")
+        add(name, (report_dir / name).read_bytes())
     thresholds = sorted(
         path.relative_to(report_dir).as_posix()
         for path in report_dir.rglob("thresholds.json")
-        if path.is_file()
+        if path.is_file() and not path.is_symlink()
     )
     for relative in thresholds:
-        digest = hashlib.sha256((report_dir / relative).read_bytes()).hexdigest()
-        lines.append(f"{digest}  {relative}")
+        add(relative, (report_dir / relative).read_bytes())
+    cited: list[str] = []
+    for uri in cited_details_uris(bundle or {}):
+        try:
+            relative = safe_relative(uri).as_posix()
+        except DetailsPathError as exc:
+            raise RuntimeError(str(exc)) from exc
+        if relative not in seen and relative not in cited:
+            cited.append(relative)
+    for relative in sorted(cited):
+        current = report_dir
+        for part in PurePosixPath(relative).parts:
+            current = current / part
+            if current.is_symlink():
+                raise RuntimeError(f"cited details file {relative} is a symlink")
+        if not current.is_file():
+            raise RuntimeError(f"cited details file {relative} is missing")
+        add(relative, current.read_bytes())
     (report_dir / "SHA256SUMS").write_text(
         "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
     )
 
 
 def loader_command(
-    lines_file: Path, evidence: Path, out: Path, bundle: Path, media_dir: Path | None
+    lines_file: Path,
+    evidence: Path,
+    out: Path,
+    bundle: Path,
+    report_dir: Path,
+    media_dir: Path | None,
 ) -> list[str]:
     command = [
         "uv",
@@ -137,6 +171,8 @@ def loader_command(
         str(out),
         "--bundle",
         str(bundle),
+        "--report-dir",
+        str(report_dir),
     ]
     if media_dir is not None:
         command += ["--media-dir", str(media_dir)]
@@ -198,7 +234,7 @@ def render_with_reporter(
 ) -> None:
     """Render into an empty directory, then replace the downloaded report files.
 
-    Reporter 3.15.4 refuses to overwrite an ``-o`` target. The capability-report
+    Reporter 3.17.0 refuses to overwrite an ``-o`` target. The capability-report
     artifact already holds ``report.json``, ``report.md`` and ``report.html``, so
     the container writes into a fresh directory mounted at ``/out``.
     """
@@ -378,7 +414,7 @@ def apply_configuration(
         out.mkdir(parents=True, exist_ok=True)
         lines_file = out / "lines.txt"
         lines_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        command = loader_command(lines_file, evidence, out, bundle_path, media_dir)
+        command = loader_command(lines_file, evidence, out, bundle_path, report_dir, media_dir)
         env = os.environ.copy()
         env["PYTHONPATH"] = "src"
         completed = runner(command, capture_output=True, text=True, env=env)
@@ -398,7 +434,7 @@ def apply_configuration(
         render(image, bundle_path, report_dir, links)
         write_integrity_file(report_dir, bundle)
         place_lines(report_dir)
-        write_report_checksums(report_dir)
+        write_report_checksums(report_dir, bundle)
         return failed
     except AssertionError:
         raise

@@ -12,13 +12,17 @@ import { writePlan } from '../src/plan.mjs';
 
 const ROOT = new URL('..', import.meta.url);
 const LINE = 'Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json';
+const HEALTH_LINE = 'Living-Proof-Labs/livingproof-evaluator-health@v1.2.0/livingproof-evaluator.json';
+const LINES = [LINE, HEALTH_LINE];
 const FORBIDDEN = ['livingproof-evaluator-run', 'livingproof_evaluator_run', 'livingproof-run-integrity'];
-// Health and Scenario names stay in these files for this slice. Later slices shrink this list.
-const HEALTH_AND_SCENARIO_ALLOWLIST = [
-  'src/provenance.mjs',
-  'src/reports_presentation.py',
-  'src/reports_site.py',
+const HEALTH_NAMES = [
+  'livingproof-health',
+  'livingproof-evaluator-health',
+  'livingproof_evaluator_health',
+  'health.json',
 ];
+// Scenario names stay in this file for the next slice.
+const SCENARIO_ALLOWLIST = ['src/provenance.mjs'];
 
 function walk(relative) {
   const absolute = new URL(relative, ROOT);
@@ -27,6 +31,7 @@ function walk(relative) {
     for (const name of readdirSync(current)) {
       const next = path.join(current, name);
       const rel = prefix ? `${prefix}/${name}` : name;
+      if (name === '__pycache__' || name === 'node_modules') continue;
       if (statSync(next).isDirectory()) visit(next, rel);
       else found.push(rel);
     }
@@ -36,14 +41,16 @@ function walk(relative) {
   return found;
 }
 
-test('evaluators.yml is one declaration line and an empty list stays a comment', () => {
+test('evaluators.yml is one line per evaluator and an empty list stays a comment', () => {
   const raw = readFileSync(new URL('../evaluators.yml', import.meta.url), 'utf8');
-  assert.equal(raw, `- ${LINE}\n`);
+  assert.equal(raw, LINES.map((line) => `- ${line}`).join('\n') + '\n');
   const declared = readEvaluatorsFile(new URL('../evaluators.yml', import.meta.url));
-  assert.deepEqual(declared.lines, [LINE]);
+  assert.deepEqual(declared.lines, LINES);
   assert.equal(declared.run, true);
-  assert.equal(declared.input, LINE);
-  const removed = evaluatorsDeclaration(readFileSync(new URL('../evaluators.yml', import.meta.url), 'utf8').replace(LINE, ''));
+  assert.equal(declared.input, LINES.join('\n'));
+  let emptied = raw;
+  for (const line of LINES) emptied = emptied.replace(line, '');
+  const removed = evaluatorsDeclaration(emptied);
   assert.deepEqual(removed.lines, []);
   assert.equal(removed.run, false);
   assert.equal(removed.input, EVALUATORS_SENTINEL);
@@ -121,7 +128,7 @@ test('no evaluators input ignores this repository file', async () => {
 test('a caller path or an inline list is the declaration', () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
   const fromFile = resolveCallerEvaluators('evaluators.yml', root);
-  assert.deepEqual(fromFile.lines, [LINE]);
+  assert.deepEqual(fromFile.lines, LINES);
   assert.equal(fromFile.run, true);
   const inline = resolveCallerEvaluators(LINE, root);
   assert.deepEqual(inline.lines, [LINE]);
@@ -134,24 +141,23 @@ test('a caller path or an inline list is the declaration', () => {
   assert.match(release, /evaluators: evaluators\.yml/);
 });
 
-test('health off reuses the one evaluated report instead of running the loader again', () => {
+test('advisory off re-runs collect on the same artifacts with non-advisory lines', () => {
   const verify = readFileSync(new URL('../.github/workflows/verify.yml', import.meta.url), 'utf8');
   const report = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
   const smoke = verify.slice(verify.indexOf('\n  g1-smoke:\n'), verify.indexOf('\n  g1-smoke-check:\n'));
   const check = verify.slice(verify.indexOf('\n  g1-smoke-check:\n'));
   const collect = report.slice(report.indexOf('\n  collect:\n'));
-  const artifact = smoke.match(/\n {6}artifact-name: (\S+)\n/);
-  assert.ok(artifact, 'g1-smoke does not name its report artifact');
-  const evaluated = `${artifact[1]}-evaluated-reports`;
+  assert.match(smoke, /evaluators: evaluators\.yml/);
   assert.match(collect, /name: \$\{\{ inputs\.artifact-name \}\}-evaluated-reports/);
-  assert.match(collect, /path: downloaded\/reports/);
-  const evaluatorsAt = collect.indexOf('- id: evaluators');
-  const uploadAt = collect.indexOf('inputs.artifact-name }}-evaluated-reports');
-  const collectAt = collect.indexOf('- id: collect');
-  assert.ok(evaluatorsAt !== -1 && uploadAt > evaluatorsAt && collectAt > uploadAt);
-  assert.match(check, new RegExp(`name: ${evaluated}\\n`));
-  assert.doesNotMatch(check, /evaluators_run\.py/);
-  assert.doesNotMatch(check, /pattern: vra-unitree-g1-stock-mujoco-hallway-capability-report-/);
+  assert.match(check, /python tools\/drop_advisory_lines\.py evaluators\.yml/);
+  assert.match(check, /src\/evaluators_run\.py/);
+  assert.match(check, /node src\/collect\.mjs/);
+  assert.match(check, /python tools\/compare_integrity\.py/);
+  assert.match(check, /pattern: vra-\*-capability-report-\*/);
+  assert.match(check, /pattern: vra-\*-verified-\*/);
+  assert.match(check, /pattern: vra-\*-evidence-\*/);
+  assert.doesNotMatch(check, /health/i);
+  assert.doesNotMatch(verify, /health-smoke/);
 });
 
 test('an inline empty list is no evaluators', () => {
@@ -162,32 +168,38 @@ test('an inline empty list is no evaluators', () => {
   assert.equal(emptyList.input, EVALUATORS_SENTINEL);
 });
 
-test('action code does not name the run evaluator', () => {
+test('action code does not name an evaluator', () => {
   const hits = [];
   for (const relative of ['src', 'action.yml', '.github/workflows']) {
     for (const file of walk(relative)) {
       const text = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
-      for (const name of FORBIDDEN) {
+      const names = SCENARIO_ALLOWLIST.includes(file) ? FORBIDDEN : [...FORBIDDEN, ...HEALTH_NAMES];
+      for (const name of names) {
         if (text.includes(name)) hits.push(`${file}: ${name}`);
       }
+      if (/\bhealth\b/i.test(text)) hits.push(`${file}: health`);
     }
   }
   assert.deepEqual(hits, []);
-  assert.deepEqual(HEALTH_AND_SCENARIO_ALLOWLIST, [
-    'src/provenance.mjs',
-    'src/reports_presentation.py',
-    'src/reports_site.py',
-  ]);
-  const markers = {
-    'src/provenance.mjs': 'livingproof-evaluator-scenario',
-    'src/reports_presentation.py': 'livingproof-health',
-    'src/reports_site.py': 'livingproof-health',
-  };
-  for (const [file, marker] of Object.entries(markers)) {
-    const text = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
-    assert.match(text, new RegExp(marker));
-    for (const name of FORBIDDEN) assert.equal(text.includes(name), false, file);
-  }
+  assert.deepEqual(SCENARIO_ALLOWLIST, ['src/provenance.mjs']);
+  const scenario = readFileSync(new URL('../src/provenance.mjs', import.meta.url), 'utf8');
+  assert.match(scenario, /livingproof-evaluator-scenario/);
+  for (const name of FORBIDDEN) assert.equal(scenario.includes(name), false);
+  assert.doesNotMatch(scenario, /\bhealth\b/i);
+});
+
+test('pins name capability-verifier v2.14.0 and the reporter v3.17.0', () => {
+  const report = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
+  const lock = JSON.parse(readFileSync(new URL('./smoke/g1/unitree-g1-stock-mujoco-hallway.lock.json', import.meta.url), 'utf8'));
+  const sha = 'bd6be5217b52b1348b4dc23613ee06d44bed9519';
+  assert.equal(VERIFIER_WORKFLOW_SHA, sha);
+  assert.equal(VERIFIER_WORKFLOW_TAG, 'v2.14.0');
+  assert.match(report, new RegExp(`walk-hallway\\.yml@${sha} # v2\\.14\\.0`));
+  assert.match(report, new RegExp(`scenario\\.yml@${sha} # v2\\.14\\.0`));
+  assert.match(report, new RegExp(`ref: ${sha}`));
+  assert.equal(lock.releases.reporter.tag, 'v3.17.0');
+  assert.equal(lock.releases.reporter.commit, '5d6aed964c0eea1094caeec24e797808b2d0c3fb');
+  assert.equal(lock.releases.verifier.tag, 'v2.14.0');
 });
 
 test('a multiline plan output uses the github delimiter form', () => {

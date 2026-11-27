@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -117,17 +118,151 @@ def print_view(label: str, document: dict) -> None:
     print(json.dumps(shown["findings"], indent=2, sort_keys=True))
 
 
+ADVISORY_CUE = re.compile(r"""eval-cue['"]>Advisory<""")
+NOT_RUN = re.compile(r"NOT RUN")
+
+
+def run_folders(root: Path) -> dict[str, Path]:
+    found = {}
+    for path in sorted(root.rglob("run.json")):
+        if path.is_file() and not path.is_symlink():
+            found[path.parent.relative_to(root).as_posix()] = path.parent
+    return found
+
+
+def _load(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def file_bytes(folder: Path, relative: str) -> dict[str, bytes]:
+    base = folder / relative
+    if not base.exists():
+        return {}
+    found = {}
+    paths = [base] if base.is_file() else sorted(item for item in base.rglob("*") if item.is_file())
+    for path in paths:
+        if path.is_symlink():
+            raise SystemExit(f"{path} is a symlink")
+        found[path.relative_to(folder).as_posix()] = path.read_bytes()
+    return found
+
+
+def compare_on_off(
+    on_root: Path,
+    off_root: Path,
+    *,
+    grade: str | None = None,
+    advisory_lines: int | None = None,
+    grades: str | None = None,
+) -> int:
+    """Compare two collected reports. Exit 0 when grade, scenario, integrity and evidence match.
+
+    The on report has one advisory card per advisory line. The off report has
+    none, and no extra NOT RUN placeholder.
+    """
+    on_runs = run_folders(on_root)
+    off_runs = run_folders(off_root)
+    if on_runs.keys() != off_runs.keys() or not on_runs:
+        print(f"run folders differ: {sorted(on_runs)} vs {sorted(off_runs)}")
+        return 1
+    failed = False
+    for key in sorted(on_runs):
+        on = on_runs[key]
+        off = off_runs[key]
+        on_report = _load(on / "report.json")
+        off_report = _load(off / "report.json")
+        on_grades = [
+            item.get("grade") for item in on_report.get("summaries") or [] if isinstance(item, dict)
+        ]
+        off_grades = [
+            item.get("grade")
+            for item in off_report.get("summaries") or []
+            if isinstance(item, dict)
+        ]
+        if on_grades != off_grades:
+            print(f"{key}: grades differ {on_grades} vs {off_grades}")
+            failed = True
+        if grade is not None and grade not in on_grades:
+            print(f"{key}: grade is {on_grades}, expected {grade}")
+            failed = True
+        on_bundle = on_report.get("source_bundle") if isinstance(on_report, dict) else {}
+        off_bundle = off_report.get("source_bundle") if isinstance(off_report, dict) else {}
+        if not isinstance(on_bundle, dict) or not isinstance(off_bundle, dict):
+            print(f"{key}: report has no source bundle")
+            return 1
+        if on_bundle.get("results") != off_bundle.get("results"):
+            print(f"{key}: scenario results differ")
+            failed = True
+        on_integrity = documents_from_bundle(on_bundle)
+        off_integrity = documents_from_bundle(off_bundle)
+        if len(on_integrity) != len(off_integrity) or any(
+            different(left, right) for left, right in zip(on_integrity, off_integrity)
+        ):
+            print(f"{key}: Run Integrity differs")
+            failed = True
+        if file_bytes(on, "evidence") != file_bytes(off, "evidence"):
+            print(f"{key}: evidence bytes differ")
+            failed = True
+        on_html = (on / "report.html").read_text(encoding="utf-8")
+        off_html = (off / "report.html").read_text(encoding="utf-8")
+        on_cards = len(ADVISORY_CUE.findall(on_html))
+        off_cards = len(ADVISORY_CUE.findall(off_html))
+        if advisory_lines is not None and on_cards != advisory_lines:
+            print(f"{key}: advisory cards {on_cards}, expected {advisory_lines}")
+            failed = True
+        if off_cards != 0:
+            print(f"{key}: advisory-off report has {off_cards} advisory cards")
+            failed = True
+        if len(NOT_RUN.findall(on_html)) != len(NOT_RUN.findall(off_html)):
+            print(f"{key}: NOT RUN placeholder differs")
+            failed = True
+        if "placeholder" in off_html.lower():
+            print(f"{key}: advisory-off report contains a placeholder")
+            failed = True
+    if grades:
+        parsed = json.loads(grades)
+        if not isinstance(parsed, dict) or not parsed:
+            print("grades output is empty")
+            return 1
+        if grade is not None and any(value != grade for value in parsed.values()):
+            print(f"grades output is not {grade}: {parsed}")
+            failed = True
+    if failed:
+        return 1
+    print("no difference")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--evidence", type=Path, required=True)
+    parser.add_argument("--evidence", type=Path)
     parser.add_argument("--media", type=Path)
-    parser.add_argument("--bundle", type=Path, required=True)
+    parser.add_argument("--bundle", type=Path)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument(
         "--evaluator", type=Path, default=Path("/tmp/livingproof-evaluator-run-v1.9.0")
     )
     parser.add_argument("--out", type=Path, default=Path("/tmp/integrity-previous.json"))
+    parser.add_argument("--on", type=Path, help="collected report with advisory lines")
+    parser.add_argument("--off", type=Path, help="collected report without advisory lines")
+    parser.add_argument("--grade", help="robot grade both reports must show")
+    parser.add_argument(
+        "--advisory-lines", type=int, help="advisory cards expected on the on report"
+    )
+    parser.add_argument("--grades", help="JSON grade map from the on workflow")
     args = parser.parse_args(argv)
+    if args.on is not None or args.off is not None:
+        if args.on is None or args.off is None:
+            parser.error("--on and --off are used together")
+        return compare_on_off(
+            args.on,
+            args.off,
+            grade=args.grade,
+            advisory_lines=args.advisory_lines,
+            grades=args.grades,
+        )
+    if args.evidence is None or args.bundle is None:
+        parser.error("--evidence and --bundle are required")
     previous = run_previous(checkout(args.evaluator), args.evidence, args.media, args.out)
     bundle = json.loads(args.bundle.read_text(encoding="utf-8"))
     stored = documents_from_bundle(bundle)

@@ -12,8 +12,7 @@ dev = [
   "pytest>=8.3.4",
   "pytest-timeout>=2.3.1",
   "ruff>=0.8.4",
-  "playwright==1.56.0",
-  "livingproof-capability-report==3.16.0",
+  "livingproof-capability-report==3.17.0",
   "livingproof-common==1.0.0",
 ]
 docs = [
@@ -38,5 +37,5 @@ src = ["src", "tools", "tests"]
 select = ["E", "F", "I", "W"]
 
 [tool.uv.sources]
-livingproof-capability-report = { url = "https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.16.0/livingproof_capability_report-3.16.0-py3-none-any.whl" }
+livingproof-capability-report = { url = "https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.17.0/livingproof_capability_report-3.17.0-py3-none-any.whl" }
 livingproof-common = { url = "https://github.com/Living-Proof-Labs/livingproof-common/releases/download/v1.0.0/livingproof_common-1.0.0-py3-none-any.whl" }
