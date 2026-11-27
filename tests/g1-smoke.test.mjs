@@ -363,6 +363,8 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
   assert.equal(site.needs, 'action-smoke');
   const siteDownload = site.steps.find((step) => step.uses && step.uses.startsWith('actions/download-artifact@'));
   assert.equal(siteDownload.with.name, 'verification-report');
+  const siteBuild = site.steps.find((step) => step.uses === './site');
+  assert.equal(siteBuild.with['reset-history'], 'true');
 
   assert.equal(reportWorkflow.on.workflow_call.inputs['artifact-name'].default, 'verification-report');
   const collectSteps = reportWorkflow.jobs.collect.steps;
