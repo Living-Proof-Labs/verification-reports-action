@@ -33,7 +33,6 @@ from reports_common import (
     site_path,
 )
 from reports_render import (
-    ARCHIVED_REPORTS_URL,
     DOCS_HOME_URL,
     _evaluator_documents,
     _history_page_html,
@@ -61,7 +60,6 @@ from reports_restore import (
 
 __all__ = [
     "ALLOWED_DEPLOY_EVENTS",
-    "ARCHIVED_REPORTS_URL",
     "DEFAULT_PAGES_JOBS",
     "DOCS_HOME_URL",
     "MARKER",

@@ -281,7 +281,7 @@ def _card_aria_labels(index_html: str) -> list[str]:
 # ---------------------------------------------------------------- index & single-robot layout
 
 
-def test_single_robot_index_orders_failures_first_and_links_archived_history(tmp_path: Path):
+def test_single_robot_index_orders_failures_first(tmp_path: Path):
     runs_in = tmp_path / "incoming"
     _make_run_folder(
         runs_in,
@@ -351,12 +351,8 @@ def test_single_robot_index_orders_failures_first_and_links_archived_history(tmp
         "Climb stairs, latest report (Not supported)",
     ]
 
-    # Archived history link is present and points to the exact archived reports index.
-    assert (
-        'href="https://docs.livingprooflabs.com/livingproof-verification/reports/index.html"'
-        in index
-    )
-    assert "Earlier history" in index
+    assert "livingproof-verification/" not in index
+    assert "Earlier history" not in index
 
 
 def test_single_robot_constraint_rejects_mixed_robots(tmp_path: Path):
@@ -372,7 +368,8 @@ def test_index_all_pass_and_empty_states(tmp_path: Path):
     empty_html = site_tool._index_page_html({})
     assert '<p class="status">No verification reports published yet.</p>' in empty_html
     assert 'class="all-pass"' not in empty_html
-    assert site_tool.ARCHIVED_REPORTS_URL in empty_html
+    assert "livingproof-verification/" not in empty_html
+    assert "Earlier history" not in empty_html
 
     runs_in = tmp_path / "incoming"
     _make_run_folder(

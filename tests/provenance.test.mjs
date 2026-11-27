@@ -1644,29 +1644,30 @@ test('a bundle_url download times out', async () => {
   );
 });
 
-test('README names the lock fields that stay and the fields that are refused', () => {
+test('provenance docs name the lock fields that stay and the fields that are refused', () => {
+  const page = readFileSync(new URL('../docs/provenance.md', import.meta.url), 'utf8');
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-  assert.match(readme, /verifier-commit/);
-  assert.match(readme, /releases\.verifier\.commit/);
-  assert.match(readme, /releases\.reporter\.commit/);
-  assert.match(readme, /releases\.runner\.commit/);
-  assert.match(readme, /releases\.specs\.files/);
-  assert.match(readme, /sources\.parameters\.sha256/);
-  assert.match(readme, /sources\.world\.sha256/);
-  assert.doesNotMatch(readme, /bumping a tag also means updating that input's commit and digest/);
-  assert.match(readme, /No `report\.json` is written/);
-  assert.match(readme, /livingproof-evaluator-run/);
+  assert.match(page, /verifier-commit/);
+  assert.match(page, /releases\.verifier\.commit/);
+  assert.match(page, /releases\.reporter\.commit/);
+  assert.match(page, /releases\.runner\.commit/);
+  assert.match(page, /releases\.specs\.files/);
+  assert.match(page, /sources\.parameters\.sha256/);
+  assert.match(page, /sources\.world\.sha256/);
+  assert.doesNotMatch(page, /bumping a tag also means updating that input's commit and digest/);
+  assert.match(page, /No `report\.json` is written/);
+  assert.match(page, /livingproof-evaluator-run/);
   assert.match(readme, /docs\/provenance\.md/);
-  assert.match(readme, /`verified`/);
-  assert.match(readme, /`not-published`/);
-  assert.match(readme, /`resolved`/);
-  assert.match(readme, /`fixture`/);
-  assert.match(readme, /attestation matched/);
-  assert.match(readme, /codeload archive of the peeled commit/);
-  assert.match(readme, /synthetic sha256 of those file hashes/);
-  assert.match(readme, /`status: resolved` can sit beside `attestation: not-published`/);
-  assert.match(readme, /GITHUB_TOKEN` from `github\.token`/);
-  assert.match(readme, /That 404 is not recorded as `not-published`/);
+  assert.match(page, /`verified`/);
+  assert.match(page, /`not-published`/);
+  assert.match(page, /`resolved`/);
+  assert.match(page, /`fixture`/);
+  assert.match(page, /attestation matched/);
+  assert.match(page, /codeload archive of the peeled commit/);
+  assert.match(page, /synthetic sha256 of those file hashes/);
+  assert.match(page, /`status: resolved` can sit beside `attestation: not-published`/);
+  assert.match(page, /GITHUB_TOKEN` from `github\.token`/);
+  assert.match(page, /That 404 is not recorded as `not-published`/);
 });
 
 // ---------------------------------------------------------------- va#24: API path traversal

@@ -29,9 +29,6 @@ from reports_common import (
 
 ASSETS_DIR = Path(__file__).resolve().with_name("assets")
 DOCS_HOME_URL = "https://docs.livingprooflabs.com/"
-ARCHIVED_REPORTS_URL = (
-    "https://docs.livingprooflabs.com/livingproof-verification/reports/index.html"
-)
 _REPO_PATH = re.compile(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+")
 
 SITE_NAV_STYLES = """.site-nav {
@@ -916,15 +913,6 @@ def _index_card_html(robot: str, variant: str, records: list[dict]) -> str:
     )
 
 
-def _archived_history_html() -> str:
-    return (
-        '<p class="archived-history">'
-        "Earlier history before per-repository reports is preserved in the "
-        f'<a href="{html.escape(ARCHIVED_REPORTS_URL, quote=True)}">'
-        "archived verification reports</a>.</p>"
-    )
-
-
 def _index_page_html(history: dict[tuple[str, str], list[dict]]) -> str:
     robots = {robot for robot, _ in history}
     robot = _require_single_robot(robots)
@@ -1048,7 +1036,7 @@ def _index_page_html(history: dict[tuple[str, str], list[dict]]) -> str:
         "results",
         "Skip to results",
         masthead,
-        body_html + _archived_history_html(),
+        body_html,
         script_href="open.js",
     )
 

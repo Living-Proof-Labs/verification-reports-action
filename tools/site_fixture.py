@@ -212,10 +212,9 @@ def check_reports_tree(reports_dir: Path) -> list[str]:
         issues.append(f"{site_tool.MARKER} missing")
     else:
         index_text = (reports_dir / "index.html").read_text(encoding="utf-8")
-        if site_tool.ARCHIVED_REPORTS_URL not in index_text:
-            issues.append(
-                f"index.html missing archived history link {site_tool.ARCHIVED_REPORTS_URL}"
-            )
+        for needle in ("livingproof-verification/", "Earlier history"):
+            if needle in index_text:
+                issues.append(f"index.html still contains {needle!r}")
 
     parent_overview = (reports_dir.parent / "index.html").resolve()
     pages = sorted(reports_dir.rglob("*.html"))
