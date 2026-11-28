@@ -169,6 +169,31 @@ def test_a_line_the_loader_refuses_is_recorded_as_not_run_and_fails_the_job(tmp_
     assert missing["evaluator"] == f"{GRADER}\n{INTEGRITY}"
 
 
+def test_a_loader_failure_does_not_list_the_scenario_line_that_was_not_loaded(tmp_path):
+    """The NOT RUN evaluator text is the lines the loader was given."""
+    bundle, evidence, report = _tree(tmp_path)
+
+    def runner(command, **kwargs):
+        del kwargs
+        assert _loader_lines(command) == [INTEGRITY]
+        return subprocess.CompletedProcess(command, 1, "", "refused: no provenance\n")
+
+    failed = apply_configuration(
+        lines=[GRADER, INTEGRITY],
+        evidence=evidence,
+        bundle_path=bundle,
+        report_dir=report,
+        out=tmp_path / "out",
+        provenance_records=_records(),
+        runner=runner,
+        render=_render,
+        select=lambda lines: executable_lines(lines, prepare=fake_prepare),
+    )
+    assert failed is True
+    stored = json.loads(bundle.read_text(encoding="utf-8"))
+    assert stored["assessment"]["integrity_not_run"]["evaluator"] == INTEGRITY
+
+
 def test_the_download_run_gives_the_filter_to_every_configuration(tmp_path):
     seen = []
 
