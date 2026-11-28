@@ -206,3 +206,15 @@ def test_compatible_metric_upgrade_needs_only_declaration_pin(publication):
     assert "<iframe " in (second / "index.html").read_text()
     assert json.loads((second / "report.json").read_bytes())["summaries"][0]["grade"] == "FAIL"
     assert (second / "health.json").read_bytes() == before["health.json"]
+
+
+def test_later_restore_of_upgrade_requires_external_approval(publication):
+    root, publish = publication
+    first = publish(1, "2026-11-28T06:00:00Z")
+    second = publish(2, "2026-11-29T06:00:00Z", version="1.2.1")
+    before_first, before_second = snap(first), snap(second)
+    with pytest.raises(SiteError, match="exact evaluator/trial/asset approval"):
+        publish(3, "2026-11-30T06:00:00Z", version="1.2.1")
+    assert snap(first) == before_first
+    assert snap(second) == before_second
+    assert not (root / "published/unitree-g1/stock-mujoco-hallway/runs/3").exists()
