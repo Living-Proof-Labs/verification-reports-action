@@ -230,9 +230,10 @@ def test_restored_unrelated_evidence_refused_without_writes(case, change):
 @pytest.mark.parametrize(
     "mutation", ["valid", "absent", "identity", "ambiguous", "trial", "digest"]
 )
-def test_dynamic_report_binding(case, mutation):
+def test_dynamic_report_binding(case, mutation, monkeypatch):
     import shutil
 
+    import viewer_release
     from trusted_viewer import (
         apply_declarations,
         derive_declarations,
@@ -270,6 +271,7 @@ def test_dynamic_report_binding(case, mutation):
     spec.update(evaluator=identity, viewer_file="viewer.html")
     registry = folder / "viewers.json"
     registry.write_text(json.dumps([spec]))
+    monkeypatch.setattr(viewer_release, "fetch_release_viewer", lambda _: viewer)
     viewers = load_viewers(registry)
     if mutation in ("identity", "ambiguous", "trial", "digest"):
         with pytest.raises(SiteError):
@@ -382,3 +384,29 @@ def test_site_decorates_only_produced_or_previously_decorated_runs(tmp_path, mon
     )
     assert seen == [{decorated}, {decorated, produced}]
     assert all(old not in selected for selected in seen)
+
+
+@pytest.mark.parametrize("index", [True, False, 1.0, 0, -1, "1"])
+@pytest.mark.parametrize("where", ["report", "recording"])
+@pytest.mark.parametrize("restored", [False, True])
+def test_trial_index_type_parity(case, index, where, restored):
+    folder, pin, viewer = case
+    if restored:
+        install(folder, pin, viewer)
+    report = json.loads((folder / "report.json").read_bytes())
+    if where == "report":
+        report["advisories"][0]["advisory"]["trials"][0]["index"] = index
+    else:
+        data = json.loads((folder / "recording.json").read_bytes())
+        data["trials"][0]["trial"]["index"] = index
+        raw = json.dumps(data).encode()
+        (folder / "recording.json").write_bytes(raw)
+        report["advisories"][0]["advisory"]["details_file"]["sha256"] = sha(raw)
+    raw = json.dumps(report).encode()
+    (folder / "report.json").write_bytes(raw)
+    pin["report_sha256"] = sha(raw)
+    with pytest.raises(SiteError):
+        if restored:
+            revalidate(folder, pin)
+        else:
+            install(folder, pin, viewer)

@@ -68,6 +68,10 @@ def binding(folder, pin):
     if len(unique) != 1:
         raise SiteError("Expected one unambiguous advisory")
     advisory = next(iter(unique.values()))
+    if type(pin["trial"]) is not int or pin["trial"] <= 0:
+        raise SiteError("Trial index must be a positive integer excluding boolean")
+    if any(type(t.get("index")) is not int or t["index"] <= 0 for t in advisory["trials"]):
+        raise SiteError("Report trial index must be a positive integer excluding boolean")
     trials = [t for t in advisory["trials"] if t["index"] == pin["trial"]]
     if len(trials) != 1 or trials[0]["observation_sha256"] not in {
         e["sha256"] for e in result["evidence"]
@@ -96,6 +100,9 @@ def binding(folder, pin):
         or len(recorded_trials) != 1
         or not isinstance(recorded_trials[0], dict)
         or recorded_trials[0].get("format") != expected_format
+        or not isinstance(recorded_trials[0].get("trial"), dict)
+        or type(recorded_trials[0]["trial"].get("index")) is not int
+        or recorded_trials[0]["trial"]["index"] <= 0
         or recorded_trials[0].get("trial") != expected_trial
     ):
         raise SiteError("Recording must contain exactly the selected evidence-bound trial")
@@ -162,6 +169,8 @@ def load_viewers(filename):
     """Executable bytes and evaluator identities come only from the caller."""
     from pathlib import Path
 
+    from viewer_release import fetch_release_viewer
+
     if not filename:
         return []
     location = Path(filename)
@@ -179,11 +188,7 @@ def load_viewers(filename):
         if identity["id"] in seen:
             raise SiteError("Duplicate viewer evaluator declaration")
         seen.add(identity["id"])
-        if not re.fullmatch(r"[A-Za-z0-9_-]+\.html", entry["viewer_file"]):
-            raise SiteError("Viewer must be adjacent to caller registry")
-        raw = read_file(location.parent / entry["viewer_file"])
-        if digest(raw) != entry["viewer_sha256"]:
-            raise SiteError("Viewer differs from caller pin")
+        raw = fetch_release_viewer(entry)
         entry["bytes"] = raw
     return entries
 

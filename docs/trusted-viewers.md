@@ -1,7 +1,8 @@
 # Trusted inline viewers
 
 The optional `trusted-viewers` input to `./site` names a caller-owned JSON registry.
-Each entry pins local viewer HTML by SHA-256, released source tag and commit, and
+Each entry pins a public GitHub release repository, stable tag, exact commit,
+asset basename and SHA-256, and
 an exact advisory evaluator identity (id, version, publisher, kind), plus the
 recording format accepted by that viewer. Evaluators
 provide JSON data; they cannot select or supply executable viewer code.
@@ -33,10 +34,18 @@ unchanged; an existing embedded viewer without its declaration is refused.
 
 This repository's example caller opts into the Health viewer through
 `config/viewers/evaluators.json` in normal G1 verification and documentation
-publishing. The HTML asset is unchanged generated Apache-2.0 output of Health
-v1.2.0, commit `1c21eeb5d3aafdf00e8aa13c55e544a56fe5ab14`, SHA-256
-`9c08b355bd6a90f80a79f1d4369282050473db5ae092ae7ddb41ecf46f490995`.
-It is source-generated reviewed code, not a claimed standalone release asset.
+publishing. The viewer is downloaded from the caller-selected Health release, after checking
+published release metadata, tag-to-commit identity, exact asset name and bounded
+size. Its bytes must match the caller digest before serving. No evaluator URLs
+or executable files are accepted. The Action repository contains no player HTML.
+
+This unpushed consumer preparation depends on Health's standalone-asset PR.
+`viewer_tag` and `viewer_commit` deliberately remain null and fail closed until
+the actual published release is independently verified. The expected deterministic
+asset digest is `9c08b355bd6a90f80a79f1d4369282050473db5ae092ae7ddb41ecf46f490995`;
+that is local build evidence, not released-asset proof. Do not push this incomplete
+caller pin or label it publishable. Once published, fill both exact identities,
+verify the real download, and submit this delta for independent review.
 
 This change is generic Action presentation wiring. It adds no evaluator metric,
 posture criterion, grading, Reporter API change, special retained-history input,

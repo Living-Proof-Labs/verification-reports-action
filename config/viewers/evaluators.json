@@ -6,10 +6,11 @@
       "publisher": "Living Proof Labs",
       "kind": "advisory"
     },
-    "viewer_file": "recorded-viewer-v1_2_0.html",
-    "viewer_tag": "v1.2.0",
-    "viewer_commit": "1c21eeb5d3aafdf00e8aa13c55e544a56fe5ab14",
+    "viewer_tag": null,
+    "viewer_commit": null,
     "viewer_sha256": "9c08b355bd6a90f80a79f1d4369282050473db5ae092ae7ddb41ecf46f490995",
-    "recording_format": "livingproof-evaluator-health/1"
+    "recording_format": "livingproof-evaluator-health/1",
+    "viewer_repository": "Living-Proof-Labs/livingproof-health",
+    "viewer_asset": "livingproof-health-viewer.html"
   }
 ]
