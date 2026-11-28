@@ -243,22 +243,22 @@ test('removing the Scenario line removes it from what both trial workflows are g
   }
 });
 
-test('pins name capability-verifier v3.1.1 and the reporter v3.17.0', () => {
+test('pins name capability-verifier v3.1.3 and the reporter v3.17.0', () => {
   const report = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
   const verify = readFileSync(new URL('../.github/workflows/verify.yml', import.meta.url), 'utf8');
   const lock = JSON.parse(readFileSync(new URL('./smoke/g1/unitree-g1-stock-mujoco-hallway.lock.json', import.meta.url), 'utf8'));
-  const sha = '5b702e5b2aa23338ba1d358692c6be96e97546cf';
+  const sha = '8af49985a71953475e07102e093e9f7857acb17a';
   assert.equal(VERIFIER_WORKFLOW_SHA, sha);
-  assert.equal(VERIFIER_WORKFLOW_TAG, 'v3.1.1');
+  assert.equal(VERIFIER_WORKFLOW_TAG, 'v3.1.3');
   assert.equal(VERIFIER_API_SHA, sha);
-  assert.equal(VERIFIER_API_TAG, 'v3.1.1');
-  assert.match(report, new RegExp(`walk-hallway\\.yml@${sha} # v3\\.1\\.1`));
-  assert.match(report, new RegExp(`scenario\\.yml@${sha} # v3\\.1\\.1`));
-  assert.match(report, new RegExp(`ref: ${VERIFIER_API_SHA} # v3\\.1\\.1`));
-  assert.match(verify, new RegExp(`ref: ${VERIFIER_API_SHA} # v3\\.1\\.1`));
+  assert.equal(VERIFIER_API_TAG, 'v3.1.3');
+  assert.match(report, new RegExp(`walk-hallway\\.yml@${sha} # v3\\.1\\.3`));
+  assert.match(report, new RegExp(`scenario\\.yml@${sha} # v3\\.1\\.3`));
+  assert.match(report, new RegExp(`ref: ${VERIFIER_API_SHA} # v3\\.1\\.3`));
+  assert.match(verify, new RegExp(`ref: ${VERIFIER_API_SHA} # v3\\.1\\.3`));
   assert.equal(lock.releases.reporter.tag, 'v3.17.0');
   assert.equal(lock.releases.reporter.commit, '5d6aed964c0eea1094caeec24e797808b2d0c3fb');
-  assert.equal(lock.releases.verifier.tag, 'v3.1.1');
+  assert.equal(lock.releases.verifier.tag, 'v3.1.3');
 });
 
 test('a multiline plan output uses the github delimiter form', () => {

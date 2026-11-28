@@ -50,7 +50,7 @@ function evidenceFor(pin, recorded) {
 }
 
 const VERIFIER_RELEASE = JSON.parse(
-  readFileSync(new URL('./fixtures/releases/capability-verifier-v3.1.1.json', import.meta.url), 'utf8')
+  readFileSync(new URL('./fixtures/releases/capability-verifier-v3.1.3.json', import.meta.url), 'utf8')
 );
 
 function dropPassedFields(lock) {

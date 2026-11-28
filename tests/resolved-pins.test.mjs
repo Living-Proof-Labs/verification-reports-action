@@ -12,7 +12,7 @@ import { checkPin, collectPins, resolvedTrialInputs } from '../src/provenance.mj
 
 const OTHER = '1111111111111111111111111111111111111111';
 const RELEASE = JSON.parse(
-  readFileSync(new URL('./fixtures/releases/capability-verifier-v3.1.1.json', import.meta.url), 'utf8')
+  readFileSync(new URL('./fixtures/releases/capability-verifier-v3.1.3.json', import.meta.url), 'utf8')
 );
 
 function realLock(id = 'unitree-g1-stock-mujoco-corner-left') {

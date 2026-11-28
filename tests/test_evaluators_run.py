@@ -32,7 +32,7 @@ from evaluators_run import (
     run_downloaded,
 )
 
-PIN = "5b702e5b2aa23338ba1d358692c6be96e97546cf"
+PIN = "8af49985a71953475e07102e093e9f7857acb17a"
 
 
 def verifier_src() -> Path:
@@ -820,15 +820,15 @@ def test_evaluator_timestamps_reach_the_bundle_unchanged(tmp_path):
     assert stamps == {"started_at": started_at, "completed_at": completed_at}
 
 
-API_SHA = "5b702e5b2aa23338ba1d358692c6be96e97546cf"
+API_SHA = "8af49985a71953475e07102e093e9f7857acb17a"
 
 
-def test_the_loader_checkout_is_capability_verifier_v3_1_1():
+def test_the_loader_checkout_is_capability_verifier_v3_1_3():
     assert PIN == API_SHA
     root = Path(__file__).resolve().parents[1]
     for relative in (".github/workflows/report.yml", ".github/workflows/verify.yml"):
         text = (root / relative).read_text(encoding="utf-8")
-        assert f"ref: {API_SHA} # v3.1.1" in text
+        assert f"ref: {API_SHA} # v3.1.3" in text
     checkout = verifier_src().parent
     head = subprocess.check_output(
         ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True
