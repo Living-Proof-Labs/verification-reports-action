@@ -885,3 +885,169 @@ def test_collect_is_called_without_integrity_job(tmp_path):
     assert bundle["assessment"]["runs"][0]["grade"] == "FAIL"
     with pytest.raises(TypeError, match="integrity_job"):
         collect(bundle, tmp_path / "results", tmp_path / "report", integrity_job=None)
+
+
+# ---------------------------------------------------------------- evidence links (#55 b)
+
+RUN_URL = (
+    "https://github.com/Living-Proof-Labs/verification-reports-action/actions/runs/46110994356"
+)
+ARTIFACT_URL = RUN_URL + "/artifacts/"
+
+
+def _real_links_document() -> dict:
+    """The links artifact the verifier workflow uploaded for the real G1 run 46110994356."""
+    return {
+        "run": RUN_URL,
+        "links": [
+            {
+                "label": "MCAP, all 1 trials",
+                "url": ARTIFACT_URL + "15249926376",
+                "kind": "mcap",
+            },
+            {
+                "label": "video",
+                "url": ARTIFACT_URL + "15249856767",
+                "kind": "video",
+                "seed": 1,
+                "status": "FAIL",
+            },
+        ],
+    }
+
+
+def _downloaded_media(download: Path, prefix: str = "vra-unitree-g1-hallway-") -> None:
+    """The media artifacts the real run downloaded, named as the verifier names them."""
+    video = download / "video" / f"{prefix}video-stock-seed-1-fail"
+    video.mkdir(parents=True)
+    (video / "trial-01-fail.mp4").write_bytes(b"mp4")
+    mcap = download / "mcap" / f"{prefix}mcap-stock"
+    (mcap / "mcap").mkdir(parents=True)
+    (mcap / "mcap" / "trial-01.mcap").write_bytes(b"mcap")
+    (mcap / "mcap" / "trial-01.robot.mcap").write_bytes(b"robot")
+    (mcap / "mcap" / "trial-01.binding.json").write_text("{}\n", encoding="utf-8")
+    (mcap / "media.json").write_text("{}\n", encoding="utf-8")
+
+
+def test_artifact_links_become_the_site_paths_of_the_files_the_collect_job_copies(tmp_path):
+    from evaluators_run import site_evidence_links
+
+    download = tmp_path / "downloaded"
+    _downloaded_media(download)
+    source = tmp_path / "evidence-links.json"
+    source.write_text(json.dumps(_real_links_document()) + "\n", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    resolved = site_evidence_links(source, download, "vra-unitree-g1-hallway-", "stock", out)
+    document = json.loads(resolved.read_text(encoding="utf-8"))
+    assert document["run"] == RUN_URL
+    mcap, video = document["links"]
+    assert (mcap["kind"], mcap["label"], mcap["path"]) == (
+        "mcap",
+        "MCAP, all 1 trials",
+        "evidence/mcap/mcap/trial-01.mcap",
+    )
+    assert (video["kind"], video["seed"], video["status"], video["path"]) == (
+        "video",
+        1,
+        "FAIL",
+        "evidence/video/trial-01-fail.mp4",
+    )
+    assert json.loads(source.read_text(encoding="utf-8")) == _real_links_document()
+
+
+def test_each_trial_recording_gets_its_own_link_when_there_are_several(tmp_path):
+    from evaluators_run import site_evidence_links
+
+    download = tmp_path / "downloaded"
+    _downloaded_media(download)
+    extra = download / "mcap" / "vra-unitree-g1-hallway-mcap-stock" / "mcap"
+    (extra / "trial-02.mcap").write_bytes(b"mcap")
+    source = tmp_path / "evidence-links.json"
+    source.write_text(json.dumps(_real_links_document()) + "\n", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    resolved = site_evidence_links(source, download, "vra-unitree-g1-hallway-", "stock", out)
+    links = json.loads(resolved.read_text(encoding="utf-8"))["links"]
+    mcaps = [(link["label"], link["path"]) for link in links if link["kind"] == "mcap"]
+    assert mcaps == [
+        ("MCAP trial-01", "evidence/mcap/mcap/trial-01.mcap"),
+        ("MCAP trial-02", "evidence/mcap/mcap/trial-02.mcap"),
+    ]
+
+
+def test_a_link_with_no_downloaded_file_is_left_for_the_reporter_to_drop(tmp_path):
+    from evaluators_run import site_evidence_links
+
+    download = tmp_path / "downloaded"
+    download.mkdir()
+    document = _real_links_document()
+    document["links"].append({"label": "notes", "path": "evidence/notes.txt", "kind": "note"})
+    source = tmp_path / "evidence-links.json"
+    source.write_text(json.dumps(document) + "\n", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    resolved = site_evidence_links(source, download, "vra-unitree-g1-hallway-", "stock", out)
+    assert json.loads(resolved.read_text(encoding="utf-8")) == document
+
+
+def test_a_failing_video_is_matched_by_trial_and_status_not_by_name_order(tmp_path):
+    from evaluators_run import site_evidence_links
+
+    download = tmp_path / "downloaded"
+    _downloaded_media(download)
+    other = download / "video" / "vra-unitree-g1-hallway-video-stock-seed-2-pass"
+    other.mkdir(parents=True)
+    (other / "trial-02-pass.mp4").write_bytes(b"mp4")
+    source = tmp_path / "evidence-links.json"
+    source.write_text(json.dumps(_real_links_document()) + "\n", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    resolved = site_evidence_links(source, download, "vra-unitree-g1-hallway-", "stock", out)
+    video = json.loads(resolved.read_text(encoding="utf-8"))["links"][1]
+    assert video["path"] == "evidence/video/trial-01-fail.mp4"
+
+
+def test_the_reporter_renders_the_site_paths_not_the_artifact_addresses(tmp_path):
+    download = tmp_path / "downloaded"
+    prefix = "vra-unitree-g1-hallway-"
+    _downloaded_media(download, prefix)
+    links = download / "links" / f"{prefix}links-stock" / "evidence-links.json"
+    links.parent.mkdir(parents=True)
+    links.write_text(json.dumps(_real_links_document()) + "\n", encoding="utf-8")
+    evidence = download / "evidence" / f"{prefix}evidence-stock" / "manifest.json"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("{}\n", encoding="utf-8")
+    bundle_path = download / "verified" / f"{prefix}verified-stock" / "bundle" / "manifest.json"
+    bundle_path.parent.mkdir(parents=True)
+    bundle_path.write_text(json.dumps({"assessment": {"runs": [{}]}}) + "\n", encoding="utf-8")
+    _verdict(download / "reports" / f"{prefix}capability-report-stock")
+    seen = {}
+
+    def render(image, manifest, report_dir, links):
+        del image, manifest
+        seen["links"] = json.loads(Path(links).read_text(encoding="utf-8"))
+        _verdict(report_dir)
+
+    run_downloaded(
+        {
+            "evaluators": {"lines": ["owner/repo@v1.2.3/descriptor.json"], "input": "x"},
+            "definitions": [
+                {
+                    "execution": "capability-verifier",
+                    "id": "hallway",
+                    "path": "hallway.toml",
+                    "artifactPrefix": prefix,
+                    "configurations": ["stock"],
+                    "provenance": _records(),
+                }
+            ],
+        },
+        download,
+        tmp_path / "out",
+        runner=_provenance_runner,
+        render=render,
+    )
+    paths = [link.get("path") for link in seen["links"]["links"]]
+    assert paths == ["evidence/mcap/mcap/trial-01.mcap", "evidence/video/trial-01-fail.mp4"]
+    assert seen["links"]["run"] == RUN_URL

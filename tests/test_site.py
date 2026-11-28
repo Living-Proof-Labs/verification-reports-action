@@ -861,7 +861,8 @@ def test_artifact_wording_in_rendered_page_text_is_refused(tmp_path: Path):
     assert site_tool.public_page_problems(reports) == ["index.html mentions an artifact"]
     assert site_tool.html_is_dirty(page.read_text(encoding="utf-8"))
     page.write_text(
-        "<p><a href='https://github.com/org/repo/actions/runs/1'>run</a></p>", encoding="utf-8"
+        "<p><a href='https://github.com/org/repo/actions/runs/1/job/9'>job</a></p>",
+        encoding="utf-8",
     )
     assert site_tool.public_page_problems(reports) == ["index.html links to /actions/"]
 
@@ -3050,3 +3051,101 @@ def test_invalid_utf8_report_html_is_refused_with_file_and_byte_offset(tmp_path:
     assert not list(reports_dir.rglob("runs/930/index.html"))
     assert not (reports_dir / "index.html").exists()
     assert not (reports_dir / "site.json").exists()
+
+
+CI_RUN = "https://github.com/org/repo/actions/runs/7"
+
+
+def test_public_page_check_allows_the_ci_run_address_and_nothing_else_under_actions(
+    tmp_path: Path,
+):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    page = reports / "index.html"
+    page.write_text(f"<p><a href='{CI_RUN}'>CI run</a> {CI_RUN}.</p>", encoding="utf-8")
+    assert site_tool.public_page_problems(reports) == []
+    assert not site_tool.html_is_dirty(page.read_text(encoding="utf-8"))
+    for bad in (
+        CI_RUN + "/job/5",
+        CI_RUN + "/attempts/2",
+        CI_RUN + "/artifacts/101",
+        CI_RUN + "8",
+        CI_RUN + "?check_suite_focus=true",
+        "https://github.com/org/repo/actions/workflows/ci.yml",
+        "https://github.com/org/repo/actions/runs/",
+    ):
+        page.write_text(f"<p><a href='{CI_RUN}'>CI run</a> <a href='{bad}'>x</a></p>", "utf-8")
+        assert "index.html links to /actions/" in site_tool.public_page_problems(reports), bad
+        assert site_tool.html_is_dirty(page.read_text(encoding="utf-8")), bad
+
+
+def test_the_ci_run_link_is_published_and_artifact_addresses_still_are_not(tmp_path: Path):
+    runs_in = tmp_path / "in"
+    folder = _make_run_folder(
+        runs_in,
+        "hallway",
+        html_override=(
+            "<!doctype html><html><body><main><div class='card evidence'><h2>Evidence</h2><ul>"
+            f"<li><a href='{CI_RUN}'>CI run</a></li>"
+            f"<li><a href='{CI_RUN}/artifacts/101'>MCAP</a></li>"
+            "</ul></div></main></body></html>\n"
+        ),
+    )
+    rep = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    rep["evidence_links"] = {
+        "run": CI_RUN,
+        "links": [{"label": "MCAP", "kind": "mcap", "url": CI_RUN + "/artifacts/101"}],
+    }
+    (folder / "report.json").write_text(json.dumps(rep), encoding="utf-8")
+    (folder / "report.md").write_text(
+        f"**Evidence:** [CI run]({CI_RUN}) · [MCAP]({CI_RUN}/artifacts/101)\n", encoding="utf-8"
+    )
+    (folder / "SHA256SUMS").write_text(
+        "".join(
+            f"{hashlib.sha256((folder / n).read_bytes()).hexdigest()}  {n}\n"
+            for n in site_tool.REPORT_FILES
+        ),
+        encoding="utf-8",
+    )
+    reports_dir = tmp_path / "reports"
+    site_tool.build(reports_dir, runs_in)
+    run = next(reports_dir.glob("*/*/runs/*"))
+    page = (run / "index.html").read_text(encoding="utf-8")
+    assert f"<a href='{CI_RUN}'>CI run</a>" in page
+    assert "/artifacts/" not in page
+    assert f"<a href='{CI_RUN}'>CI run</a>" in (run / "report.html").read_text(encoding="utf-8")
+    assert f"[CI run]({CI_RUN})" in (run / "report.md").read_text(encoding="utf-8")
+    assert "/artifacts/" not in (run / "report.md").read_text(encoding="utf-8")
+    assert (
+        json.loads((run / "report.json").read_text(encoding="utf-8"))["evidence_links"]["run"]
+        == CI_RUN
+    )
+    assert site_tool.public_page_problems(reports_dir) == []
+
+
+def test_an_evidence_link_to_a_file_the_site_did_not_publish_is_plain_text(tmp_path: Path):
+    runs_in = tmp_path / "in"
+    _make_run_folder(
+        runs_in,
+        "hallway",
+        evidence_files={"video/kept.mp4": b"mp4"},
+        html_override=(
+            "<!doctype html><html><body><main><div class='card evidence'><h2>Evidence</h2><ul>"
+            "<li class='evidence-video'><p class='evidence-label'>kept clip</p>"
+            "<video controls preload='metadata' src='evidence/video/kept.mp4'></video></li>"
+            "<li class='evidence-video'><p class='evidence-label'>lost clip</p>"
+            "<video controls preload='metadata' src='evidence/video/lost.mp4'></video></li>"
+            "<li><a href='evidence/video/lost.mp4'>lost link</a></li>"
+            "</ul></div></main></body></html>\n"
+        ),
+    )
+    reports_dir = tmp_path / "reports"
+    site_tool.build(reports_dir, runs_in)
+    run = next(reports_dir.glob("*/*/runs/*"))
+    for name in ("index.html", "report.html"):
+        page = (run / name).read_text(encoding="utf-8")
+        assert "src='evidence/video/kept.mp4'" in page
+        assert "lost.mp4" not in page
+        assert "lost clip" in page
+        assert "lost link" in page
+        assert "<a href='evidence/video/lost.mp4'" not in page
