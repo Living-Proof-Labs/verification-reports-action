@@ -160,17 +160,20 @@ def _has_trials_cell_link(page: str, relative: str) -> bool:
     return False
 
 
+_VIDEO_ELEMENT = re.compile(r"<video\b(?:(?!</video\b).)*</video\s*>", re.I | re.S)
+
+
 def _has_video_player(page: str, relative: str) -> bool:
-    return (
-        re.search(
-            r"<video\b(?:(?!</video\b).)*"
-            + re.escape(relative)
-            + r"(?:(?!</video\b).)*</video\s*>",
-            page,
-            re.I | re.S,
-        )
-        is not None
+    """A <video> (or a <source> inside it) whose src is exactly the published path."""
+    value = re.escape(relative)
+    source = re.compile(
+        r"<(?:video|source)\b"
+        # whole attributes, so a src inside another attribute's value is not read
+        r"(?:\s+(?!src\b)[^\s=>/]+(?:\s*=\s*(?:'[^']*'|\"[^\"]*\"|[^\s'\">]+))?)*"
+        r"\s+src\s*=\s*(?:'" + value + r"'|\"" + value + r"\"|" + value + r"(?=[\s>]))",
+        re.I,
     )
+    return any(source.search(element.group(0)) for element in _VIDEO_ELEMENT.finditer(page))
 
 
 def run_page_problems(reports: Path, repository: str | None = None) -> list[str]:
