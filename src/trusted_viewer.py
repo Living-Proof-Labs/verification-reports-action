@@ -276,8 +276,30 @@ def validate_restored(folder, viewers):
     )
 
 
+def discover_viewers(root):
+    """Only standalone reports and the production g1 subtree are supported.
+
+    Find all named asset directories first, so an unexpected prefix cannot evade
+    authentication by falling outside a positive glob.
+    """
+    found = []
+    for target in root.rglob(DIRECTORY):
+        parts = target.relative_to(root).parts
+        relative = parts[1:] if len(parts) == 6 and parts[0] == "g1" else parts
+        if (
+            len(relative) != 5
+            or relative[2] != "runs"
+            or relative[4] != DIRECTORY
+            or not target.is_dir()
+            or target.is_symlink()
+        ):
+            raise SiteError("Unsupported trusted viewer history layout")
+        found.append(target)
+    return sorted(found)
+
+
 def validate_history(root, viewers):
-    for target in root.glob("*/*/runs/*/trusted-viewer"):
+    for target in discover_viewers(root):
         validate_restored(target.parent, viewers)
 
 
@@ -327,7 +349,7 @@ def publication_approvals(root, viewers):
     import copy
 
     approved = []
-    for target in root.glob("*/*/runs/*/trusted-viewer"):
+    for target in discover_viewers(root):
         folder = target.parent
         verify_manifest(folder)
         report = json.loads(read_file(folder / "report.json"))

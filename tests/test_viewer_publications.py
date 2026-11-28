@@ -78,7 +78,7 @@ def publication(tmp_path, monkeypatch):
             dict(
                 GITHUB_WORKSPACE=str(tmp_path),
                 INPUT_RUNS_DIR=str(inputs.parent),
-                INPUT_OUTPUT_DIR="published",
+                INPUT_OUTPUT_DIR=publish.output,
                 INPUT_TRUSTED_VIEWERS=str(config) if enabled else "",
                 INPUT_EVALUATORS="evaluators.yml",
                 INPUT_HISTORICAL_VIEWERS="reviewed-history",
@@ -89,9 +89,10 @@ def publication(tmp_path, monkeypatch):
             )
             | publish.overrides
         )
-        return tmp_path / f"published/unitree-g1/stock-mujoco-hallway/runs/{number}"
+        return tmp_path / publish.output / f"unitree-g1/stock-mujoco-hallway/runs/{number}"
 
     publish.overrides = {}
+    publish.output = "published"
     return tmp_path, publish
 
 
@@ -249,6 +250,15 @@ def authenticated_publication(publication, authority_api, monkeypatch):  # noqa:
     import reports_restore
 
     root, publish = publication
+    publish.output = "published/g1"
+    # Production restores reports/ at its parent, then builds reports/g1/. Keep
+    # those actual archive/destination shapes and pass authority only in memory.
+    import reports_site
+
+    def restore_parent(destination, *args, **kwargs):
+        return reports_restore.restore(destination.parent, *args, **kwargs)
+
+    monkeypatch.setattr(reports_site, "restore", restore_parent)
     artifact, _, policy, responses, _ = authority_api
     policy["viewer_registry"] = str(Path(__file__).parents[1] / "config/viewers/evaluators.json")
     policy_file = root / "production-approval.json"
@@ -326,7 +336,15 @@ def test_authenticated_three_publications_one_pin_upgrade(authenticated_publicat
 
 @pytest.mark.parametrize(
     "fault",
-    ["archive", "workflow", "evidence", "unrelated-evidence", "unapproved-asset", "provenance"],
+    [
+        "archive",
+        "workflow",
+        "evidence",
+        "unrelated-evidence",
+        "unapproved-asset",
+        "provenance",
+        "unsupported-layout",
+    ],
 )
 def test_authenticated_restore_refuses_without_publishing(authenticated_publication, fault):
     root, publish, retain, responses, download = authenticated_publication
@@ -336,6 +354,10 @@ def test_authenticated_restore_refuses_without_publishing(authenticated_publicat
     if fault == "unrelated-evidence":
         unrelated = next(p for p in (first / "evidence").rglob("*") if p.is_file())
         unrelated.write_bytes(unrelated.read_bytes() + b"changed unrelated evidence")
+    if fault == "unsupported-layout":
+        unexpected = root / "published/unexpected/nested/trusted-viewer"
+        unexpected.mkdir(parents=True)
+        (unexpected / "viewer.html").write_bytes(b"unexpected")
     if fault == "unapproved-asset":
         (first / "trusted-viewer/viewer.html").write_bytes(b"unapproved code")
         write_published_checksums(first)
@@ -354,8 +376,8 @@ def test_authenticated_restore_refuses_without_publishing(authenticated_publicat
         responses["/actions/runs/22"]["path"] = ".github/workflows/unapproved.yml"
     with pytest.raises((SiteError, ValueError)):
         publish(2, "2026-11-29T06:00:00Z", version="1.2.1")
-    assert snap(previous / "unitree-g1/stock-mujoco-hallway/runs/1") == before
-    assert not list((root / "published").glob("*/*/runs/*"))
+    assert snap(previous / "g1/unitree-g1/stock-mujoco-hallway/runs/1") == before
+    assert not list((root / "published").rglob("run.json"))
 
 
 def test_authenticated_upgrade_then_undeclared_preserves_both(authenticated_publication):

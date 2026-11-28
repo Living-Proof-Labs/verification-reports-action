@@ -89,3 +89,15 @@ The unchanged production workflow has not run this new restoration implementatio
 No three-publication hosted proof, production token exercise of this new path, new
 release pin, deployment or activation is claimed. Independent source review and
 normal release/production verification remain required.
+
+### Production layout correction
+
+`discover_viewers` is shared by restore detection, approval generation and history
+validation. It accepts only `<robot>/<scenario>/runs/<id>/trusted-viewer` and the
+production `g1/<robot>/<scenario>/runs/<id>/trusted-viewer` subtree; any other named
+viewer path refuses restoration. The authenticated three-publication tests now
+package the actual `reports/g1/...` hierarchy, including the refusal cases. Their
+caller adapter restores `reports/` and then builds `reports/g1/` in one process.
+Production currently performs these in separate processes: activation must retain
+the authority in memory across that boundary, not serialize an approval receipt.
+This correction does not activate or change that workflow.

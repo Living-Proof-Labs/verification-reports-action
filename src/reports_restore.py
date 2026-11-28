@@ -783,7 +783,7 @@ def restore(
         import tempfile
 
         from publication_authority import verify
-        from trusted_viewer import publication_approvals
+        from trusted_viewer import discover_viewers, publication_approvals
 
         # Extract only into a private staging directory. Never modify existing
         # history before all authenticated archive and native panel checks pass.
@@ -799,7 +799,7 @@ def restore(
                 if checksum != "sha256:" + hashlib.sha256(archive).hexdigest():
                     raise SiteError("Unverified Pages publication: archive digest")
             count = _unpack_pages_archive(archive, staging)
-            decorated = list(staging.glob("*/*/runs/*/trusted-viewer"))
+            decorated = discover_viewers(staging)
             approvals = []
             if decorated:
                 verify(artifact, archive, repository, branch, token, api, publication_policy)
