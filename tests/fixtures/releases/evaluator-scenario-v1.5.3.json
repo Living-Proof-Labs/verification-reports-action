@@ -1,9 +1,0 @@
-{
-  "repository": "Living-Proof-Labs/livingproof-evaluator-scenario",
-  "tag": "v1.5.3",
-  "target_commitish": "main",
-  "tagCommit": "ca9d337a771269d07feec94c99f199bef7fca808",
-  "tagObjectType": "commit",
-  "changelogCommit": "3b5d96e2bda8730922ec71aa6383b467858b5086",
-  "body": "## [1.5.3](https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario/compare/v1.5.2...v1.5.3) (2026-11-20)\n\n### docs\n\n* README says the media base track also gives not-in-order (corner-turned) ([7764a0f](https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario/commit/7764a0fe8d98c6ff2109fee8bbb10df9e7896914))\n\n### test\n\n* **media:** corner-turned parity tests and README note (follow-up to [#36](https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario/issues/36)) ([#37](https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario/issues/37)) ([ca9d337](https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario/commit/ca9d337a771269d07feec94c99f199bef7fca808))\n* **media:** corner-turned verdict parity with the trial path, and the thresholds digest equals the trial path's ([3b5d96e](https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario/commit/3b5d96e2bda8730922ec71aa6383b467858b5086))\n"
-}
