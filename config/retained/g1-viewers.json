@@ -1,0 +1,18 @@
+[
+  {
+    "path": "unitree-g1/stock-mujoco-hallway/runs/46083905519",
+    "pin": {
+      "viewer_sha256": "9c08b355bd6a90f80a79f1d4369282050473db5ae092ae7ddb41ecf46f490995",
+      "viewer_tag": "v1.2.0",
+      "viewer_commit": "1c21eeb5d3aafdf00e8aa13c55e544a56fe5ab14",
+      "report_sha256": "cfb1e482dd17e602942991b1e075f3de939744a59187fd26dedb7d35c338f485",
+      "result_id": "stock-seed-01",
+      "run": "walk-hallway-unitree-g1-stock-20261127T234321Z",
+      "system": "unitree-g1/stock",
+      "configuration": "stock",
+      "trial": 1,
+      "evaluator_id": "livingproof-health"
+    },
+    "viewer_file": "recorded-viewer-v1_2_0.html"
+  }
+]

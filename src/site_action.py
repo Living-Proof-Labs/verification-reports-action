@@ -153,6 +153,11 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
     allow_replace = (env_map.get("GITHUB_RUN_ID") or "").strip() or None
     git_dir = Path(workspace) if workspace and Path(workspace).is_dir() else None
 
+    import trusted_viewer
+
+    viewer_declarations = trusted_viewer.load_declarations(env_map.get("INPUT_TRUSTED_VIEWERS", ""))
+    trusted_viewer.prepare_history(reports_dir, viewer_declarations)
+
     site_tool.build(
         reports_dir,
         runs_dir,
@@ -161,6 +166,8 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         git_dir=git_dir,
         exclude_runs=exclude_runs,
     )
+
+    trusted_viewer.apply_declarations(reports_dir, viewer_declarations)
 
     issues = site_fixture.check_reports_tree(reports_dir)
     if issues:

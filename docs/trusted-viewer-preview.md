@@ -43,27 +43,49 @@ Trusted viewer: generated from the reviewed Health v1.2.0 source commit
 `9c08b355bd6a90f80a79f1d4369282050473db5ae092ae7ddb41ecf46f490995`.
 This is a retained historical example, not a promise that that URL persists.
 
-## Production wiring reserved for coordination with #72
+## Local integration on Action #72
 
-No existing Action inputs, restoration code or workflow are changed here.
-After #72, wire a reviewed caller registry into `site/action.yml` and
-`src/site_action.py`. Before ordinary restored-run validation, call `revalidate`
-with that registry's pin; sanitize the returned source, never the iframe itself.
-Install after normal incoming-report sanitation. Regenerate `SHA256SUMS` with
-`write_published_checksums`; ordinary file-set checking must still run. No evaluator
-may choose the executable viewer. Test publish/restore twice and modified pins.
+This integration branch is based on #72 at
+`6103258229a9b846fae02754eb8c3f378d2189b0`; it does not change that remote branch.
+`site/action.yml` accepts a caller-owned `trusted-viewers` registry. The site
+entry point validates and strips existing generated embeds before ordinary build,
+then reinstalls from caller pins and regenerates only affected run checksums.
+An omitted declaration preserves ordinary behavior; an existing embed without
+its current declaration is refused. A declared run absent from history is skipped.
+The caller registry and vendored Apache-2.0 viewer are under `config/retained/`.
+The viewer bytes are generated from the released Health source identified above,
+not supplied by an evaluator or downloaded from a report.
 
-The standard docs workflow requires a successful main-push Verify at the release
-commit and obtains `g1-verification-report` from that run. Verify invokes real
-`g1-smoke`. Re-dispatching the current workflow cannot select old G1 input for a
-new release. The smallest publishing change is an explicit **retained source**
-input (source workflow run + artifact ID + expected artifact digest + report run),
-independent of the new site-code release identity. Validate the old source's repo,
-completed success, artifact digest and selected report identity; do not pretend
-its head is the new release. Use the existing Pages upload/deploy path after build,
-with history restore enabled. This belongs with #72's `docs.yml` wiring, not an
-unreviewed dispatch or a new simulation. Required integration tests: wrong source
-repo/run/digest refusal; retained source and new release provenance kept distinct;
-no invocation of report.yml/g1-smoke; existing grade/JSON unchanged; second restore
-revalidates the exact caller pin. Those publishing changes/tests are **not yet
-implemented** by this local-only patch.
+The documentation workflow retains its current-protected-main, immutable tag,
+and published stable release checks in both production and deploy. It adds two
+mutually exclusive, optional inputs selecting reviewed files in released code:
+
+- `retained_source: config/retained/g1-46083905519.json` downloads an exact
+  successful main-push Verify artifact, verifies repository/workflow/run/commit,
+  artifact ID, expiry and archive digest, then uses the normal site builder.
+- `retained_history: config/retained/g1-published-history.json` requires normal
+  restored Pages history and refuses reset-history. It verifies the exact old
+  published manifest and all bytes, sanitizes retained pages, inserts the viewer,
+  and checks the complete resulting tree. This is a published-history migration,
+  never represented as a raw Verify artifact. If history is missing or changed,
+  it refuses rather than rebuilding or simulating.
+
+Neither path calls the report workflow or dispatches Verify. The normal path,
+without either input, still chooses the new release's Verify artifact. Future
+normal builds revalidate the caller declaration for the historical embedded run.
+The workflow does not waive normal merge or release CI requirements.
+
+The exact source artifact is 15238557586 from Verify 46083905519, source commit
+`b09453aeb35c5071368b53fe1ad32810f805b9a2`, API archive digest
+`b252d60d4664b7caa059beb0dafa2a7225a5fb42fa14624d3d3695d31654f0f5`.
+The authorized archive download returned 403 locally; its bytes are unverified.
+The complete public run was independently downloaded and matched published
+manifest SHA-256 `dc706f47eb7ebbae263b53f721ea9639c65761bf34e4ebb2fa18b2440f4a8eab`.
+Its migration and subsequent restore/reapply passed locally with original report,
+raw JSON and evidence bytes unchanged. Hosted restoration availability is still
+unverified; a missing retained Pages artifact is a blocker, not permission to reset.
+
+After #72 merges, transplant the two local commits onto its integrated main,
+review the workflow delta independently, and release through existing protections.
+Only a released version containing this code can use these inputs. No dispatch,
+push, deployment, or simulation was performed to prepare this patch.

@@ -1,0 +1,6 @@
+{
+  "trusted_viewers": "config/retained/g1-viewers.json",
+  "published_manifests": {
+    "unitree-g1/stock-mujoco-hallway/runs/46083905519": "dc706f47eb7ebbae263b53f721ea9639c65761bf34e4ebb2fa18b2440f4a8eab"
+  }
+}

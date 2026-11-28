@@ -94,7 +94,7 @@ def test_invalid_pin_refused(case, key, value):
     assert not (folder / "trusted-viewer").exists()
 
 
-@pytest.mark.parametrize("target", ["viewer.html", "data/recording.json", "sanitized-source.html"])
+@pytest.mark.parametrize("target", ["viewer.html", "data/recording.json", "sanitized-source.txt"])
 def test_restored_tampering_refused(case, target):
     folder, pin, viewer = case
     install(folder, pin, viewer)
@@ -133,3 +133,84 @@ def test_extra_executable_and_changed_iframe_refused(case):
     )
     with pytest.raises(SiteError):
         revalidate(folder, pin)
+
+
+def test_production_restore_and_reapply(case, tmp_path):
+    import shutil
+
+    from trusted_viewer import apply_declarations, prepare_history
+
+    root = tmp_path / "site"
+    relative = "robot/hallway/runs/123"
+    target = root / relative
+    target.mkdir(parents=True)
+    folder, pin, viewer = case
+    for name in ("report.json", "index.html", "recording.json"):
+        shutil.copyfile(folder / name, target / name)
+    original = (target / "index.html").read_bytes()
+    declarations = {relative: (pin, viewer)}
+    apply_declarations(root, declarations)
+    published = (target / "index.html").read_bytes()
+    sums = (target / "SHA256SUMS").read_bytes()
+    with pytest.raises(SiteError, match="no current caller"):
+        prepare_history(root, {})
+    prepare_history(root, declarations)
+    assert (target / "index.html").read_bytes() == original
+    assert not (target / "trusted-viewer").exists()
+    apply_declarations(root, declarations)
+    assert (target / "index.html").read_bytes() == published
+    assert (target / "SHA256SUMS").read_bytes() == sums
+
+
+def test_no_declaration_no_change(case):
+    from trusted_viewer import apply_declarations, prepare_history
+
+    folder, _, _ = case
+    before = {p.name: p.read_bytes() for p in folder.iterdir()}
+    prepare_history(folder, {})
+    apply_declarations(folder, {})
+    assert before == {p.name: p.read_bytes() for p in folder.iterdir()}
+
+
+def test_declared_asset_and_paths_are_caller_local(case):
+    from trusted_viewer import load_declarations
+
+    folder, pin, viewer = case
+    (folder / "viewer.html").write_bytes(viewer)
+    entry = {"path": "robot/hallway/runs/123", "pin": pin, "viewer_file": "viewer.html"}
+    registry = folder / "registry.json"
+    registry.write_text(json.dumps([entry]))
+    assert len(load_declarations(registry)) == 1
+    for key, value in [("path", "../escape/runs/123"), ("viewer_file", "../viewer.html")]:
+        altered = dict(entry, **{key: value})
+        registry.write_text(json.dumps([altered]))
+        with pytest.raises(SiteError):
+            load_declarations(registry)
+
+
+def test_published_migration_requires_exact_manifest_and_bytes(case):
+    import shutil
+
+    from migrate_retained_viewer import migrate
+    from reports_site import write_published_checksums
+
+    folder, pin, viewer = case
+    root = folder / "history"
+    relative = "robot/hallway/runs/123"
+    target = root / relative
+    target.mkdir(parents=True)
+    for name in ("report.json", "index.html", "recording.json"):
+        shutil.copyfile(folder / name, target / name)
+    (folder / "viewer.html").write_bytes(viewer)
+    registry = folder / "registry.json"
+    registry.write_text(json.dumps([{"path": relative, "pin": pin, "viewer_file": "viewer.html"}]))
+    write_published_checksums(target)
+    expected = sha((target / "SHA256SUMS").read_bytes())
+    with pytest.raises(SiteError, match="manifest differs"):
+        migrate(root, registry, {relative: "0" * 64})
+    (target / "recording.json").write_text("tampered")
+    with pytest.raises(SiteError, match="file digest"):
+        migrate(root, registry, {relative: expected})
+    (target / "recording.json").write_bytes((folder / "recording.json").read_bytes())
+    migrate(root, registry, {relative: expected})
+    assert "iframe" in (target / "index.html").read_text()

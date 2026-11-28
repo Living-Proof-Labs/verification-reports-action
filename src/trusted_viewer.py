@@ -108,7 +108,7 @@ def install(folder, pin, viewer_bytes):
     (target / "data").mkdir()
     (target / "viewer.html").write_bytes(viewer_bytes)
     (target / "data/recording.json").write_bytes(raw)
-    (target / "sanitized-source.html").write_text(clean, encoding="utf-8")
+    (target / "sanitized-source.txt").write_text(clean, encoding="utf-8")
     (folder / "index.html").write_text(clean.replace(anchor, anchor + frame), encoding="utf-8")
     revalidate(folder, pin)
 
@@ -127,13 +127,75 @@ def revalidate(folder, pin):
     if page.count(frame) != 1:
         raise SiteError("Restored iframe differs from site-generated binding")
     source = page.replace(frame, "")
-    if source != read_file(target / "sanitized-source.html").decode("utf-8"):
+    if source != read_file(target / "sanitized-source.txt").decode("utf-8"):
         raise SiteError("Restored page changed outside generated embed")
     if checked_report_html(source, "restored source") != source:
         raise SiteError("Restored source contains unrecognized script")
     if any(p.is_symlink() for p in target.rglob("*")):
         raise SiteError("Symlink in trusted viewer installation")
-    allowed = {"viewer.html", "sanitized-source.html", "data/recording.json"}
+    allowed = {"viewer.html", "sanitized-source.txt", "data/recording.json"}
     if {p.relative_to(target).as_posix() for p in target.rglob("*") if p.is_file()} != allowed:
         raise SiteError("Unexpected file in trusted viewer installation")
     return source
+
+
+def load_declarations(filename):
+    """Read a caller-owned local registry; never read declarations from run artifacts."""
+    from pathlib import Path
+
+    if not filename:
+        return {}
+    location = Path(filename)
+    entries = json.loads(read_file(location))
+    declarations = {}
+    for entry in entries:
+        relative = entry["path"]
+        parts = relative.split("/")
+        if (
+            len(parts) != 4
+            or parts[2] != "runs"
+            or any(not re.fullmatch(r"[A-Za-z0-9_-]+", part) for part in parts)
+        ):
+            raise SiteError("Expected robot/scenario/runs/run local path")
+        if relative in declarations:
+            raise SiteError("Duplicate viewer declaration")
+        asset = entry["viewer_file"]
+        if not re.fullmatch(r"[A-Za-z0-9_-]+\.html", asset):
+            raise SiteError("Viewer must be adjacent to caller registry")
+        raw = read_file(location.parent / asset)
+        if digest(raw) != entry["pin"]["viewer_sha256"]:
+            raise SiteError("Viewer differs from caller pin")
+        declarations[relative] = (entry["pin"], raw)
+    return declarations
+
+
+def prepare_history(root, declarations):
+    """Validate then remove generated embeds before ordinary restore/build validation."""
+    import shutil
+
+    from reports_site import write_published_checksums
+
+    for target in root.glob("*/*/runs/*/trusted-viewer"):
+        folder = target.parent
+        key = folder.relative_to(root).as_posix()
+        if key not in declarations:
+            raise SiteError("Restored viewer has no current caller declaration")
+        pin, _ = declarations[key]
+        source = revalidate(folder, pin)
+        (folder / "index.html").write_text(source, encoding="utf-8")
+        shutil.rmtree(target)
+        write_published_checksums(folder)
+
+
+def apply_declarations(root, declarations):
+    """Decorate only sanitized published pages, then regenerate their checksums."""
+    from reports_site import write_published_checksums
+
+    for relative, (pin, viewer) in declarations.items():
+        folder = root / relative
+        if not folder.exists():
+            continue  # Optional contribution for a run not in retained history.
+        if any(part.is_symlink() for part in [folder, *folder.parents]):
+            raise SiteError("Declared viewer path cannot contain a symlink")
+        install(folder, pin, viewer)
+        write_published_checksums(folder)

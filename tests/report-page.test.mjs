@@ -43,7 +43,7 @@ test('the production pages job publishes the G1 report and not the fixture smoke
   assert.match(requireReports, /fixture-scenario-stock/);
   assert.match(requireReports, /fixture-hallway-stock/);
   assert.match(requireReports, /this repository's fixture/);
-  assert.match(production, /G1_STATUS: \$\{\{ steps\.g1-site\.outcome \}\}/);
+  assert.match(production, /G1_STATUS: \$\{\{ inputs\.retained_history != '' && steps\.migrate\.outcome \|\| steps\.g1-site\.outcome \}\}/);
   assert.doesNotMatch(production, /test -f artifacts\/site\/reports/);
   assert.match(production, /EVENT_RUN: \$\{\{ github\.event\.workflow_run\.id \}\}/);
   assert.equal(production.split('run-id: ${{ steps.verify-run.outputs.id }}').length - 1, 1);

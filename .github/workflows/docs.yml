@@ -17,6 +17,16 @@ on:
       release_commit:
         required: true
         type: string
+      retained_history:
+        description: Optional reviewed config/retained/*.json for a pinned published-history migration; requires restored Pages history.
+        required: false
+        type: string
+        default: ''
+      retained_source:
+        description: Optional reviewed config/retained/*.json pin for an existing successful Verify artifact; never starts a trial.
+        required: false
+        type: string
+        default: ''
       reset_history:
         required: false
         type: boolean
@@ -36,6 +46,16 @@ on:
         description: Full commit SHA of that release. It must be current protected main.
         required: true
         type: string
+      retained_history:
+        description: Optional reviewed config/retained/*.json for a pinned published-history migration; requires restored Pages history.
+        required: false
+        type: string
+        default: ''
+      retained_source:
+        description: Optional reviewed config/retained/*.json pin for an existing successful Verify artifact; never starts a trial.
+        required: false
+        type: string
+        default: ''
       reset_history:
         description: >-
           Skip restored Pages history for this one deploy. Use when the Pages
@@ -176,7 +196,16 @@ jobs:
       # Reuse the real G1 report g1-smoke already uploaded on the Verify run for this commit.
       # The mock robot smoke stays in Verify and is not published.
       # docs:verify stays on the manual pages; the reports tree is added afterwards.
+      - name: Validate retained mode
+        env:
+          SOURCE: ${{ inputs.retained_source }}
+          HISTORY: ${{ inputs.retained_history }}
+          RESET: ${{ inputs.reset_history }}
+        run: |
+          test -z "$SOURCE" || test -z "$HISTORY"
+          test -z "$HISTORY" || test "$RESET" != true
       - name: Choose the Verify run
+        if: inputs.retained_source == '' && inputs.retained_history == ''
         id: verify-run
         env:
           GH_TOKEN: ${{ github.token }}
@@ -256,28 +285,44 @@ jobs:
       - name: Drop fixture smoke from the public tree
         run: python3 tools/require_reports.py drop-fixtures artifacts/site/reports
       - name: Download the real G1 smoke report
+        if: inputs.retained_source == '' && inputs.retained_history == ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: g1-verification-report
           path: artifacts/g1-smoke-report
           run-id: ${{ steps.verify-run.outputs.id }}
           github-token: ${{ github.token }}
+      - name: Download pinned retained Verify report
+        if: inputs.retained_source != ''
+        id: retained
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RETAINED_SOURCE: ${{ inputs.retained_source }}
+        run: python3 tools/retained_report.py "$RETAINED_SOURCE" artifacts/g1-smoke-report
       - name: Build the G1 reports section
+        if: inputs.retained_history == ''
         id: g1-site
         uses: ./site
         with:
           runs-dir: artifacts/g1-smoke-report
+          trusted-viewers: ${{ steps.retained.outputs.viewers || 'config/retained/g1-viewers.json' }}
           output-dir: artifacts/site/reports/g1
           reset-history: ${{ inputs.reset_history && 'true' || 'false' }}
           restore-history: 'false'
           upload-artifact: 'false'
           site-url: https://docs.livingprooflabs.com/verification-reports-action/
+      - name: Migrate pinned published G1 history
+        if: inputs.retained_history != ''
+        id: migrate
+        env:
+          RETAINED_HISTORY: ${{ inputs.retained_history }}
+        run: python3 tools/migrate_retained_viewer.py "$RETAINED_HISTORY" artifacts/site/reports/g1
       - name: Publish the G1 index
         run: python3 tools/require_reports.py publish-index artifacts/site/reports
       - name: Require the published reports
         if: always()
         env:
-          G1_STATUS: ${{ steps.g1-site.outcome }}
+          G1_STATUS: ${{ inputs.retained_history != '' && steps.migrate.outcome || steps.g1-site.outcome }}
         run: python3 tools/require_reports.py check artifacts/site/reports
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
