@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -403,6 +404,94 @@ def record_apply_failure(
     write_report_checksums(report_dir)
 
 
+_SITE_PATH = re.compile(r"[A-Za-z0-9._~!$&'()*+,;=@%/-]{1,240}")
+_VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
+
+
+def _site_path(root: Path, file: Path, folder: str) -> str | None:
+    """The path the site publishes ``file`` at, or None when no page may point at it."""
+    relative = f"evidence/{folder}/{file.relative_to(root).as_posix()}"
+    if not _SITE_PATH.fullmatch(relative) or "artifact" in relative.lower():
+        return None
+    return relative
+
+
+def _trial_video(download: Path, prefix: str, configuration: str, entry: dict) -> str | None:
+    seed, status = entry.get("seed"), entry.get("status")
+    if type(seed) is not int or status not in {"PASS", "FAIL"}:
+        return None
+    root = download / "video"
+    if not root.is_dir():
+        return None
+    name = re.compile(
+        rf"{re.escape(prefix)}video-{re.escape(configuration)}-seed-0*{seed}-{status.lower()}"
+    )
+    found = [
+        file
+        for directory in sorted(root.iterdir())
+        if directory.is_dir() and name.fullmatch(directory.name)
+        for file in sorted(directory.rglob("*"))
+        if file.is_file() and file.suffix.lower() in _VIDEO_SUFFIXES
+    ]
+    if len(found) != 1:
+        return None
+    directory = next(parent for parent in found[0].parents if parent.parent == root)
+    return _site_path(directory, found[0], "video")
+
+
+def _trial_recordings(download: Path, prefix: str, configuration: str) -> list[tuple[str, str]]:
+    """(name, site path) of each trial recording, not the robot-side copies."""
+    root = download / "mcap" / f"{prefix}mcap-{configuration}"
+    if not root.is_dir():
+        return []
+    found = []
+    for file in sorted(root.rglob("*.mcap")):
+        if not file.is_file() or file.name.endswith(".robot.mcap"):
+            continue
+        path = _site_path(root, file, "mcap")
+        if path:
+            found.append((file.stem, path))
+    return found
+
+
+def site_evidence_links(
+    links: Path | None, download: Path, prefix: str, configuration: str, out: Path
+) -> Path | None:
+    """Give the reporter the site paths of the media this job copies into the run folder.
+
+    The verifier workflow uploads each link as a GitHub Actions artifact address. The
+    reporter never renders those, so a published page showed 'video' and the MCAP entry as
+    plain text. The collect job copies the same files under ``evidence/``, so each link that
+    names one is given that relative path. Any other link is passed through unchanged.
+    """
+    if links is None or not links.is_file():
+        return links
+    document = json.loads(links.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or not isinstance(document.get("links"), list):
+        return links
+    resolved: list = []
+    for entry in document["links"]:
+        if not isinstance(entry, dict) or entry.get("path") or not entry.get("url"):
+            resolved.append(entry)
+        elif entry.get("kind") == "video" and (
+            path := _trial_video(download, prefix, configuration, entry)
+        ):
+            resolved.append({**entry, "path": path})
+        elif (
+            entry.get("kind") == "mcap"
+            and "seed" not in entry
+            and (recordings := _trial_recordings(download, prefix, configuration))
+        ):
+            for name, path in recordings:
+                label = entry.get("label") if len(recordings) == 1 else f"MCAP {name}"
+                resolved.append({**entry, "label": label, "path": path})
+        else:
+            resolved.append(entry)
+    target = out / "evidence-links.json"
+    target.write_text(json.dumps({**document, "links": resolved}, indent=2) + "\n", "utf-8")
+    return target
+
+
 def apply_configuration(
     *,
     lines: list[str],
@@ -505,6 +594,8 @@ def run_downloaded(plan: dict, download: Path, out_root: Path, runner=None, rend
             links_dir = artifact_dir(download / "links", prefix, "links", configuration)
             links = links_dir / "evidence-links.json" if links_dir else None
             out = out_root / str(item.get("id") or "definition") / str(configuration)
+            out.mkdir(parents=True, exist_ok=True)
+            links = site_evidence_links(links, download, prefix, str(configuration), out)
             results_dir = gather_evaluator_results(
                 download / "evaluator-results",
                 prefix,

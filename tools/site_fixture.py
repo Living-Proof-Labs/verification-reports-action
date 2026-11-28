@@ -117,14 +117,16 @@ def write(
         }
         (folder / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
-        evidence_html = ""
+        run_url = f"https://github.com/{repository}/actions/runs/{run_id.split('-')[0]}"
+        ci_run = f"<p><a href='{run_url}'>CI run</a></p>"
+        evidence_html = f"<section id='evidence'>{ci_run}</section>"
         if item.get("with_evidence"):
             ev_dir = folder / "evidence"
             ev_dir.mkdir(parents=True, exist_ok=True)
             (ev_dir / "trials.mcap").write_bytes(b"fixture mcap bytes")
             (ev_dir / "trial-01-fail.mp4").write_bytes(b"fixture mp4 bytes")
             evidence_html = (
-                "<section id='evidence'><p class='is-kept'>Evidence kept for 7 days</p>"
+                f"<section id='evidence'><p class='is-kept'>Evidence kept for 7 days</p>{ci_run}"
                 "<p><a href='evidence/trials.mcap'>MCAP recording</a></p>"
                 "<video controls src='evidence/trial-01-fail.mp4'></video></section>"
             )

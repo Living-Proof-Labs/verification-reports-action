@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Publish the G1 example as the public reports index and reject fixture smoke."""
 
+import json
 import os
 import re
 import shutil
@@ -18,6 +19,10 @@ STABLE_PAGE = Path("g1/unitree-g1/stock-mujoco-hallway/latest/index.html")
 RUN_ID_LINK = re.compile(r"reports/(?:[^/\s\"')<>]+/)*runs/[0-9]+/")
 _LOCAL_REF = re.compile(r"""(?P<attr>\b(?:href|src))=(?P<q>["'])(?P<url>.*?)(?P=q)""")
 MOCK_ROOT_FILES = ("site.json", "styles.css", "open.js")
+CI_RUN_LINK = re.compile(
+    r"""href=(["'])https://github\.com/[^/"'<>\s]+/[^/"'<>\s]+/actions/runs/[0-9]+\1"""
+)
+VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
 
 
 def _keep_public_url(url: str) -> bool:
@@ -102,6 +107,54 @@ def drop_published_fixtures(reports: Path) -> None:
             path.rmdir()
 
 
+def _newest_run_folders(reports: Path) -> list[Path]:
+    """The newest run folder of each scenario history, by the time its record says."""
+    newest: dict[Path, tuple[str, Path]] = {}
+    for record in sorted(reports.rglob("runs/*/run.json")):
+        try:
+            created = json.loads(record.read_text(encoding="utf-8"))["run"]["created"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if not isinstance(created, str):
+            continue
+        history = record.parent.parent
+        if history not in newest or created > newest[history][0]:
+            newest[history] = (created, record.parent)
+    return [folder for _, folder in newest.values()]
+
+
+def run_page_problems(reports: Path) -> list[str]:
+    """The newest run page of each scenario links its CI run and the media it published.
+
+    Only the newest run is held to this: an older restored run was built before its page
+    carried the links, and its evidence may since have been pruned.
+    """
+    problems: list[str] = []
+    for folder in _newest_run_folders(reports):
+        name = (folder / "index.html").relative_to(reports).as_posix()
+        page_path = folder / "index.html"
+        if not page_path.is_file():
+            problems.append(f"{name} is missing")
+            continue
+        page = page_path.read_text(encoding="utf-8")
+        if CI_RUN_LINK.search(page) is None:
+            problems.append(f"{name} is missing the CI run link")
+        evidence = folder / "evidence"
+        for file in sorted(evidence.rglob("*")) if evidence.is_dir() else []:
+            relative = file.relative_to(folder).as_posix()
+            published_video = file.suffix.lower() in VIDEO_SUFFIXES and relative.startswith(
+                "evidence/video/"
+            )
+            published_recording = file.suffix.lower() == ".mcap" and not file.name.endswith(
+                ".robot.mcap"
+            )
+            if not file.is_file() or not (published_video or published_recording):
+                continue
+            if f"'{relative}'" not in page and f'"{relative}"' not in page:
+                problems.append(f"{name} does not link the published {relative}")
+    return problems
+
+
 def require_published(reports: Path, g1_status: str) -> None:
     """Fail unless the G1 site build succeeded and the public tree is the G1 example.
 
@@ -117,6 +170,8 @@ def require_published(reports: Path, g1_status: str) -> None:
         raise SystemExit(problems[0])
     if not (reports / STABLE_PAGE).is_file():
         raise SystemExit(f"built site is missing {SAMPLE_REPORT}")
+    if problems := run_page_problems(reports):
+        raise SystemExit(problems[0])
 
 
 def require_readme_sample(site: Path, readme: Path) -> None:
@@ -142,6 +197,8 @@ def require_g1_build(reports: Path, status: str) -> None:
     index = (reports / "index.html").read_text(encoding="utf-8")
     if "unitree-g1" not in index or GRADE_BADGE.search(index) is None:
         raise SystemExit("G1 site output is missing the expected report")
+    if problems := run_page_problems(reports):
+        raise SystemExit(problems[0])
 
 
 def main(argv: list[str]) -> None:

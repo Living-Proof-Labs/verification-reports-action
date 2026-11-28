@@ -861,7 +861,8 @@ def test_artifact_wording_in_rendered_page_text_is_refused(tmp_path: Path):
     assert site_tool.public_page_problems(reports) == ["index.html mentions an artifact"]
     assert site_tool.html_is_dirty(page.read_text(encoding="utf-8"))
     page.write_text(
-        "<p><a href='https://github.com/org/repo/actions/runs/1'>run</a></p>", encoding="utf-8"
+        "<p><a href='https://github.com/org/repo/actions/runs/1/job/9'>job</a></p>",
+        encoding="utf-8",
     )
     assert site_tool.public_page_problems(reports) == ["index.html links to /actions/"]
 
@@ -2021,7 +2022,15 @@ def test_deleting_the_artifact_word_cannot_assemble_a_fetch(tmp_path: Path):
 
 def test_real_reporter_report_is_published_unchanged(tmp_path: Path):
     text = REPORTER_FIXTURE.read_text(encoding="utf-8")
-    _make_run_folder(tmp_path / "in", "hallway", run_id="910", html_override=text)
+    # The page links only evidence the run folder holds; the site shows any other link as text.
+    held = {
+        match.removeprefix("evidence/"): b"evidence"
+        for match in set(re.findall(r"evidence/[A-Za-z0-9._/-]+", text))
+    }
+    assert "seed-01.mp4" in held
+    _make_run_folder(
+        tmp_path / "in", "hallway", run_id="910", html_override=text, evidence_files=held
+    )
     site_tool.build(tmp_path / "reports", tmp_path / "in")
     run_dir = tmp_path / "reports/unitree-g1/stock-mujoco-hallway/runs/910"
     assert (run_dir / "report.html").read_text(encoding="utf-8") == text
@@ -3050,3 +3059,128 @@ def test_invalid_utf8_report_html_is_refused_with_file_and_byte_offset(tmp_path:
     assert not list(reports_dir.rglob("runs/930/index.html"))
     assert not (reports_dir / "index.html").exists()
     assert not (reports_dir / "site.json").exists()
+
+
+CI_RUN = "https://github.com/org/repo/actions/runs/7"
+
+
+def test_public_page_check_allows_the_ci_run_address_and_nothing_else_under_actions(
+    tmp_path: Path,
+):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    page = reports / "index.html"
+    page.write_text(f"<p><a href='{CI_RUN}'>CI run</a> {CI_RUN}.</p>", encoding="utf-8")
+    assert site_tool.public_page_problems(reports) == []
+    assert not site_tool.html_is_dirty(page.read_text(encoding="utf-8"))
+    for bad in (
+        CI_RUN + "/job/5",
+        CI_RUN + "/attempts/2",
+        CI_RUN + "/artifacts/101",
+        CI_RUN + "x",
+        CI_RUN + "?check_suite_focus=true",
+        "https://github.com/org/repo/actions/workflows/ci.yml",
+        "https://github.com/org/repo/actions/runs/",
+    ):
+        page.write_text(f"<p><a href='{CI_RUN}'>CI run</a> <a href='{bad}'>x</a></p>", "utf-8")
+        assert "index.html links to /actions/" in site_tool.public_page_problems(reports), bad
+        assert site_tool.html_is_dirty(page.read_text(encoding="utf-8")), bad
+
+
+def test_the_ci_run_link_is_published_and_artifact_addresses_still_are_not(tmp_path: Path):
+    runs_in = tmp_path / "in"
+    folder = _make_run_folder(
+        runs_in,
+        "hallway",
+        html_override=(
+            "<!doctype html><html><body><main><div class='card evidence'><h2>Evidence</h2><ul>"
+            f"<li><a href='{CI_RUN}'>CI run</a></li>"
+            f"<li><a href='{CI_RUN}/artifacts/101'>MCAP</a></li>"
+            "</ul></div></main></body></html>\n"
+        ),
+    )
+    rep = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    rep["evidence_links"] = {
+        "run": CI_RUN,
+        "links": [{"label": "MCAP", "kind": "mcap", "url": CI_RUN + "/artifacts/101"}],
+    }
+    (folder / "report.json").write_text(json.dumps(rep), encoding="utf-8")
+    (folder / "report.md").write_text(
+        f"**Evidence:** [CI run]({CI_RUN}) · [MCAP]({CI_RUN}/artifacts/101)\n", encoding="utf-8"
+    )
+    (folder / "SHA256SUMS").write_text(
+        "".join(
+            f"{hashlib.sha256((folder / n).read_bytes()).hexdigest()}  {n}\n"
+            for n in site_tool.REPORT_FILES
+        ),
+        encoding="utf-8",
+    )
+    reports_dir = tmp_path / "reports"
+    site_tool.build(reports_dir, runs_in)
+    run = next(reports_dir.glob("*/*/runs/*"))
+    page = (run / "index.html").read_text(encoding="utf-8")
+    assert f"<a href='{CI_RUN}'>CI run</a>" in page
+    assert "/artifacts/" not in page
+    assert f"<a href='{CI_RUN}'>CI run</a>" in (run / "report.html").read_text(encoding="utf-8")
+    assert f"[CI run]({CI_RUN})" in (run / "report.md").read_text(encoding="utf-8")
+    assert "/artifacts/" not in (run / "report.md").read_text(encoding="utf-8")
+    assert (
+        json.loads((run / "report.json").read_text(encoding="utf-8"))["evidence_links"]["run"]
+        == CI_RUN
+    )
+    assert site_tool.public_page_problems(reports_dir) == []
+
+
+def test_an_evidence_link_to_a_file_the_site_did_not_publish_is_plain_text(tmp_path: Path):
+    runs_in = tmp_path / "in"
+    _make_run_folder(
+        runs_in,
+        "hallway",
+        evidence_files={"video/kept.mp4": b"mp4"},
+        html_override=(
+            "<!doctype html><html><body><main><div class='card evidence'><h2>Evidence</h2><ul>"
+            "<li class='evidence-video'><p class='evidence-label'>kept clip</p>"
+            "<video controls preload='metadata' src='evidence/video/kept.mp4'></video></li>"
+            "<li class='evidence-video'><p class='evidence-label'>lost clip</p>"
+            "<video controls preload='metadata' src='evidence/video/lost.mp4'></video></li>"
+            "<li><a href='evidence/video/lost.mp4'>lost link</a></li>"
+            "</ul></div></main></body></html>\n"
+        ),
+    )
+    reports_dir = tmp_path / "reports"
+    site_tool.build(reports_dir, runs_in)
+    run = next(reports_dir.glob("*/*/runs/*"))
+    for name in ("index.html", "report.html"):
+        page = (run / name).read_text(encoding="utf-8")
+        assert "src='evidence/video/kept.mp4'" in page
+        assert "lost.mp4" not in page
+        assert "lost clip" in page
+        assert "lost link" in page
+        assert "<a href='evidence/video/lost.mp4'" not in page
+
+
+def test_real_reporter_3_17_0_run_page_links_the_ci_run_video_and_recording(tmp_path: Path):
+    # Rendered by reporter v3.17.0 from the real G1 bundle of Verify run 46110994356, with the
+    # links document the collect job now writes (site paths for the media it copies).
+    import require_reports
+
+    fixture = ROOT / "tests/fixtures/reporter/report-v3.17.0-g1-evidence-links.html"
+    text = fixture.read_text(encoding="utf-8")
+    media = {"video/trial-01-fail.mp4": b"mp4", "mcap/mcap/trial-01.mcap": b"mcap"}
+    _make_run_folder(
+        tmp_path / "in", "hallway", run_id="46110994356", html_override=text, evidence_files=media
+    )
+    site_tool.build(tmp_path / "reports", tmp_path / "in")
+    reports = tmp_path / "reports"
+    run = next(reports.glob("*/*/runs/46110994356"))
+    run_url = (
+        "https://github.com/Living-Proof-Labs/verification-reports-action/actions/runs/46110994356"
+    )
+    for name in ("index.html", "report.html"):
+        page = (run / name).read_text(encoding="utf-8")
+        assert f"<a href='{run_url}'>CI run</a>" in page
+        assert "<a href='evidence/mcap/mcap/trial-01.mcap'>MCAP, all 1 trials</a>" in page
+        assert "<video controls preload='metadata' src='evidence/video/trial-01-fail.mp4'>" in page
+        assert "<td><a href='evidence/video/trial-01-fail.mp4'>video</a></td>" in page
+    assert require_reports.run_page_problems(reports) == []
+    assert site_tool.public_page_problems(reports) == []

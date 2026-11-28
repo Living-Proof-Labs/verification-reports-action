@@ -48,7 +48,7 @@ An inline list is the same lines, one per line or as a YAML list, passed directl
 
 This repository's own smoke passes `evaluators: evaluators.yml`. Other callers do not inherit that file. An evaluator that reads recorded media needs `media: true`.
 
-When the list has items, the collect job checks out capability-verifier, appends the scenario evaluator results onto the verified bundle, runs the loader on the downloaded evidence, and re-renders the report with the reporter version the lock pins. The loader's exit code is not used. A missing or unreadable provenance file is recorded as Run Integrity NOT RUN (failure), the report is uploaded, and the collect job then fails.
+When the list has items, the collect job checks out capability-verifier, appends the scenario evaluator results onto the verified bundle, runs the loader on the downloaded evidence, and re-renders the report with the reporter version the lock pins. That render is given the site path of each trial video and trial recording the job copies into `evidence/` (for example `evidence/video/trial-01-fail.mp4`), so the run page plays the video inline and links it and the recording. The verifier workflow's own links name GitHub Actions artifacts, which the reporter never shows. The loader's exit code is not used. A missing or unreadable provenance file is recorded as Run Integrity NOT RUN (failure), the report is uploaded, and the collect job then fails.
 
 The descriptor schema and the Health example are linked from the README. Pinned release checks are in [Provenance](provenance.md).
 
@@ -66,7 +66,8 @@ Use [`Living-Proof-Labs/verification-reports-action/site`](https://github.com/Li
 A run folder's `SHA256SUMS` can be recomputed by whoever wrote the folder, so the site checks what it publishes itself:
 
 - **Report pages**: each `report.html` and run `index.html` must be valid UTF-8 and fit an allowlist of the reporter's own markup, checked with an HTML parser. Allowed links are `https://` or relative (media `src` and `poster` attributes must be relative), CSS may only embed fonts, and scripts must be the reporter's own, pinned by SHA-256. A page that fits is published byte for byte. Anything else fails the build, except an unknown reporter script, which is removed with a warning. A page larger than 8 MiB (8,388,608 bytes of UTF-8) fails the build before it is parsed. That is more than ten times the largest page the reporter has published. Deeply nested markup does not slow the check down: its cost grows with the page size, not with the square of the nesting depth.
-- **Evidence**: files a browser would run, such as `.html`, `.htm`, `.xhtml`, `.svg`, `.xml` or `.js`, are not copied.
+- **Evidence**: files a browser would run, such as `.html`, `.htm`, `.xhtml`, `.svg`, `.xml` or `.js`, are not copied. A link or video on a page to an `evidence/` file the site did not publish, for example one over the per-run size limit, is shown as plain text, not as a dead link.
+- **Actions addresses**: a page may link its CI run, `https://github.com/<owner>/<repo>/actions/runs/<run-id>`, and nothing else under `/actions/`. Artifact, job, attempt and workflow-file addresses are removed from every published page and from `report.json`, `report.md` and `report.txt`, and any mention of an artifact is refused. `require_reports.py` also fails the build when the newest run page of a scenario does not link its CI run, or does not link the video and trial recordings it published.
 
 ### History across deployments and pull-request runs
 
