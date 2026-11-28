@@ -308,6 +308,11 @@ jobs:
             echo "report still contains placeholder" >&2
             exit 1
           fi
+      - name: Compare the G1 Scenario verdicts with the committed view
+        run: |
+          python tools/compare_integrity.py \
+            --verdicts tests/fixtures/g1/scenario-verdicts.json \
+            --report artifacts/smoke-report/unitree-g1-stock-mujoco-hallway/stock/report.json
       - name: Build the G1 report with ./site
         id: g1-site
         uses: ./site
@@ -362,7 +367,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: Living-Proof-Labs/capability-verifier
-          ref: 78c15b635cb558e322be4004b9f6ed9d24e3dc5d # v3.1.0
+          ref: 5b702e5b2aa23338ba1d358692c6be96e97546cf # v3.1.1
           path: capability-verifier
           persist-credentials: false
       - name: Install capability-verifier
@@ -393,6 +398,11 @@ jobs:
           INPUT_VERIFIER_ROOT: downloaded
           INPUT_VERSION: ${{ needs.version.outputs.semver-version }}
         run: node src/collect.mjs
+      - name: Compare the advisory-off Scenario verdicts with the committed view
+        run: |
+          python tools/compare_integrity.py \
+            --verdicts tests/fixtures/g1/scenario-verdicts.json \
+            --report artifacts/advisory-off/unitree-g1-stock-mujoco-hallway/stock/report.json
       - name: Compare the advisory on and off reports
         env:
           ADVISORY_LINES: ${{ steps.advisory-off.outputs.count }}

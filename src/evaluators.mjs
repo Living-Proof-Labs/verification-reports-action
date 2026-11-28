@@ -2,14 +2,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-/**
- * Passed when evaluators.yml has no declaration lines. It is a comment, so it
- * is not a line the loader would run, and it is not empty, so capability-verifier
- * keeps its built-in run-integrity job skipped. The collect job does not call
- * the loader for this value.
- */
-export const EVALUATORS_SENTINEL = '#';
-
 /** YAML list items. Blank lines and comments are not items. The item text is not checked. */
 export function parseEvaluatorList(text) {
   const items = [];
@@ -37,7 +29,9 @@ export function parseEvaluatorList(text) {
 
 export function evaluatorsDeclaration(text) {
   const lines = parseEvaluatorList(text);
-  if (lines.length === 0) return { lines, input: EVALUATORS_SENTINEL, run: false };
+  // capability-verifier v3 reads an empty input as no evaluators. A comment-only
+  // input is refused, and the collect job does not call the loader for either.
+  if (lines.length === 0) return { lines, input: '', run: false };
   return { lines, input: lines.join('\n'), run: true };
 }
 

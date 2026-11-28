@@ -514,8 +514,8 @@ def test_empty_input_does_not_read_an_evaluators_file(tmp_path, monkeypatch):
     )
     captured = []
 
-    def fake_run(plan, download, out_root, runner=None, render=None):
-        del download, out_root, runner, render
+    def fake_run(plan, download, out_root, runner=None, render=None, select=None):
+        del download, out_root, runner, render, select
         captured.append(plan["evaluators"]["lines"])
         return False
 
@@ -540,8 +540,8 @@ def test_a_path_or_a_list_is_passed_to_the_loader(tmp_path, monkeypatch):
     (caller / "mine.yml").write_text(f"- {line}\n", encoding="utf-8")
     captured = []
 
-    def fake_run(plan, download, out_root, runner=None, render=None):
-        del download, out_root, runner, render
+    def fake_run(plan, download, out_root, runner=None, render=None, select=None):
+        del download, out_root, runner, render, select
         captured.append(plan["evaluators"]["lines"])
         return False
 
@@ -684,6 +684,8 @@ def _render_failure_layout(tmp_path, monkeypatch):
 
     monkeypatch.setattr("evaluators_run.subprocess.run", loader)
     monkeypatch.setattr("evaluators_run.render_with_reporter", render)
+    # The kind filter validates the descriptors over the network; this layout has none.
+    monkeypatch.setattr("evaluators_run.executable_lines", lambda lines: lines)
     return report, bundle_path, output
 
 

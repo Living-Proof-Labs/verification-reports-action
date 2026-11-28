@@ -290,7 +290,7 @@ def resolve_caller_evaluators(value: str, root: Path) -> dict:
     """Same caller input as the plan: empty, a relative path, or the list itself."""
     text = value or ""
     if not text.strip() or text.strip() == "[]":
-        return {"lines": [], "input": "#", "run": False}
+        return {"lines": [], "input": "", "run": False}
     single = "\n" not in text and "\r" not in text
     trimmed = text.strip()
     if single and "@" not in trimmed and not trimmed.startswith("-"):
@@ -332,7 +332,7 @@ def _declaration(text: str) -> dict:
         if item:
             items.append(item)
     if not items:
-        return {"lines": [], "input": "#", "run": False}
+        return {"lines": [], "input": "", "run": False}
     return {"lines": items, "input": "\n".join(items), "run": True}
 
 
@@ -403,6 +403,26 @@ def record_apply_failure(
     write_report_checksums(report_dir)
 
 
+TRIAL_KINDS = frozenset({"scenario"})
+
+
+def executable_lines(lines: list[str], prepare=None) -> list[str]:
+    """The declaration lines the loader still has to run in the collect job.
+
+    The trial workflows already ran every ``scenario`` line and uploaded its results,
+    and ``attach_scenario_results`` places them. The loader runs a scenario line
+    again when it is given one, and would place its results a second time. The kind
+    is read from each line's descriptor, so nothing here names an evaluator.
+    ``prepare`` is capability-verifier's own validation, which installs nothing.
+    """
+    if prepare is None:
+        from capability_verifier.evaluators import prepare
+    prepared = prepare("\n".join(lines) + "\n")
+    return [
+        item.declaration.line for item in prepared if item.document.get("kind") not in TRIAL_KINDS
+    ]
+
+
 def apply_configuration(
     *,
     lines: list[str],
@@ -417,14 +437,24 @@ def apply_configuration(
     configuration: str = "",
     runner=None,
     render=None,
+    select=None,
 ) -> bool:
-    """Run one configuration. Returns True when the collect job must fail after upload."""
+    """Run one configuration. Returns True when the collect job must fail after upload.
+
+    ``select`` narrows the declaration lines to those the loader has to run here. A line
+    it refuses is recorded as NOT RUN like any other refusal. With none left the report
+    already is what the trial jobs wrote, so nothing is run or rendered again.
+    """
     if not lines:
         return False
     runner = subprocess.run if runner is None else runner
     render = render_with_reporter if render is None else render
     evaluator = declared_evaluator(lines)
     try:
+        if select is not None:
+            lines = select(lines)
+            if not lines:
+                return False
         attach_scenario_results(bundle_path, results_dir, report_dir)
         out.mkdir(parents=True, exist_ok=True)
         lines_file = out / "lines.txt"
@@ -468,8 +498,14 @@ def _write_output(key: str, value: str) -> None:
         handle.write(f"{key}={value}\n")
 
 
-def run_downloaded(plan: dict, download: Path, out_root: Path, runner=None, render=None) -> bool:
-    """Run every verifier configuration that has declaration lines. True means fail after upload."""
+def run_downloaded(
+    plan: dict, download: Path, out_root: Path, runner=None, render=None, select=None
+) -> bool:
+    """Run every verifier configuration that has declaration lines. True means fail after upload.
+
+    ``select`` is passed to :func:`apply_configuration`. The job entry point passes
+    :func:`executable_lines`; without it every declared line goes to the loader.
+    """
     declared = plan.get("evaluators") if isinstance(plan.get("evaluators"), dict) else {}
     lines = declared.get("lines") if isinstance(declared.get("lines"), list) else []
     lines = [line for line in lines if isinstance(line, str) and line.strip()]
@@ -525,6 +561,7 @@ def run_downloaded(plan: dict, download: Path, out_root: Path, runner=None, rend
                     configuration=str(configuration),
                     runner=runner,
                     render=render,
+                    select=select,
                 )
                 or failed
             )
@@ -545,7 +582,7 @@ def main(argv: list[str] | None = None) -> int:
             caller = Path(os.environ.get("INPUT_CALLER_ROOT") or ".")
             declared = resolve_caller_evaluators(os.environ.get("INPUT_EVALUATORS") or "", caller)
             plan["evaluators"] = {"lines": declared["lines"], "input": declared["input"]}
-        failed = run_downloaded(plan, download, download / "evaluator-out")
+        failed = run_downloaded(plan, download, download / "evaluator-out", select=executable_lines)
     except Exception as exc:
         print(f"evaluators: {exc}", file=sys.stderr)
         _write_output("failed", "true")

@@ -17,11 +17,11 @@ const VERIFIER_IMAGE = 'ghcr.io/living-proof-labs/capability-verifier-hallway';
 const REPORTER_IMAGE = 'ghcr.io/living-proof-labs/livingproof-capability-report';
 
 /**
- * The tag is what people edit. capability-verifier v2.14.0 takes the resolved
- * verifier commit, verifier image, reporter image and scenario-evaluator commit
- * as workflow inputs. Those lock fields are refused when present. The fields
- * v2.14.0 still reads from the lock stay, and must match the resolved tag.
- * Declaration lines from the caller evaluators input own every other evaluators entry.
+ * The tag is what people edit. capability-verifier takes the resolved verifier
+ * commit, verifier image and reporter image as workflow inputs. Those lock
+ * fields are refused when present. The fields it still reads from the lock stay,
+ * and must match the resolved tag. Declaration lines from the caller evaluators
+ * input own every evaluator, Scenario included: a lock evaluators entry is ignored.
  */
 /**
  * required: the trial reads the lock field and does not substitute a default.
@@ -68,19 +68,6 @@ const SPECS = [
     kind: 'files',
     fields: { repository: 'required', tag: 'required', commit: 'optional', sha256: 'optional' },
     read: (lock, sources) => fromWorld(lock.world, sources?.world, lock.sources?.world),
-  },
-  {
-    name: 'livingproof-evaluator-scenario',
-    lockField: 'evaluators.livingproof-evaluator-scenario',
-    expectedRepository: 'Living-Proof-Labs/livingproof-evaluator-scenario',
-    kind: 'source',
-    fields: { repository: 'required', tag: 'required' },
-    rejected: ['commit'],
-    read: (lock, sources) =>
-      fromRelease(
-        lock.evaluators?.['livingproof-evaluator-scenario'],
-        sources?.evaluators?.['livingproof-evaluator-scenario']
-      ),
   },
   {
     name: 'livingproof-capability-report',
@@ -426,38 +413,29 @@ function imageInput(name, tag, digest, label, pattern) {
 }
 
 /**
- * The four inputs capability-verifier v2.14.0 scenario.yml accepts. Built from
- * the commits and image digests the action already resolved from the tags.
+ * The three inputs the capability-verifier trial workflows take from the plan.
+ * Built from the commits and image digests the action already resolved from the
+ * tags. No evaluator is among them: those arrive as declaration lines.
  */
 export function resolvedTrialInputs(records) {
   const byName = new Map((records ?? []).map((record) => [record.name, record]));
   const verifier = byName.get('capability-verifier');
   const reporter = byName.get('livingproof-capability-report');
-  const evaluator = byName.get('livingproof-evaluator-scenario');
   if (!verifier) {
     throw new ReportError('resolved pins are missing capability-verifier, so no trial can start.');
   }
   if (!reporter) {
     throw new ReportError('resolved pins are missing livingproof-capability-report, so no trial can start.');
   }
-  if (!evaluator) {
-    throw new ReportError('resolved pins are missing livingproof-evaluator-scenario, so no trial can start.');
-  }
   if (!SHA.test(verifier.commit)) {
     throw new ReportError(
       `verifier-commit is not a resolved commit. expected a 40-character commit, found ${JSON.stringify(verifier.commit)}.`
-    );
-  }
-  if (!SHA.test(evaluator.commit)) {
-    throw new ReportError(
-      `evaluator-commit is not a resolved commit. expected a 40-character commit, found ${JSON.stringify(evaluator.commit)}.`
     );
   }
   return {
     verifier_commit: verifier.commit,
     verifier_image: imageInput(VERIFIER_IMAGE, verifier.tag, verifier.digest, 'verifier-image', VERIFIER_IMAGE_INPUT),
     reporter_image: imageInput(REPORTER_IMAGE, reporter.tag, reporter.digest, 'reporter-image', REPORTER_IMAGE_INPUT),
-    evaluator_commit: evaluator.commit,
   };
 }
 
@@ -506,17 +484,14 @@ export function assertLockAgrees(pin, resolved) {
   }
 }
 
-/** The one evaluator the trial still resolves. Every other lock evaluators entry is ignored. */
-const RESOLVED_EVALUATOR = 'livingproof-evaluator-scenario';
-
+/** No lock evaluators entry is a pin. The caller evaluators list declares them all. */
 export const IGNORED_EVALUATOR_NOTICE =
   'notice: a lock evaluators entry is ignored; the caller evaluators list declares those lines';
 
 export function ignoredEvaluatorNotice(lock) {
   const evaluators = lock?.evaluators;
   if (!evaluators || typeof evaluators !== 'object' || Array.isArray(evaluators)) return null;
-  const extra = Object.keys(evaluators).filter((key) => key !== RESOLVED_EVALUATOR);
-  if (extra.length === 0) return null;
+  if (Object.keys(evaluators).length === 0) return null;
   return IGNORED_EVALUATOR_NOTICE;
 }
 
@@ -562,7 +537,6 @@ function entryFor(spec, lock) {
   if (spec.name === 'livingproof-sim-mujoco') return lock.releases?.runner;
   if (spec.name === 'robot-capability-specs') return lock.releases?.specs;
   if (spec.name === 'livingproof-worlds') return lock.world;
-  if (spec.name === 'livingproof-evaluator-scenario') return lock.evaluators?.['livingproof-evaluator-scenario'];
   if (spec.name === 'livingproof-capability-report') return lock.releases?.reporter;
   return null;
 }
