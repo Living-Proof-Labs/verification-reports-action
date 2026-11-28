@@ -365,6 +365,7 @@ def test_no_advisory_line_publishes_the_run_only_page(tmp_path):
         expired=False,
         days=7,
     )
+    expected = reports_site.unlink_unpublished_evidence(expected, published)
     expected = reports_site.with_site_nav(
         expected,
         overview_href="../../../../../index.html",

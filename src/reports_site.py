@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
 from collections.abc import Iterable
 from datetime import timedelta
 from pathlib import Path, PurePosixPath
@@ -90,10 +91,14 @@ ARTIFACT_LINK = re.compile(
     r"(.*?)</a>",
     re.S,
 )
+# The one Actions address a public page may carry is a CI run's own page. An artifact,
+# a job, an attempt, a workflow file or a query string on it is still refused.
+_RUN_PATH = r"[^/\s'\"<>]+/[^/\s'\"<>]+/actions/runs/[0-9]+(?![0-9A-Za-z_/?#-])"
+RUN_ADDRESS = re.compile(r"https://github\.com/" + _RUN_PATH)
 ACTIONS_ANCHOR = re.compile(
     r"<a\s[^>]*?href=(['\"])([^'\"<>]*/actions/[^'\"<>]*)\1[^>]*>(.*?)</a>", re.S | re.I
 )
-ACTIONS_URL = re.compile(r"https://github\.com/\S*?/actions/\S*", re.I)
+ACTIONS_URL = re.compile(r"https://github\.com/(?!" + _RUN_PATH + r")\S*?/actions/\S*", re.I)
 EVIDENCE_ANCHOR = re.compile(
     r"<a\s[^>]*?href=(['\"])(evidence/[^'\"<>]+)\1[^>]*>(.*?)</a>", re.S | re.I
 )
@@ -1103,13 +1108,19 @@ def display_label(label: str, trial: bool) -> str:
     return label
 
 
+def mentions_actions(text: str) -> bool:
+    """True for any /actions/ address other than a CI run's own page."""
+    return "/actions/" in RUN_ADDRESS.sub("", text).lower()
+
+
 def html_is_dirty(text: str) -> bool:
-    return ARTIFACT_WORD.search(text) is not None or "/actions/" in text.lower()
+    return ARTIFACT_WORD.search(text) is not None or mentions_actions(text)
 
 
 def _is_actions_url(value: object) -> bool:
     return isinstance(value, str) and (
-        "/actions/" in value.lower() or ARTIFACT_WORD.search(value) is not None
+        (mentions_actions(value) and RUN_ADDRESS.fullmatch(value) is None)
+        or ARTIFACT_WORD.search(value) is not None
     )
 
 
@@ -1145,14 +1156,21 @@ def publish_evidence_links(report: dict, links: dict) -> bool:
             and not _is_actions_url(entry["url"])
         ]
     public = {"links": [dict(entry) for entry in links.get("links", [])] + kept}
+    run = stored.get("run") if isinstance(stored, dict) else None
+    if isinstance(run, str) and RUN_ADDRESS.fullmatch(run):
+        public = {"run": run, **public}
     if public == stored:
         return False
     report["evidence_links"] = public
     return True
 
 
+def _unwrap_actions_anchor(match: re.Match) -> str:
+    return match.group(0) if RUN_ADDRESS.fullmatch(match.group(2)) else match.group(3)
+
+
 def strip_actions_text(text: str) -> str:
-    text = ACTIONS_ANCHOR.sub(lambda match: match.group(3), text)
+    text = ACTIONS_ANCHOR.sub(_unwrap_actions_anchor, text)
     text = ACTIONS_URL.sub("", text)
     return ARTIFACT_WORD.sub("", text)
 
@@ -1207,6 +1225,7 @@ def publish_report_files(
         cleaned_html = strip_actions_text(html_text)
         if expired:
             cleaned_html = scrub_expired_evidence_html(cleaned_html, days)
+        cleaned_html = unlink_unpublished_evidence(cleaned_html, folder)
         cleaned_html = checked_report_html(cleaned_html, str(folder / "report.html"))
         (folder / "report.html").write_text(cleaned_html, encoding="utf-8")
     for name in ("report.md", "report.txt"):
@@ -1218,6 +1237,34 @@ def publish_report_files(
         if cleaned != text:
             path.write_text(cleaned, encoding="utf-8")
     write_published_checksums(folder)
+
+
+def _unpublished_evidence(folder: Path, reference: str) -> bool:
+    """True when an ``evidence/...`` reference does not name a file this run folder holds."""
+    bare = reference.split("#", 1)[0].split("?", 1)[0]
+    if site_path(bare) is None:
+        return True
+    target = folder / urllib.parse.unquote(bare)
+    return target.is_symlink() or not target.is_file()
+
+
+def unlink_unpublished_evidence(text: str, folder: Path) -> str:
+    """Show a link to evidence the site did not publish as plain text, not as a dead link.
+
+    A file over the run's evidence budget, or of a type the site does not copy, is not in
+    the run folder, and the reporter cannot know that when it renders the link.
+    """
+
+    def video(match: re.Match) -> str:
+        reference = re.search(r"evidence/[^'\"<>\s]+", match.group(0))
+        if reference and _unpublished_evidence(folder, reference.group(0)):
+            return ""
+        return match.group(0)
+
+    def anchor(match: re.Match) -> str:
+        return match.group(3) if _unpublished_evidence(folder, match.group(2)) else match.group(0)
+
+    return EVIDENCE_ANCHOR.sub(anchor, EVIDENCE_VIDEO.sub(video, text))
 
 
 def scrub_expired_evidence_html(text: str, days: int) -> str:
@@ -1262,6 +1309,8 @@ def scrub_reporter_html(text: str, record: dict, *, trial: bool, expired: bool, 
         return html.escape(label)
 
     def unwrap(match: re.Match) -> str:
+        if RUN_ADDRESS.fullmatch(match.group(2)):
+            return match.group(0)
         return html.escape(shown(match.group(3)))
 
     text = ARTIFACT_LINK.sub(replace, text)
@@ -1294,6 +1343,7 @@ def publish_run_page(folder: Path, record: dict, *, now: str, days: int, trial: 
     public = scrub_reporter_html(
         html_text_for_page, record, trial=trial, expired=expired, days=days
     )
+    public = unlink_unpublished_evidence(public, folder)
     public = with_site_nav(
         public,
         overview_href="../../../../../index.html",
@@ -1386,7 +1436,7 @@ def public_page_problems(reports_dir: Path) -> list[str]:
         relative = path.relative_to(reports_dir).as_posix()
         if ARTIFACT_WORD.search(_wording_text(path, text)):
             problems.append(f"{relative} mentions an artifact")
-        if "/actions/" in text.lower():
+        if mentions_actions(text):
             problems.append(f"{relative} links to /actions/")
     return problems
 

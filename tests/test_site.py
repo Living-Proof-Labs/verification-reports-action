@@ -2022,7 +2022,15 @@ def test_deleting_the_artifact_word_cannot_assemble_a_fetch(tmp_path: Path):
 
 def test_real_reporter_report_is_published_unchanged(tmp_path: Path):
     text = REPORTER_FIXTURE.read_text(encoding="utf-8")
-    _make_run_folder(tmp_path / "in", "hallway", run_id="910", html_override=text)
+    # The page links only evidence the run folder holds; the site shows any other link as text.
+    held = {
+        match.removeprefix("evidence/"): b"evidence"
+        for match in set(re.findall(r"evidence/[A-Za-z0-9._/-]+", text))
+    }
+    assert "seed-01.mp4" in held
+    _make_run_folder(
+        tmp_path / "in", "hallway", run_id="910", html_override=text, evidence_files=held
+    )
     site_tool.build(tmp_path / "reports", tmp_path / "in")
     run_dir = tmp_path / "reports/unitree-g1/stock-mujoco-hallway/runs/910"
     assert (run_dir / "report.html").read_text(encoding="utf-8") == text
@@ -3069,7 +3077,7 @@ def test_public_page_check_allows_the_ci_run_address_and_nothing_else_under_acti
         CI_RUN + "/job/5",
         CI_RUN + "/attempts/2",
         CI_RUN + "/artifacts/101",
-        CI_RUN + "8",
+        CI_RUN + "x",
         CI_RUN + "?check_suite_focus=true",
         "https://github.com/org/repo/actions/workflows/ci.yml",
         "https://github.com/org/repo/actions/runs/",
@@ -3149,3 +3157,30 @@ def test_an_evidence_link_to_a_file_the_site_did_not_publish_is_plain_text(tmp_p
         assert "lost clip" in page
         assert "lost link" in page
         assert "<a href='evidence/video/lost.mp4'" not in page
+
+
+def test_real_reporter_3_17_0_run_page_links_the_ci_run_video_and_recording(tmp_path: Path):
+    # Rendered by reporter v3.17.0 from the real G1 bundle of Verify run 46110994356, with the
+    # links document the collect job now writes (site paths for the media it copies).
+    import require_reports
+
+    fixture = ROOT / "tests/fixtures/reporter/report-v3.17.0-g1-evidence-links.html"
+    text = fixture.read_text(encoding="utf-8")
+    media = {"video/trial-01-fail.mp4": b"mp4", "mcap/mcap/trial-01.mcap": b"mcap"}
+    _make_run_folder(
+        tmp_path / "in", "hallway", run_id="46110994356", html_override=text, evidence_files=media
+    )
+    site_tool.build(tmp_path / "reports", tmp_path / "in")
+    reports = tmp_path / "reports"
+    run = next(reports.glob("*/*/runs/46110994356"))
+    run_url = (
+        "https://github.com/Living-Proof-Labs/verification-reports-action/actions/runs/46110994356"
+    )
+    for name in ("index.html", "report.html"):
+        page = (run / name).read_text(encoding="utf-8")
+        assert f"<a href='{run_url}'>CI run</a>" in page
+        assert "<a href='evidence/mcap/mcap/trial-01.mcap'>MCAP, all 1 trials</a>" in page
+        assert "<video controls preload='metadata' src='evidence/video/trial-01-fail.mp4'>" in page
+        assert "<td><a href='evidence/video/trial-01-fail.mp4'>video</a></td>" in page
+    assert require_reports.run_page_problems(reports) == []
+    assert site_tool.public_page_problems(reports) == []
