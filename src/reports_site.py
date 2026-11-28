@@ -1664,7 +1664,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.repository,
                 args.branch,
                 args.current_run,
-                os.environ.get("GITHUB_TOKEN"),
+                os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"),
                 dry_run=args.dry_run,
                 site_url=args.site_url,
                 reset_history=args.reset_history,

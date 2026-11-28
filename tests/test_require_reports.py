@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The mock index links to the G1 report, and a refused site build is caught."""
+"""The public reports index is the G1 example, and fixture smoke is refused."""
 
 from pathlib import Path
 
@@ -9,38 +9,102 @@ import reports_site as site
 import require_reports
 import site_fixture
 
+BADGE = '<span class="badge badge-fail">Fail</span>'
 
-def test_mock_index_links_to_g1_report(tmp_path: Path):
+
+def test_public_index_links_g1_paths(tmp_path: Path):
     runs = tmp_path / "runs"
-    site_fixture.write(runs, repository="Living-Proof-Labs/verification-reports-action")
+    site_fixture.write(runs, repository="Living-Proof-Labs/livingproof-unitree-g1")
     reports = tmp_path / "reports"
-    site.build(reports, runs, now="2026-11-25T00:00:00Z")
+    site.build(reports / "g1", runs, now="2026-11-25T00:00:00Z")
+    require_reports.publish_public_index(reports)
+    text = (reports / "index.html").read_text(encoding="utf-8")
+    assert "unitree-g1" in text
+    assert require_reports.GRADE_BADGE.search(text)
+    assert 'href="g1/unitree-g1/stock-mujoco-hallway/latest/"' in text
+    assert 'href="unitree-g1/' not in text
+    assert "fixture-scenario-stock" not in text
+    assert "fixture-hallway-stock" not in text
+    assert "verification-reports-action" not in text
+    require_reports.require_published(reports, "success")
+
+
+def test_public_index_rejects_fixture_paths(tmp_path: Path):
+    reports = _write_publishable_reports(tmp_path / "reports")
     index = reports / "index.html"
-    assert require_reports.G1_HREF not in index.read_text(encoding="utf-8")
-    require_reports.link_g1_report(index)
-    text = index.read_text(encoding="utf-8")
-    assert require_reports.G1_HREF in text
-    assert "Unitree G1 report" in text
+    original = index.read_text(encoding="utf-8")
+    for name in ("fixture-scenario-stock", "fixture-hallway-stock"):
+        index.write_text(original + name, encoding="utf-8")
+        with pytest.raises(SystemExit, match=f"public index lists {name}"):
+            require_reports.require_published(reports, "success")
+        index.write_text(original, encoding="utf-8")
+        folder = reports / "verification-reports-action" / name / "runs" / "1"
+        folder.mkdir(parents=True)
+        with pytest.raises(SystemExit, match="fixture path"):
+            require_reports.require_published(reports, "success")
+        folder.rmdir()
+        folder.parent.rmdir()
+        folder.parent.parent.rmdir()
+        folder.parent.parent.parent.rmdir()
 
 
-def test_refused_site_build_is_caught_when_index_exists(tmp_path: Path):
-    reports = tmp_path / "reports"
-    (reports / "g1").mkdir(parents=True)
-    (reports / "index.html").write_text(
-        "<h1>Verification reports</h1>"
-        '<p class="sibling-report"><a href="g1/">Unitree G1 report</a></p>'
-        "verification-reports-action",
-        encoding="utf-8",
-    )
-    (reports / "g1" / "index.html").write_text("unitree-g1", encoding="utf-8")
+def test_public_index_rejects_fixture_phrase(tmp_path: Path):
+    reports = _write_publishable_reports(tmp_path / "reports")
+    note = reports / "g1" / "note.html"
+    note.write_text("fixture (this repository's fixture; release not checked)", encoding="utf-8")
+    with pytest.raises(SystemExit, match="fixture phrase"):
+        require_reports.require_published(reports, "success")
+    note.unlink()
+    require_reports.require_published(reports, "success")
+
+
+def test_public_index_requires_g1_report(tmp_path: Path):
+    reports = _write_publishable_reports(tmp_path / "reports")
+    index = reports / "index.html"
+    original = index.read_text(encoding="utf-8")
+    index.write_text(original.replace("unitree-g1", "other-robot"), encoding="utf-8")
+    with pytest.raises(SystemExit, match="missing the G1 report"):
+        require_reports.require_published(reports, "success")
+    index.write_text(original.replace(BADGE, "grade"), encoding="utf-8")
+    with pytest.raises(SystemExit, match="missing the G1 report"):
+        require_reports.require_published(reports, "success")
+    index.write_text(original, encoding="utf-8")
     with pytest.raises(SystemExit, match="refused site build"):
-        require_reports.require_published(reports, "failure", "success")
-    require_reports.require_published(reports, "success", "success")
-    (reports / "index.html").write_text(
-        "<h1>Verification reports</h1>verification-reports-action", encoding="utf-8"
-    )
-    with pytest.raises(SystemExit, match="does not link"):
-        require_reports.require_published(reports, "success", "success")
+        require_reports.require_published(reports, "failure")
+
+
+def test_public_index_requires_stable_g1_page(tmp_path: Path):
+    reports = _write_publishable_reports(tmp_path / "reports")
+    page = reports / "g1/unitree-g1/stock-mujoco-hallway/latest/index.html"
+    page.unlink()
+    with pytest.raises(SystemExit, match="built site is missing"):
+        require_reports.require_published(reports, "success")
+
+
+def test_public_index_accepts_g1_without_the_mock_report(tmp_path: Path):
+    reports = _write_publishable_reports(tmp_path / "reports")
+    text = (reports / "index.html").read_text(encoding="utf-8")
+    assert "verification-reports-action" not in text
+    require_reports.require_published(reports, "success")
+
+
+def test_drop_published_fixtures_removes_fixture_smoke(tmp_path: Path):
+    reports = _write_publishable_reports(tmp_path / "reports")
+    for name in ("fixture-scenario-stock", "fixture-hallway-stock"):
+        run = reports / "verification-reports-action" / name / "runs" / "9"
+        run.mkdir(parents=True)
+        (run / "report.html").write_text(
+            "fixture (this repository's fixture; release not checked)",
+            encoding="utf-8",
+        )
+    stray = reports / "stray.html"
+    stray.write_text("this repository's fixture", encoding="utf-8")
+    with pytest.raises(SystemExit, match="fixture"):
+        require_reports.require_published(reports, "success")
+    require_reports.drop_published_fixtures(reports)
+    assert not (reports / "verification-reports-action").exists()
+    assert not stray.exists()
+    require_reports.require_published(reports, "success")
 
 
 def test_refused_g1_build_is_caught_when_index_exists(tmp_path: Path):
@@ -63,19 +127,15 @@ def test_readme_sample_link_exists_in_the_built_site(tmp_path: Path, monkeypatch
     repo = Path(__file__).resolve().parents[1]
     reports = tmp_path / "site" / "reports"
     _write_publishable_reports(reports)
-    page = reports / "g1/unitree-g1/stock-mujoco-hallway/latest/index.html"
-    page.parent.mkdir(parents=True)
-    page.write_text("latest hallway", encoding="utf-8")
     require_reports.require_readme_sample(reports.parent, repo / "README.md")
     monkeypatch.chdir(repo)
-    monkeypatch.setenv("MOCK_STATUS", "success")
     monkeypatch.setenv("G1_STATUS", "success")
     require_reports.main(["require_reports.py", "check", str(reports)])
 
 
 def test_readme_run_id_link_is_refused(tmp_path: Path):
-    site = tmp_path / "site"
-    page = site / "reports/g1/unitree-g1/stock-mujoco-hallway/latest/index.html"
+    site_root = tmp_path / "site"
+    page = site_root / "reports/g1/unitree-g1/stock-mujoco-hallway/latest/index.html"
     page.parent.mkdir(parents=True)
     page.write_text("latest hallway", encoding="utf-8")
     readme = tmp_path / "README.md"
@@ -85,7 +145,7 @@ def test_readme_run_id_link_is_refused(tmp_path: Path):
         encoding="utf-8",
     )
     with pytest.raises(SystemExit, match="run id"):
-        require_reports.require_readme_sample(site, readme)
+        require_reports.require_readme_sample(site_root, readme)
     readme.write_text(
         "https://docs.livingprooflabs.com/verification-reports-action/"
         "reports/g1/unitree-g1/stock-mujoco-hallway/latest/\n",
@@ -93,15 +153,18 @@ def test_readme_run_id_link_is_refused(tmp_path: Path):
     )
     page.unlink()
     with pytest.raises(SystemExit, match="built site is missing"):
-        require_reports.require_readme_sample(site, readme)
+        require_reports.require_readme_sample(site_root, readme)
 
 
-def _write_publishable_reports(reports: Path) -> None:
-    (reports / "g1").mkdir(parents=True)
+def _write_publishable_reports(reports: Path) -> Path:
+    latest = reports / "g1/unitree-g1/stock-mujoco-hallway/latest"
+    latest.mkdir(parents=True)
+    (latest / "index.html").write_text("latest hallway", encoding="utf-8")
+    (reports / "g1" / "index.html").write_text(f"unitree-g1 {BADGE}", encoding="utf-8")
     (reports / "index.html").write_text(
         "<h1>Verification reports</h1>"
-        '<p class="sibling-report"><a href="g1/">Unitree G1 report</a></p>'
-        "verification-reports-action",
+        f"unitree-g1 {BADGE}"
+        '<a href="g1/unitree-g1/stock-mujoco-hallway/latest/">hallway</a>',
         encoding="utf-8",
     )
-    (reports / "g1" / "index.html").write_text("unitree-g1", encoding="utf-8")
+    return reports

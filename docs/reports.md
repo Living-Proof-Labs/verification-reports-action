@@ -1,7 +1,7 @@
 # Reports
 
-Each release publishes the mock robot smoke report and the real G1 smoke report from that release's Verify run, built with this Action's `site` step.
+Each release publishes the Unitree G1 example from that release's Verify run, built with this Action's `site` step. The mock robot smoke stays in Verify and is not published on Pages.
 
-[Mock robot report](https://docs.livingprooflabs.com/verification-reports-action/reports/)
+[Unitree G1 report](https://docs.livingprooflabs.com/verification-reports-action/reports/)
 
-[Unitree G1 report](https://docs.livingprooflabs.com/verification-reports-action/reports/g1/)
+The stable hallway page is [reports/g1/unitree-g1/stock-mujoco-hallway/latest/](https://docs.livingprooflabs.com/verification-reports-action/reports/g1/unitree-g1/stock-mujoco-hallway/latest/).

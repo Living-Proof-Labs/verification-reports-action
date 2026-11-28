@@ -110,7 +110,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      # Download the mock smoke report from the Verify run that triggered this release.
+      # Download the real G1 smoke report from the Verify run that triggered this release.
       actions: read
     env:
       DOCS_KIND: release
@@ -173,7 +173,8 @@ jobs:
       - run: task -t Taskfile.runtime.yml docs:setup
       - run: task -t Taskfile.runtime.yml docs:build
       - run: task -t Taskfile.runtime.yml docs:verify
-      # Reuse the mock report action-smoke already uploaded on the Verify run for this commit.
+      # Reuse the real G1 report g1-smoke already uploaded on the Verify run for this commit.
+      # The mock robot smoke stays in Verify and is not published.
       # docs:verify stays on the manual pages; the reports tree is added afterwards.
       - name: Choose the Verify run
         id: verify-run
@@ -234,25 +235,26 @@ jobs:
             exit 1
           fi
           echo "id=$id" >> "$GITHUB_OUTPUT"
-      - name: Download the mock robot smoke report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: verification-report
-          path: artifacts/smoke-report
-          run-id: ${{ steps.verify-run.outputs.id }}
-          github-token: ${{ github.token }}
-      - name: Build the reports section
-        id: mock-site
-        uses: ./site
-        with:
-          runs-dir: artifacts/smoke-report
-          output-dir: artifacts/site/reports
-          reset-history: ${{ inputs.reset_history && 'true' || 'false' }}
-          restore-history: auto
-          upload-artifact: 'false'
-          site-url: https://docs.livingprooflabs.com/verification-reports-action/
-      - name: Link the G1 report from the mock index
-        run: python3 tools/require_reports.py link artifacts/site/reports/index.html
+      - name: Restore published report history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESET_HISTORY: ${{ inputs.reset_history && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          extra=()
+          if [ "$RESET_HISTORY" = true ]; then
+            extra+=(--reset-history)
+          fi
+          python3 src/reports_site.py restore artifacts/site/reports \
+            --site-url https://docs.livingprooflabs.com/verification-reports-action/ \
+            --branch main \
+            "${extra[@]}"
+      # Earlier deploys published fixture smoke beside reports/g1. Drop those
+      # paths before building so they are not uploaded again. The G1 build
+      # keeps restore-history false: this restore already unpacked reports/g1,
+      # and restoring the same archive into reports/g1 would nest it.
+      - name: Drop fixture smoke from the public tree
+        run: python3 tools/require_reports.py drop-fixtures artifacts/site/reports
       - name: Download the real G1 smoke report
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -260,9 +262,6 @@ jobs:
           path: artifacts/g1-smoke-report
           run-id: ${{ steps.verify-run.outputs.id }}
           github-token: ${{ github.token }}
-      # The mock step restores the published reports/ tree, which already
-      # includes reports/g1. Restoring that same Pages archive again into
-      # reports/g1 would import the mock robot and fail the one-robot check.
       - name: Build the G1 reports section
         id: g1-site
         uses: ./site
@@ -273,10 +272,11 @@ jobs:
           restore-history: 'false'
           upload-artifact: 'false'
           site-url: https://docs.livingprooflabs.com/verification-reports-action/
+      - name: Publish the G1 index
+        run: python3 tools/require_reports.py publish-index artifacts/site/reports
       - name: Require the published reports
         if: always()
         env:
-          MOCK_STATUS: ${{ steps.mock-site.outcome }}
           G1_STATUS: ${{ steps.g1-site.outcome }}
         run: python3 tools/require_reports.py check artifacts/site/reports
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
