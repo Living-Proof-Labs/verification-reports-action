@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { assertConfigurationSlug, sha256 } from './definitions.mjs';
+import { ReportError, assertConfigurationSlug, sha256 } from './definitions.mjs';
 import { fixtureProvenance } from './provenance.mjs';
 
 const REPORT_FILES = ['report.html', 'report.md', 'report.json', 'report.txt'];
@@ -158,12 +158,48 @@ function spliceHtml(text, section) {
   return `${text.replace(/\s*$/, '\n')}${section}`;
 }
 
+// Preserve numeric spellings in hashed nested content (Python distinguishes 27.0
+// from 27 when canonicalizing the source bundle). Only replace the caller field.
+export function withReportInputs(text, inputs) {
+  const parsed = JSON.parse(text);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new ReportError('report.json must be an object');
+  }
+  const raw = text.trim();
+  const fields = [];
+  let start = 1;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let i = 1; i < raw.length - 1; i++) {
+    const ch = raw[i];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') quoted = false;
+    } else if (ch === '"') quoted = true;
+    else if (ch === '{' || ch === '[') depth++;
+    else if (ch === '}' || ch === ']') depth--;
+    else if (ch === ',' && depth === 0) {
+      fields.push(raw.slice(start, i));
+      start = i + 1;
+    }
+  }
+  fields.push(raw.slice(start, -1));
+  const kept = fields.filter((field) => {
+    if (!field.trim()) return false;
+    const key = field.match(/^\s*("(?:\\.|[^"\\])*")\s*:/);
+    if (!key) throw new ReportError('Invalid report field');
+    return JSON.parse(key[1]) !== 'inputs';
+  });
+  kept.push(`\n"inputs": ${JSON.stringify(inputs)}`);
+  return `{${kept.join(',')}\n}\n`;
+}
+
 export function stampReportInputs(directory, inputs) {
   if (!Array.isArray(inputs)) return;
   const reportPath = path.join(directory, 'report.json');
-  const report = JSON.parse(readFileSync(reportPath, 'utf8'));
-  report.inputs = inputs;
-  writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+  writeFileSync(reportPath, withReportInputs(readFileSync(reportPath, 'utf8'), inputs), 'utf8');
   const markdown = pinnedInputsText(inputs);
   const markdownFile = path.join(directory, 'report.md');
   writeFileSync(markdownFile, spliceMarked(readFileSync(markdownFile, 'utf8'), markdown), 'utf8');

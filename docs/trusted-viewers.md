@@ -36,3 +36,41 @@ correctly refused by Reporter. The raw main G1 artifact ZIP download returned Fo
 its earlier generation-stage provenance has not been independently verified. Do not
 silently recalculate the digest. Local on/off proof uses the previously prepared explicit
 fixture report with genuine retained recording, not a claim about current hosted input.
+
+## Normal generation provenance proof
+
+The stale digest has a reproducible normal-path cause: `stampReportInputs` parsed
+and reserialized the full Python-generated report in JavaScript. Values such as
+`27.0`, `0.0` and `1.0` inside `source_bundle` became integer spellings; Reporter's
+canonical digest distinguishes them. The local revision now replaces only the
+top-level `inputs` JSON field, retaining every nested field's raw JSON bytes.
+This neither updates nor forgives an existing source digest.
+
+Proof used the installed Reporter candidate on its original G1 corner manifest,
+then the ordinary `assembleVerifierDefinition` path with artifact checksums. The
+new report renders successfully after assembly; source digest remains
+`ab31a6d1a95b163902a625616a322ac694944194e81ed5c435ac5a1cee21a2f7`, and decisions
+and summaries equal the freshly generated input. This is a recorded G1 fixture
+and a local artifact-shaped test, not a newly hosted simulation or reconstruction
+of a historical published report. Regression tests also cover escaped keys,
+nested punctuation, repeated stamping and integers beyond JavaScript precision.
+
+## Exact Reporter features still needed
+
+1. Compose the caller's approved existing report page with a bound viewer while
+   preserving its navigation, Pinned inputs and provenance additions, OR provide
+   typed inputs for those existing additions in native full-page rendering.
+   Current `render` only has the run-history link slot, not those three additions.
+   Action cannot replace `index.html` with native output without losing them, nor
+   copy the additions into the new output without prohibited HTML manipulation.
+2. Validate an already published viewer-bearing page and its pinned assets/binding
+   without rewriting the page. Action can verify the complete file manifest and
+   pass data/pins; Reporter must own admission of its generated wrapper. Current
+   `render` is not a validation interface. Existing `recheck_restored_run` rejects
+   iframe content; simply skipping it or allowing arbitrary iframe markup would
+   weaken the existing trust boundary. The local fail-closed guard remains until
+   that narrow validation interface exists. Therefore this candidate still cannot
+   promise a second production publication after enabling viewers.
+
+These are concrete composition/validation seams on the existing renderer, not a
+request for the unrelated #75 site/index/history command or a history migration.
