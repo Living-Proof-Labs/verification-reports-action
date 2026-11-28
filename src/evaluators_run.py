@@ -76,11 +76,23 @@ def reporter_image(records: list) -> str:
     return image
 
 
-def record_missing(bundle: dict, stderr: str) -> str:
+def declared_evaluator(lines: list[str]) -> str:
+    """The declaration the loader was given.
+
+    capability-verifier v3 records that text on a missing integrity result.
+    The loader writes no evaluator id when it refuses before producing a record.
+    """
+    declared = [line.strip() for line in lines if isinstance(line, str) and line.strip()]
+    if not declared:
+        raise RuntimeError("a missing evaluator result needs the declaration line")
+    return "\n".join(declared)
+
+
+def record_missing(bundle: dict, stderr: str, *, evaluator: str) -> str:
     from capability_verifier.collect import _attach_not_run
 
     reason = last_stderr_line(stderr)
-    _attach_not_run(bundle, "failure", reason)
+    _attach_not_run(bundle, "failure", reason, evaluator=evaluator)
     return reason
 
 
@@ -360,7 +372,7 @@ def attach_scenario_results(bundle_path: Path, results_dir: Path | None, report_
     from capability_verifier.collect import collect
 
     bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-    collect(bundle, results_dir, report_dir, integrity_job=None)
+    collect(bundle, results_dir, report_dir)
     bundle_path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
 
 
@@ -371,7 +383,9 @@ def artifact_dir(parent: Path, prefix: str, kind: str, configuration: str) -> Pa
     return direct if direct.is_dir() else None
 
 
-def record_apply_failure(bundle_path: Path, report_dir: Path, reason: str) -> None:
+def record_apply_failure(
+    bundle_path: Path, report_dir: Path, reason: str, *, evaluator: str
+) -> None:
     """NOT RUN on the original report, so collect still finds integrity-lines.txt."""
     try:
         bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
@@ -381,7 +395,7 @@ def record_apply_failure(bundle_path: Path, report_dir: Path, reason: str) -> No
         bundle = {}
     from capability_verifier.collect import _attach_not_run
 
-    _attach_not_run(bundle, "failure", reason)
+    _attach_not_run(bundle, "failure", reason, evaluator=evaluator)
     bundle_path.parent.mkdir(parents=True, exist_ok=True)
     bundle_path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
     write_integrity_file(report_dir, bundle)
@@ -409,6 +423,7 @@ def apply_configuration(
         return False
     runner = subprocess.run if runner is None else runner
     render = render_with_reporter if render is None else render
+    evaluator = declared_evaluator(lines)
     try:
         attach_scenario_results(bundle_path, results_dir, report_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -426,7 +441,7 @@ def apply_configuration(
         bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
         failed = classify(provenance, code) == "missing"
         if failed:
-            record_missing(bundle, stderr)
+            record_missing(bundle, stderr, evaluator=evaluator)
             bundle_path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
         else:
             bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
@@ -441,7 +456,7 @@ def apply_configuration(
     except Exception as exc:
         reason = f"{configuration}: {exc}" if configuration else str(exc)
         print(f"evaluators: {reason}", file=sys.stderr)
-        record_apply_failure(bundle_path, report_dir, reason)
+        record_apply_failure(bundle_path, report_dir, reason, evaluator=evaluator)
         return True
 
 

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { VERIFIER_WORKFLOW_SHA, VERIFIER_WORKFLOW_TAG } from '../src/definitions.mjs';
+import { VERIFIER_API_SHA, VERIFIER_API_TAG, VERIFIER_WORKFLOW_SHA, VERIFIER_WORKFLOW_TAG } from '../src/definitions.mjs';
 import { EVALUATORS_SENTINEL, evaluatorsDeclaration, readEvaluatorsFile, resolveCallerEvaluators } from '../src/evaluators.mjs';
 import { writeGithubOutput } from '../src/github-output.mjs';
 import { writePlan } from '../src/plan.mjs';
@@ -75,7 +75,7 @@ test('the report workflow passes the plan lines and still allows fifteen minutes
   assert.match(collect, /timeout-minutes: 15/);
   assert.match(collect, /uv sync --locked/);
   assert.match(collect, /action\/src\/evaluators_run\.py/);
-  assert.match(collect, new RegExp(`ref: ${VERIFIER_WORKFLOW_SHA}`));
+  assert.match(collect, new RegExp(`ref: ${VERIFIER_API_SHA} # ${VERIFIER_API_TAG.replaceAll('.', '\\.')}`));
   assert.match(
     collect,
     /uses: astral-sh\/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5\.4\.2\n {8}if: needs\.plan\.outputs\.evaluators_run == 'true'\n {8}with:/
@@ -195,13 +195,17 @@ test('action code does not name an evaluator', () => {
 
 test('pins name capability-verifier v2.14.0 and the reporter v3.17.0', () => {
   const report = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
+  const verify = readFileSync(new URL('../.github/workflows/verify.yml', import.meta.url), 'utf8');
   const lock = JSON.parse(readFileSync(new URL('./smoke/g1/unitree-g1-stock-mujoco-hallway.lock.json', import.meta.url), 'utf8'));
   const sha = 'bd6be5217b52b1348b4dc23613ee06d44bed9519';
   assert.equal(VERIFIER_WORKFLOW_SHA, sha);
   assert.equal(VERIFIER_WORKFLOW_TAG, 'v2.14.0');
+  assert.equal(VERIFIER_API_SHA, '78c15b635cb558e322be4004b9f6ed9d24e3dc5d');
+  assert.equal(VERIFIER_API_TAG, 'v3.1.0');
   assert.match(report, new RegExp(`walk-hallway\\.yml@${sha} # v2\\.14\\.0`));
   assert.match(report, new RegExp(`scenario\\.yml@${sha} # v2\\.14\\.0`));
-  assert.match(report, new RegExp(`ref: ${sha}`));
+  assert.match(report, new RegExp(`ref: ${VERIFIER_API_SHA} # v3\\.1\\.0`));
+  assert.match(verify, new RegExp(`ref: ${VERIFIER_API_SHA} # v3\\.1\\.0`));
   assert.equal(lock.releases.reporter.tag, 'v3.17.0');
   assert.equal(lock.releases.reporter.commit, '5d6aed964c0eea1094caeec24e797808b2d0c3fb');
   assert.equal(lock.releases.verifier.tag, 'v2.14.0');

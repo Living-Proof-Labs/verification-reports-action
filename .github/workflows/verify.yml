@@ -362,7 +362,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: Living-Proof-Labs/capability-verifier
-          ref: bd6be5217b52b1348b4dc23613ee06d44bed9519
+          ref: 78c15b635cb558e322be4004b9f6ed9d24e3dc5d # v3.1.0
           path: capability-verifier
           persist-credentials: false
       - name: Install capability-verifier
