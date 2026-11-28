@@ -81,6 +81,41 @@ def test_public_index_requires_stable_g1_page(tmp_path: Path):
         require_reports.require_published(reports, "success")
 
 
+def test_prefix_g1_links_leaves_root_absolute_and_data_urls():
+    text = (
+        '<a href="/overview">home</a>'
+        '<img src="data:image/gif;base64,AAAA">'
+        '<a href="unitree-g1/latest/">hall</a>'
+    )
+    rewritten = require_reports._prefix_g1_links(text)
+    assert 'href="/overview"' in rewritten
+    assert 'src="data:image/gif;base64,AAAA"' in rewritten
+    assert 'href="g1/unitree-g1/latest/"' in rewritten
+    assert "g1//overview" not in rewritten
+    assert "g1/data:" not in rewritten
+
+
+def test_publish_index_drops_mock_root_files(tmp_path: Path):
+    reports = tmp_path / "reports"
+    g1 = reports / "g1"
+    g1.mkdir(parents=True)
+    (g1 / "index.html").write_text("<h1>unitree-g1</h1>", encoding="utf-8")
+    (g1 / "styles.css").write_text("g1", encoding="utf-8")
+    (g1 / "open.js").write_text("g1", encoding="utf-8")
+    (reports / "site.json").write_text(
+        '{"robot": "verification-reports-action", "scenarios": 2, "runs": 6}\n',
+        encoding="utf-8",
+    )
+    (reports / "styles.css").write_text("mock", encoding="utf-8")
+    (reports / "open.js").write_text("mock", encoding="utf-8")
+    require_reports.publish_public_index(reports)
+    assert not (reports / "site.json").exists()
+    assert not (reports / "styles.css").exists()
+    assert not (reports / "open.js").exists()
+    assert (g1 / "styles.css").read_text(encoding="utf-8") == "g1"
+    assert (g1 / "open.js").read_text(encoding="utf-8") == "g1"
+
+
 def test_public_index_accepts_g1_without_the_mock_report(tmp_path: Path):
     reports = _write_publishable_reports(tmp_path / "reports")
     text = (reports / "index.html").read_text(encoding="utf-8")
@@ -97,6 +132,7 @@ def test_drop_published_fixtures_removes_fixture_smoke(tmp_path: Path):
             "fixture (this repository's fixture; release not checked)",
             encoding="utf-8",
         )
+        (run / "trial.mp4").write_bytes(b"mp4-bytes")
     stray = reports / "stray.html"
     stray.write_text("this repository's fixture", encoding="utf-8")
     with pytest.raises(SystemExit, match="fixture"):

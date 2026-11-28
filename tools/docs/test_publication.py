@@ -234,6 +234,9 @@ class PublicationTest(unittest.TestCase):
                 (root / "reports/index.html").write_text(g1_index + "fixture-scenario-stock")
                 with self.assertRaisesRegex(ValueError, "fixture-scenario-stock"):
                     check(url, SHA, "1.2.3")
+                (root / "reports/index.html").write_text(g1_index + "this repository's fixture")
+                with self.assertRaisesRegex(ValueError, "fixture phrase"):
+                    check(url, SHA, "1.2.3")
                 (root / "reports/index.html").write_text(g1_index)
                 with self.assertRaisesRegex(ValueError, "version identity"):
                     check(url, SHA, "2.0.0")

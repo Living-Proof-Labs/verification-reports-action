@@ -17,13 +17,14 @@ SAMPLE_REPORT = "reports/g1/unitree-g1/stock-mujoco-hallway/latest/"
 STABLE_PAGE = Path("g1/unitree-g1/stock-mujoco-hallway/latest/index.html")
 RUN_ID_LINK = re.compile(r"reports/(?:[^/\s\"')<>]+/)*runs/[0-9]+/")
 _LOCAL_REF = re.compile(r"""(?P<attr>\b(?:href|src))=(?P<q>["'])(?P<url>.*?)(?P=q)""")
+MOCK_ROOT_FILES = ("site.json", "styles.css", "open.js")
 
 
 def _keep_public_url(url: str) -> bool:
-    """Leave absolute, in-page, and already-prefixed links alone."""
-    if not url or url.startswith(("#", "mailto:", "g1/", "../", "index.html", "//")):
+    """Leave absolute, root-absolute, data, in-page, and already-prefixed links alone."""
+    if not url or url.startswith(("#", "mailto:", "/", "g1/", "../", "index.html")):
         return True
-    return urlsplit(url).scheme in {"http", "https"}
+    return urlsplit(url).scheme in {"http", "https", "data"}
 
 
 def _prefix_g1_links(text: str) -> str:
@@ -46,6 +47,10 @@ def publish_public_index(reports: Path) -> None:
         raise SystemExit("G1 index is missing")
     text = _prefix_g1_links(source.read_text(encoding="utf-8"))
     (reports / "index.html").write_text(text, encoding="utf-8")
+    for name in MOCK_ROOT_FILES:
+        leftover = reports / name
+        if leftover.is_file():
+            leftover.unlink()
 
 
 def fixture_problems(reports: Path) -> list[str]:

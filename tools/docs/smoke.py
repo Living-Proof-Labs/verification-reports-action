@@ -71,6 +71,8 @@ def check(base, commit, version=None):
     for name in ("fixture-scenario-stock", "fixture-hallway-stock"):
         if name in reports:
             raise ValueError(f"Published reports list {name}")
+    if "this repository's fixture" in reports:
+        raise ValueError("Published reports contain the fixture phrase")
     try:
         g1 = fetch("reports/g1/index.html").decode()
     except OSError as exc:
