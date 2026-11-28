@@ -28,6 +28,8 @@ from test_pr84_guard_gaps_round2 import CELL, VIDEO, _page, _problems, _video_fo
         f"<video controls data-src='{VIDEO}'></video>",
         f"<video controls src='evidence/video/other.mp4' title='{VIDEO}'></video>",
         f"<video controls src='evidence/video/other.mp4'>{VIDEO}</video>",
+        f"<video controls title='a src={VIDEO} b' src='evidence/video/other.mp4'></video>",
+        f"<video controls title=\"x src='{VIDEO}'\"></video>",
     ],
 )
 def test_a_player_that_is_not_exactly_the_published_video_fails_the_gate(tmp_path, player):
