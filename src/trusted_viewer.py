@@ -23,7 +23,7 @@ def read_file(path):
     return path.read_bytes()
 
 
-def load_viewers(filename, declarations=(), *, historical=False):
+def load_viewers(filename, declarations=(), *, historical=False, publication=False):
     """Executable bytes and evaluator identities come only from the caller."""
     from pathlib import Path
 
@@ -45,7 +45,7 @@ def load_viewers(filename, declarations=(), *, historical=False):
         if identity["id"] in seen:
             raise SiteError("Duplicate viewer evaluator declaration")
         seen.add(identity["id"])
-        if not historical:
+        if not historical and not publication:
             repository = entry.get("evaluator_repository")
             descriptor = entry.get("evaluator_descriptor")
             if not isinstance(repository, str) or not isinstance(descriptor, str):
@@ -123,6 +123,12 @@ def render_fresh(folder, viewers, *, command=None, existing=False):
         ]
         if not docs:
             continue
+        if (
+            existing
+            and len(docs) == 1
+            and any(docs[0]["evaluator"].get(k) != v for k, v in identity.items())
+        ):
+            continue  # History can contain several independently approved versions.
         if len(docs) != 1 or any(docs[0]["evaluator"].get(k) != v for k, v in identity.items()):
             raise SiteError("Viewer requires exact unambiguous evaluator identity")
         matched.append((entry, docs[0]))
@@ -309,3 +315,71 @@ def verify_manifest(folder):
     if actual != names:
         raise SiteError("Published file set differs from manifest")
     return manifest
+
+
+def publication_approvals(root, viewers):
+    """Mint exact per-report approvals only for an authenticated extracted archive.
+
+    Called exclusively by restore after the API/source/log/archive proof. The
+    returned entries stay in memory; a file inside history cannot mint authority.
+    Every approval still passes the normal complete manifest and native panel check.
+    """
+    import copy
+
+    approved = []
+    for target in root.glob("*/*/runs/*/trusted-viewer"):
+        folder = target.parent
+        verify_manifest(folder)
+        report = json.loads(read_file(folder / "report.json"))
+        assessment = report.get("source_bundle", {}).get("assessment", {})
+        results = assessment.get("advisory_results", {})
+        candidates = []
+        for pin in viewers:
+            identity = pin["evaluator"]
+            for result in results.values():
+                actual = result.get("evaluator", {})
+                if not all(actual.get(k) == v for k, v in identity.items()):
+                    continue
+                version = actual.get("version", "")
+                if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
+                    raise SiteError("Published evaluator version is not stable")
+                repo = pin.get("evaluator_repository")
+                descriptor = pin.get("evaluator_descriptor")
+                if not isinstance(repo, str) or not isinstance(descriptor, str):
+                    raise SiteError("Publication approval requires stable repository/descriptor")
+                line = f"{repo}@v{version}/{descriptor}"
+                provenance = assessment.get("advisory_provenance", {}).get(identity["id"], {})
+                if (
+                    provenance.get("line") != line
+                    or provenance.get("repo") != repo
+                    or provenance.get("ref") != "v" + version
+                    or provenance.get("installed_version") != version
+                    or provenance.get("outcome") != "result"
+                    or provenance.get("exit_code") != 0
+                    or not re.fullmatch(r"[a-f0-9]{40}", provenance.get("commit", ""))
+                    or not re.fullmatch(r"[a-f0-9]{64}", provenance.get("descriptor_sha256", ""))
+                ):
+                    raise SiteError("Published evaluator provenance is not approved")
+                recording = json.loads(read_file(target / "data/recording.json"))
+                trials = recording.get("trials")
+                if not isinstance(trials, list) or len(trials) != 1:
+                    raise SiteError("Publication approval requires one trial")
+                entry = copy.deepcopy(pin)
+                entry["evaluator"] = dict(identity, version=version)
+                entry["approved_trials"] = [trials[0].get("trial")]
+                candidates.append(entry)
+        validate_restored(folder, candidates)
+        for entry in candidates:
+            same = [
+                v
+                for v in approved
+                if v["evaluator"] == entry["evaluator"]
+                and v["viewer_sha256"] == entry["viewer_sha256"]
+            ]
+            if same:
+                for trial in entry["approved_trials"]:
+                    if trial not in same[0]["approved_trials"]:
+                        same[0]["approved_trials"].append(trial)
+            else:
+                approved.append(entry)
+    return approved

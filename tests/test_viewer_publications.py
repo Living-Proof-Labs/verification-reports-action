@@ -87,9 +87,11 @@ def publication(tmp_path, monkeypatch):
                 GITHUB_EVENT_NAME="pull_request",
                 GITHUB_RUN_ID=str(number),
             )
+            | publish.overrides
         )
         return tmp_path / f"published/unitree-g1/stock-mujoco-hallway/runs/{number}"
 
+    publish.overrides = {}
     return tmp_path, publish
 
 
@@ -218,3 +220,176 @@ def test_later_restore_of_upgrade_requires_external_approval(publication):
     assert snap(first) == before_first
     assert snap(second) == before_second
     assert not (root / "published/unitree-g1/stock-mujoco-hallway/runs/3").exists()
+
+
+# Import the mocked authenticated API fixture; production never accepts local logs.
+from test_publication_authority import authority_api, log_bytes  # noqa: E402,F401
+
+
+def _pages_zip(root):
+    import io
+    import tarfile
+    import zipfile
+
+    tar = io.BytesIO()
+    with tarfile.open(fileobj=tar, mode="w") as stream:
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                stream.add(path, arcname="reports/" + path.relative_to(root).as_posix())
+    outer = io.BytesIO()
+    with zipfile.ZipFile(outer, "w") as stream:
+        stream.writestr("artifact.tar", tar.getvalue())
+    return outer.getvalue()
+
+
+@pytest.fixture
+def authenticated_publication(publication, authority_api, monkeypatch):  # noqa: F811
+    import hashlib
+
+    import reports_restore
+
+    root, publish = publication
+    artifact, _, policy, responses, _ = authority_api
+    policy["viewer_registry"] = str(Path(__file__).parents[1] / "config/viewers/evaluators.json")
+    policy_file = root / "production-approval.json"
+    policy_file.write_text(json.dumps(policy))
+    download = {}
+    monkeypatch.setattr(reports_restore, "_list_pages_artifacts", lambda *a, **k: ([artifact], ""))
+    monkeypatch.setattr(reports_restore, "_repository_id", lambda *a: 9)
+    monkeypatch.setattr(
+        reports_restore, "_workflow_runs", lambda *a: lambda n: responses[f"/actions/runs/{n}"]
+    )
+    monkeypatch.setattr(reports_restore, "_conclusion_of", lambda *a, **k: lambda n: "success")
+    monkeypatch.setattr(reports_restore, "_download_pages_archive", lambda *a: download["bytes"])
+    monkeypatch.setattr(
+        reports_restore,
+        "_read_following_redirects",
+        lambda *a, **k: log_bytes(artifact=artifact["id"]),
+    )
+
+    def retain(number):
+        # Each call models a new successful production archive, not a mutable receipt.
+        previous = root / f"previous-{number}"
+        (root / "published").rename(previous)
+        download["bytes"] = _pages_zip(previous)
+        artifact["digest"] = "sha256:" + hashlib.sha256(download["bytes"]).hexdigest()
+        artifact["archive_download_url"] = (
+            "https://api.github.com/repos/owner/repo/actions/artifacts/11/zip"
+        )
+        artifact["created_at"] = "2026-11-29T06:00:00Z"
+        old_run = next(
+            v for k, v in responses.items() if k.startswith("/actions/runs/") and "jobs" not in k
+        )
+        job = next(v for k, v in responses.items() if k.startswith("/actions/jobs/"))
+        for key in list(responses):
+            if key.startswith(("/actions/runs/", "/actions/jobs/", "/actions/artifacts/")):
+                del responses[key]
+        artifact["id"], old_run["id"], job["id"] = number + 10, number + 20, number + 30
+        artifact["workflow_run"]["id"] = old_run["id"]
+        job["run_id"] = old_run["id"]
+        responses[f"/actions/artifacts/{artifact['id']}"] = artifact
+        responses[f"/actions/runs/{old_run['id']}"] = old_run
+        responses[f"/actions/runs/{old_run['id']}/attempts/1/jobs"] = {
+            "total_count": 1,
+            "jobs": [job],
+        }
+        responses[f"/actions/jobs/{job['id']}"] = job
+        publish.overrides.update(
+            INPUT_PUBLICATION_APPROVAL=str(policy_file),
+            INPUT_RESTORE_HISTORY="true",
+            INPUT_HISTORICAL_VIEWERS="",
+            GITHUB_REPOSITORY="owner/repo",
+            GITHUB_TOKEN="authorized-test-token",
+        )
+        return previous
+
+    return root, publish, retain, responses, download
+
+
+def test_authenticated_three_publications_one_pin_upgrade(authenticated_publication):
+    root, publish, retain, _, _ = authenticated_publication
+    first = publish(1, "2026-11-28T06:00:00Z")
+    original = snap(first)
+    retain(2)
+    second = publish(2, "2026-11-29T06:00:00Z", version="1.2.1")
+    upgraded = snap(second)
+    assert snap(first) == original
+    retain(3)
+    third = publish(3, "2026-11-30T06:00:00Z", version="1.2.1")
+    assert snap(first) == original
+    assert snap(second) == upgraded
+    assert "<iframe " in (third / "index.html").read_text()
+    assert "Compatible new sampled metric is visible." in (second / "index.html").read_text()
+    assert json.loads((third / "report.json").read_bytes())["summaries"][0]["grade"] == "FAIL"
+    assert (third / "health.json").read_bytes() == original["health.json"]
+
+
+@pytest.mark.parametrize(
+    "fault", ["archive", "workflow", "evidence", "unapproved-asset", "provenance"]
+)
+def test_authenticated_restore_refuses_without_publishing(authenticated_publication, fault):
+    root, publish, retain, responses, download = authenticated_publication
+    first = publish(1, "2026-11-28T06:00:00Z")
+    if fault == "evidence":
+        (first / "health.json").write_bytes(b"modified evidence")
+    if fault == "unapproved-asset":
+        (first / "trusted-viewer/viewer.html").write_bytes(b"unapproved code")
+        write_published_checksums(first)
+    if fault == "provenance":
+        doc = json.loads((first / "report.json").read_bytes())
+        doc["source_bundle"]["assessment"]["advisory_provenance"]["livingproof-health"]["repo"] = (
+            "other/repo"
+        )
+        (first / "report.json").write_text(json.dumps(doc))
+        write_published_checksums(first)
+    before = snap(first)
+    previous = retain(2)
+    if fault == "archive":
+        download["bytes"] += b"changed zip digest"
+    if fault == "workflow":
+        responses["/actions/runs/22"]["path"] = ".github/workflows/unapproved.yml"
+    with pytest.raises((SiteError, ValueError)):
+        publish(2, "2026-11-29T06:00:00Z", version="1.2.1")
+    assert snap(previous / "unitree-g1/stock-mujoco-hallway/runs/1") == before
+    assert not list((root / "published").glob("*/*/runs/*"))
+
+
+def test_authenticated_upgrade_then_undeclared_preserves_both(authenticated_publication):
+    _, publish, retain, _, _ = authenticated_publication
+    first = publish(1, "2026-11-28T06:00:00Z")
+    old = snap(first)
+    retain(2)
+    second = publish(2, "2026-11-29T06:00:00Z", version="1.2.1")
+    upgraded = snap(second)
+    retain(3)
+    third = publish(3, "2026-11-30T06:00:00Z", enabled=False, version="1.2.1")
+    assert snap(first) == old and snap(second) == upgraded
+    assert "<iframe " not in (third / "index.html").read_text()
+    assert "Recorded data" in (third / "index.html").read_text()
+
+
+def test_authenticated_upgrade_then_expiry_retains_verified_player(authenticated_publication):
+    _, publish, retain, _, _ = authenticated_publication
+    first = publish(1, "2026-11-28T06:00:00Z")
+    original_data = (first / "health.json").read_bytes()
+    retain(2)
+    second = publish(2, "2026-11-29T06:00:00Z", version="1.2.1")
+    retain(3)
+    publish(3, "2027-02-01T06:00:00Z", version="1.2.1")
+    for folder in [first, second]:
+        assert not list((folder / "evidence").rglob("*.mcap"))
+        assert (folder / "health.json").read_bytes() == original_data
+        assert "<iframe " in (folder / "index.html").read_text()
+        assert "Recorded data" in (folder / "index.html").read_text()
+
+
+def test_undecorated_history_needs_no_publication_authority(authenticated_publication):
+    _, publish, retain, responses, _ = authenticated_publication
+    first = publish(1, "2026-11-28T06:00:00Z", enabled=False)
+    before = snap(first)
+    retain(2)
+    responses["/actions/runs/22"]["path"] = ".github/workflows/legacy.yml"
+    del responses["/actions/artifacts/12"]["digest"]
+    second = publish(2, "2026-11-29T06:00:00Z", enabled=False)
+    assert snap(first) == before
+    assert "<iframe " not in (second / "index.html").read_text()

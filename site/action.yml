@@ -8,6 +8,10 @@ inputs:
     description: Existing caller evaluator declaration file or lines; fresh viewer versions derive from these pins.
     required: false
     default: ''
+  publication-approval:
+    description: Caller-approved production workflow fingerprints and independent viewer registry for authenticated Pages history.
+    required: false
+    default: ''
   historical-viewers:
     description: Independent caller-reviewed evaluator/trial/release allowlist for restored players.
     required: false
@@ -136,6 +140,7 @@ runs:
       shell: bash
       env:
         INPUT_EVALUATORS: ${{ inputs.evaluators }}
+        INPUT_PUBLICATION_APPROVAL: ${{ inputs.publication-approval }}
         INPUT_HISTORICAL_VIEWERS: ${{ inputs.historical-viewers }}
         INPUT_TRUSTED_VIEWERS: ${{ inputs.trusted-viewers }}
         INPUT_RUNS_DIR: ${{ inputs.runs-dir }}
