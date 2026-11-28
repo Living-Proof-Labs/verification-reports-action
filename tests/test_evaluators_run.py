@@ -17,10 +17,12 @@ import pytest
 from evaluators_run import (
     apply_configuration,
     classify,
+    declared_evaluator,
     last_stderr_line,
     load_provenance,
     loader_command,
     main,
+    record_apply_failure,
     record_missing,
     render_with_reporter,
     reporter_docker_command,
@@ -29,7 +31,7 @@ from evaluators_run import (
     run_downloaded,
 )
 
-PIN = "bd6be5217b52b1348b4dc23613ee06d44bed9519"
+PIN = "78c15b635cb558e322be4004b9f6ed9d24e3dc5d"
 
 
 def verifier_src() -> Path:
@@ -251,6 +253,9 @@ def test_missing_provenance_records_the_stderr_reason(tmp_path):
     reason = bundle["assessment"]["integrity_not_run"]["reason"]
     assert reason == last_stderr_line(stderr)
     assert bundle["assessment"]["integrity_not_run"]["job_result"] == "failure"
+    assert (
+        bundle["assessment"]["integrity_not_run"]["evaluator"] == "owner/repo@main/descriptor.json"
+    )
     shown = "\n".join(integrity_report_lines(bundle))
     assert reason in shown
     assert "NOT RUN (failure)" in shown
@@ -301,9 +306,10 @@ def test_a_bad_line_fails_with_the_loader_refusal(tmp_path):
         assert code != 0
         assert "is not a declaration line" in stderr
         bundle = {"assessment": {"runs": [{}]}}
-        reason = record_missing(bundle, stderr)
+        reason = record_missing(bundle, stderr, evaluator=line)
         assert reason == last_stderr_line(stderr)
         assert "is not a declaration line" in reason
+        assert bundle["assessment"]["integrity_not_run"]["evaluator"] == line
         from capability_verifier.collect import integrity_report_lines
 
         shown = "\n".join(integrity_report_lines(bundle))
@@ -689,6 +695,7 @@ def test_a_render_failure_still_leaves_integrity_lines(tmp_path, monkeypatch, ca
     bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
     missing = bundle["assessment"]["integrity_not_run"]
     assert missing["job_result"] == "failure"
+    assert missing["evaluator"] == "owner/repo@v1.2.3/descriptor.json"
     assert "reporter json exited 1" in missing["reason"]
     page = (report / "report.md").read_text(encoding="utf-8")
     assert "reporter json exited 1" in page
@@ -807,3 +814,74 @@ def test_evaluator_timestamps_reach_the_bundle_unchanged(tmp_path):
     stored = json.loads(bundle_path.read_text(encoding="utf-8"))
     stamps = stored["assessment"]["integrity_results"]["livingproof-run-integrity"]["timestamps"]
     assert stamps == {"started_at": started_at, "completed_at": completed_at}
+
+
+API_SHA = "78c15b635cb558e322be4004b9f6ed9d24e3dc5d"
+
+
+def test_the_loader_checkout_is_capability_verifier_v3_1_0():
+    assert PIN == API_SHA
+    root = Path(__file__).resolve().parents[1]
+    for relative in (".github/workflows/report.yml", ".github/workflows/verify.yml"):
+        text = (root / relative).read_text(encoding="utf-8")
+        assert f"ref: {API_SHA} # v3.1.0" in text
+    checkout = verifier_src().parent
+    head = subprocess.check_output(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True
+    ).strip()
+    assert head == API_SHA
+
+
+def test_record_missing_passes_evaluator_to_attach_not_run():
+    line = "owner/repo@v1.2.3/descriptor.json"
+    bundle = {"assessment": {"runs": [{"conclusion": "PASS"}]}}
+    reason = record_missing(bundle, "preparing\nrefused: not a declaration line\n", evaluator=line)
+    missing = bundle["assessment"]["integrity_not_run"]
+    assert missing["evaluator"] == declared_evaluator([line])
+    assert missing["job_result"] == "failure"
+    assert reason == missing["reason"]
+    assert bundle["assessment"]["runs"][0]["conclusion"] == "INCONCLUSIVE"
+
+
+def test_record_apply_failure_passes_evaluator_to_attach_not_run(tmp_path):
+    line = "owner/repo@v1.2.3/descriptor.json"
+    bundle_path = tmp_path / "bundle" / "manifest.json"
+    bundle_path.parent.mkdir(parents=True)
+    bundle_path.write_text(
+        json.dumps({"assessment": {"runs": [{"conclusion": "FAIL"}]}}) + "\n", encoding="utf-8"
+    )
+    report = tmp_path / "report"
+    _verdict(report)
+    record_apply_failure(bundle_path, report, "stock: reporter json exited 1", evaluator=line)
+    stored = json.loads(bundle_path.read_text(encoding="utf-8"))
+    missing = stored["assessment"]["integrity_not_run"]
+    assert missing["evaluator"] == declared_evaluator([line])
+    assert missing["job_result"] == "failure"
+    assert missing["reason"] == "stock: reporter json exited 1"
+
+
+def test_collect_is_called_without_integrity_job(tmp_path):
+    source = (
+        Path(__file__)
+        .resolve()
+        .parents[1]
+        .joinpath("src/evaluators_run.py")
+        .read_text(encoding="utf-8")
+    )
+    start = source.index("def attach_scenario_results")
+    body = source[start : source.index("\ndef ", start + 1)]
+    assert "integrity_job" not in body
+    assert "collect(bundle, results_dir, report_dir)" in body
+    from capability_verifier.collect import collect
+
+    bundle = {"results": [{"id": "stock-seed-01"}], "assessment": {"runs": [{"grade": "FAIL"}]}}
+    document = _result_document()
+    results = tmp_path / "results" / "example-scenario"
+    results.mkdir(parents=True)
+    (results / "stock-seed-01.json").write_text(json.dumps(document) + "\n", encoding="utf-8")
+    collect(bundle, tmp_path / "results", tmp_path / "report")
+    stored = bundle["results"][0]["evaluator_results"][0]["scenario"]["trial_id"]
+    assert stored == "stock-seed-01"
+    assert bundle["assessment"]["runs"][0]["grade"] == "FAIL"
+    with pytest.raises(TypeError, match="integrity_job"):
+        collect(bundle, tmp_path / "results", tmp_path / "report", integrity_job=None)
