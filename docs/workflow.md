@@ -33,7 +33,7 @@ The same list can be inlined instead of a path:
 
 ```yaml
       evaluators: |
-        - Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json
+        - Living-Proof-Labs/livingproof-evaluator-run@v1.9.2/livingproof-evaluator.json
 ```
 
 Leave `evaluators` unset when the run should not declare any.
