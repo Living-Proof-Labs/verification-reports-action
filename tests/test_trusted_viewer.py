@@ -212,5 +212,21 @@ def test_published_migration_requires_exact_manifest_and_bytes(case):
     with pytest.raises(SiteError, match="file digest"):
         migrate(root, registry, {relative: expected})
     (target / "recording.json").write_bytes((folder / "recording.json").read_bytes())
+    # A second historical run is outside this presentation migration's scope.
+    other = root / "robot/hallway/runs/122"
+    shutil.copytree(target, other)
+    untouched = {p.relative_to(other): p.read_bytes() for p in other.rglob("*") if p.is_file()}
+    original_report = (target / "report.json").read_bytes()
+    original_data = (target / "recording.json").read_bytes()
     migrate(root, registry, {relative: expected})
     assert "iframe" in (target / "index.html").read_text()
+    from trusted_viewer import apply_declarations, load_declarations, prepare_history
+
+    declarations = load_declarations(registry)
+    prepare_history(root, declarations)
+    apply_declarations(root, declarations)
+    assert (target / "report.json").read_bytes() == original_report
+    assert (target / "recording.json").read_bytes() == original_data
+    assert untouched == {
+        p.relative_to(other): p.read_bytes() for p in other.rglob("*") if p.is_file()
+    }

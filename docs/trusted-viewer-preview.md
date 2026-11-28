@@ -85,7 +85,7 @@ Its migration and subsequent restore/reapply passed locally with original report
 raw JSON and evidence bytes unchanged. Hosted restoration availability is still
 unverified; a missing retained Pages artifact is a blocker, not permission to reset.
 
-After #72 merges, transplant the two local commits onto its integrated main,
+After #72 merges, transplant the local commits onto its integrated main,
 review the workflow delta independently, and release through existing protections.
 Only a released version containing this code can use these inputs. No dispatch,
 push, deployment, or simulation was performed to prepare this patch.
