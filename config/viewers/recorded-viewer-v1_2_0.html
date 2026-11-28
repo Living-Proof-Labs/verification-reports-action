@@ -1,0 +1,158 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Recorded observations · Living Proof Health</title>
+<style>
+:root{color-scheme:light;font:16px/1.5 system-ui,sans-serif;color:#17312f;background:#f2f5f1}*{box-sizing:border-box}body{margin:0}main{max-width:1080px;margin:auto;padding:32px 22px}h1{font-size:clamp(1.8rem,5vw,2.8rem);line-height:1.15;margin:10px 0}h2{font-size:1.15rem}p{overflow-wrap:anywhere}.eyebrow{letter-spacing:.12em;font-size:.78rem;font-weight:700;color:#39645b}.muted{color:#465f59}.panel{background:white;border:1px solid #bdccc3;border-radius:14px;padding:22px;margin:20px 0}.notice{border-left:4px solid #ae6c21;padding-left:16px}.controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center}button,input{font:inherit}button{background:#164d42;color:white;border:0;padding:11px 18px;border-radius:8px;min-height:44px}button:disabled{background:#d9e2dc;color:#50645d}input[type=range]{width:100%;margin:18px 0;min-height:32px;accent-color:#164d42}input[type=text]{padding:10px;min-width:0;flex:1;border:1px solid #607c70;border-radius:6px;width:100%}label{font-weight:600}dt{font-size:.83rem;color:#465f59}dd{margin:4px 0 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.error{color:#9d231b}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.82rem;background:#f2f5f1;padding:14px;border-radius:8px;max-height:420px;overflow:auto}summary{cursor:pointer;padding:8px 0}button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid #ae6c21;outline-offset:3px}@media(max-width:550px){main{padding:20px 12px}.panel{padding:16px}dl{grid-template-columns:1fr}.controls button{flex:1}#exact{flex-basis:100%}}
+</style></head><body><main hidden>
+<header><span class="eyebrow">LIVING PROOF HEALTH · LOCAL REPLAY</span><h1>Recorded observations</h1><p class="muted">Inspect evidence as of a playhead. No interpolation, health inference or live robot connection.</p></header>
+<section class="panel" aria-labelledby="source-title"><h2 id="source-title">Source &amp; coverage</h2><p id="provenance"></p><details><summary>Input identity</summary><pre id="identity"></pre></details><p class="notice" id="coverage"></p></section>
+<section class="panel" aria-labelledby="timeline-title"><h2 id="timeline-title">Timeline</h2><label for="timeline">Recorded time · arrow keys move between distinct sample times</label><input id="timeline" type="range" min="0" max="0" value="0" step="1"><div class="controls"><button id="previous" type="button">Previous sample</button><button id="next" type="button">Next sample</button></div><p><label for="exact">Exact playhead (nanoseconds)</label></p><div class="controls"><input id="exact" type="text" inputmode="numeric" autocomplete="off"><button id="go" type="button">Go to time</button></div><p id="error" class="error" role="alert"></p><p id="position" class="muted"></p>
+<div aria-live="polite" aria-atomic="true"><p id="state"></p><dl><div><dt>Playhead · ns</dt><dd id="playhead"></dd></div><div><dt>Observation · ns</dt><dd id="observed"></dd></div><div><dt>Observation age · ns</dt><dd id="age"></dd></div></dl></div>
+<p class="muted">Latest snapshot at or before the playhead. Last duplicate in file order wins. Previous/next select distinct recorded times; duplicate snapshots remain inspectable below. Before first: no observation. After last: last snapshot with explicit age.</p></section>
+<section class="panel" aria-labelledby="observation-title"><h2 id="observation-title">Observation values</h2><dl><div><dt>Base height · m (optional)</dt><dd id="height"></dd></div><div><dt>Frame (optional)</dt><dd id="frame"></dd></div><div><dt>Posture (optional)</dt><dd id="posture"></dd></div></dl><details open><summary>All optional items in this snapshot</summary><pre id="items"></pre></details><details><summary>Full snapshot &amp; duplicates at its timestamp</summary><pre id="duplicates"></pre></details></section>
+<section class="panel" id="scenario-panel"><h2>Scenario comparison · separate from playhead</h2><p class="muted">Whole-recording example results, not the health of this displayed instant. Sampled-only scope; no whole-trial PASS.</p><details><summary>Explicit expectation and comparison results</summary><pre id="scenario"></pre></details></section>
+</main><p id="load-status" role="alert">Loading verified recorded data…</p><noscript>JavaScript is required for this local preview.</noscript><script>
+// SPDX-License-Identifier: Apache-2.0
+// Trusted local preview code. The link supplies data identity, never executable content.
+async function loadDetails(fragment, base, fetcher = fetch) {
+  const params = new URLSearchParams(fragment.replace(/^#/, ''));
+  const keys = ['file', 'sha256', 'run', 'configuration', 'trial'];
+  if ([...params.keys()].length !== keys.length || keys.some(k => params.getAll(k).length !== 1 || !params.get(k))) {
+    throw Error('Link must include one file, checksum, run, configuration and trial.');
+  }
+  const file = params.get('file'), sha = params.get('sha256'), trial = params.get('trial');
+  if (!/^data\/[A-Za-z0-9_-]+\.json$/.test(file)) throw Error('Expected a JSON file inside the preview data directory.');
+  if (!/^[a-f0-9]{64}$/.test(sha)) throw Error('Expected the report-published SHA-256.');
+  if (!/^[1-9][0-9]*$/.test(trial) || !Number.isSafeInteger(Number(trial))) throw Error('Expected a positive trial index.');
+  const url = new URL(file, base);
+  if (url.origin !== new URL(base).origin || !['http:', 'https:'].includes(url.protocol)) throw Error('Data must use the same HTTP origin.');
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 15000);
+  const limit = 16 * 1024 * 1024;
+  let reader;
+  try {
+    const response = await fetcher(url.href, {redirect:'error', credentials:'omit', cache:'no-store', signal:controller.signal});
+    if (!response.ok || response.redirected || (response.url && response.url !== url.href)) throw Error('Recorded data is unavailable or redirected. Return to the source report.');
+    if (Number(response.headers.get('content-length')) > limit) throw Error('Recorded data exceeds 16 MiB.');
+    if (!response.body) throw Error('Recorded data has no response body.');
+    reader = response.body.getReader();
+    const chunks = []; let size = 0;
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) throw Error('Recorded data exceeds 16 MiB.');
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size); let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2,'0')).join('');
+    if (digest !== sha) throw Error('Checksum mismatch. No observations displayed.');
+    const doc = JSON.parse(new TextDecoder('utf-8', {fatal:true}).decode(bytes));
+    return detailsPresentation(doc, params);
+  } finally {
+    controller.abort();
+    if (reader) await reader.cancel().catch(() => {});
+    clearTimeout(timeout);
+  }
+}
+function detailsPresentation(doc, params) {
+  const object = x => x !== null && typeof x === 'object' && !Array.isArray(x);
+  const time = x => typeof x === 'string' && /^(0|[1-9][0-9]*)$/.test(x);
+  if (!object(doc) || doc.format !== 'livingproof-evaluator-health/1' || !Array.isArray(doc.trials) || doc.trials.some(t => !object(t))) throw Error('Unsupported Health details envelope.');
+  const selected = doc.trials.filter(t => object(t.trial) && t.trial.run_id === params.get('run') && t.trial.configuration === params.get('configuration') && t.trial.index === Number(params.get('trial')));
+  if (selected.length !== 1) throw Error('Expected exactly one matching trial.');
+  const trial = selected[0], sim = trial.simulator;
+  if (!object(sim) || sim.provenance !== 'simulator' || !Array.isArray(sim.snapshots) || !Number.isSafeInteger(sim.sample_count) || sim.sample_count !== sim.snapshots.length) throw Error('Simulator observations, provenance or sample count are invalid.');
+  const rows = sim.snapshots;
+  for (const row of rows) {
+    if (!object(row) || !time(row.time_ns) || ('items' in row && !object(row.items)) || (object(row.source) && 'publish_time_ns' in row.source && !time(row.source.publish_time_ns))) throw Error('Invalid snapshot or timestamp.');
+  }
+  // JSON.parse accepts overflowing numbers. Never present those as observations.
+  const pending = [doc];
+  while (pending.length) {
+    const value = pending.pop();
+    if (typeof value === 'number' && !Number.isFinite(value)) throw Error('Nonfinite observation.');
+    if (value && typeof value === 'object') for (const child of Object.values(value)) pending.push(child);
+  }
+  const sorted = [...rows].sort((a,b) => BigInt(a.time_ns) < BigInt(b.time_ns) ? -1 : BigInt(a.time_ns) > BigInt(b.time_ns) ? 1 : 0);
+  const {snapshots, ...simIdentity} = sim;
+  return {replay:{snapshots:sorted}, report:{
+    input:{provenance:'Simulator observations; robot telemetry: ' + (typeof trial.robot?.status === 'string' ? trial.robot.status : 'Not reported'), details_sha256:params.get('sha256'), identity:{...trial, simulator:simIdentity}},
+    limitations:'Recorded samples only. No health verdict, grade or hardware health proof. Missing robot telemetry is not healthy telemetry. Digest checks supplied bytes against the selected report, not producer authenticity.',
+    observations_only:true
+  }};
+}
+if (typeof module !== 'undefined') module.exports = {loadDetails, detailsPresentation};
+
+addEventListener('hashchange', () => { document.querySelector('main').hidden=true; location.reload(); });
+(async () => { try {
+
+// SPDX-License-Identifier: Apache-2.0
+// Separate presentation lookup; Replay.seek remains first-at-or-after.
+function presentationIndex(rows, time) {
+  let lo = 0, hi = rows.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (BigInt(rows[mid].time_ns) <= time) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1; // Last duplicate in stable file order; -1 before first / empty.
+}
+if (typeof module !== 'undefined') module.exports = {presentationIndex};
+
+'use strict';
+const data = await loadDetails(location.hash, location.href);
+const rows = data.replay.snapshots;
+const times = [...new Set(rows.map(row => row.time_ns))];
+const $ = id => document.getElementById(id);
+const text = (id, value) => { $(id).textContent = value; };
+const json = value => JSON.stringify(value, null, 2);
+text('provenance', data.report.input.provenance);
+text('identity', json(data.report.input));
+text('coverage', data.report.limitations);
+$('scenario-panel').hidden = data.report.observations_only === true;
+text('scenario', json({expectation:data.report.expectation, health:data.report.health,
+  scenario_from_replay_summary:data.report.scenario_from_replay_summary,
+  original_summary:data.report.original_summary,
+  scenario_from_original_summary:data.report.scenario_from_original_summary}));
+let playhead = times.length ? BigInt(times[0]) : 0n;
+$('timeline').max = String(Math.max(times.length - 1, 0));
+$('timeline').disabled = !times.length;
+function optional(value) { return value === undefined || value === null ? 'Not reported' : typeof value === 'object' ? json(value) : String(value); }
+function render() {
+  const index = presentationIndex(rows, playhead);
+  const row = index >= 0 ? rows[index] : null;
+  const selected = row ? times.indexOf(row.time_ns) : -1;
+  $('timeline').value = String(Math.max(0, selected));
+  $('timeline').setAttribute('aria-valuetext', row ? 'Observation time ' + row.time_ns + ' nanoseconds' : 'No observation');
+  $('exact').value = playhead.toString(); text('playhead', playhead.toString());
+  text('observed', row ? row.time_ns : 'None');
+  text('age', row ? (playhead - BigInt(row.time_ns)).toString() : 'Not available');
+  $('previous').disabled = !times.some(t => BigInt(t) < playhead);
+  $('next').disabled = !times.some(t => BigInt(t) > playhead);
+  text('position', rows.length + ' snapshots · ' + times.length + ' distinct times' + (row ? ' · showing snapshot ' + (index + 1) : ''));
+  let state = !rows.length ? 'Empty replay — no observations.' : !row ? 'Before first observation — no evidence available.' :
+    playhead > BigInt(times[times.length - 1]) ? 'After last observation — no newer evidence. Age is shown; no field is refreshed.' :
+    playhead > BigInt(row.time_ns) ? 'Between recorded times — gap to next observation: ' + (BigInt(times[selected + 1]) - BigInt(row.time_ns)) + ' ns. Display is older evidence.' : 'At recorded time — not a health verdict.';
+  const items = row?.items;
+  if (row && (!items || Object.keys(items).length === 0)) state += ' Time-only snapshot: optional observations are not reported.';
+  text('state', state);
+  text('height', optional(items?.base_pose?.position?.z));
+  text('frame', optional(items?.base_pose?.frame_id));
+  text('posture', optional(items?.posture));
+  text('items', items === undefined ? 'No optional items reported.' : json(items));
+  text('duplicates', row ? json(rows.filter(r => r.time_ns === row.time_ns)) : 'No snapshot.');
+}
+$('timeline').addEventListener('input', () => {playhead = BigInt(times[Number($('timeline').value)]); text('error',''); render();});
+$('previous').addEventListener('click', () => {const t = times.filter(t => BigInt(t) < playhead).at(-1); if(t !== undefined) playhead=BigInt(t); text('error',''); render();});
+$('next').addEventListener('click', () => {const t = times.find(t => BigInt(t) > playhead); if(t !== undefined) playhead=BigInt(t); text('error',''); render();});
+function exact() {const t=$('exact').value; if(!/^(0|[1-9][0-9]*)$/.test(t)){text('error','Enter a nonnegative integer in canonical decimal nanoseconds.'); return;} playhead=BigInt(t); text('error',''); render();}
+$('go').addEventListener('click',exact);
+$('exact').addEventListener('keydown',event=>{if(event.key==='Enter') exact();});
+render();
+
+document.querySelector('main').hidden=false; document.getElementById('load-status').hidden=true;
+} catch(error) { document.getElementById('load-status').textContent='Cannot open replay: ' + error.message; } })();
+</script></body></html>

@@ -313,10 +313,23 @@ jobs:
         uses: ./site
         with:
           runs-dir: artifacts/smoke-report
+          trusted-viewers: config/viewers/evaluators.json
           output-dir: artifacts/g1-site-check
           reset-history: 'false'
           restore-history: 'false'
           upload-artifact: 'false'
+      - name: Check the trusted viewer on the actual G1 report
+        run: |
+          PYTHONPATH=src python3 - <<'PYCODE'
+          from pathlib import Path
+          from trusted_viewer import load_viewers, derive_declarations, revalidate
+          root = Path('artifacts/g1-site-check')
+          declarations = derive_declarations(root, load_viewers('config/viewers/evaluators.json'))
+          if len(declarations) != 1:
+              raise SystemExit('Expected one evidence-bound viewer on the G1 report')
+          for relative, (pin, _) in declarations.items():
+              revalidate(root / relative, pin)
+          PYCODE
       - name: Require the G1 site build
         if: always()
         env:

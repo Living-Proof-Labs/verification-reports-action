@@ -4,6 +4,10 @@ description: >-
   Assemble a single-robot verification reports section (reports/) with latest
   per-scenario results, scenario history, and immutable run pages.
 inputs:
+  trusted-viewers:
+    description: Caller-owned registry of immutable trusted viewer code and exact advisory evaluator identities.
+    required: false
+    default: ''
   runs-dir:
     description: >-
       Directory of per-scenario run folders, each holding report.html,
@@ -123,6 +127,7 @@ runs:
       id: build
       shell: bash
       env:
+        INPUT_TRUSTED_VIEWERS: ${{ inputs.trusted-viewers }}
         INPUT_RUNS_DIR: ${{ inputs.runs-dir }}
         INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
         INPUT_EVIDENCE_RETENTION_DAYS: ${{ inputs.evidence-retention-days }}
