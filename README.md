@@ -80,7 +80,7 @@ Excerpt from `evaluators.yml`:
 
 ```yaml
 - Living-Proof-Labs/livingproof-evaluator-scenario@v1.6.0/livingproof-evaluator.json
-- Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json
+- Living-Proof-Labs/livingproof-evaluator-run@v1.9.2/livingproof-evaluator.json
 - Living-Proof-Labs/livingproof-evaluator-health@v1.2.0/livingproof-evaluator.json
 ```
 

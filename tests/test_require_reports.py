@@ -204,3 +204,67 @@ def _write_publishable_reports(reports: Path) -> Path:
         encoding="utf-8",
     )
     return reports
+
+
+RUN = "https://github.com/Living-Proof-Labs/verification-reports-action/actions/runs/46110994356"
+
+
+def _write_run(reports: Path, run_id: str, created: str, page: str, files=()) -> Path:
+    folder = reports / "g1/unitree-g1/stock-mujoco-hallway/runs" / run_id
+    folder.mkdir(parents=True)
+    (folder / "run.json").write_text(
+        f'{{"run": {{"id": "{run_id}", "created": "{created}"}}}}\n', encoding="utf-8"
+    )
+    (folder / "index.html").write_text(page, encoding="utf-8")
+    for name in files:
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_bytes(b"x")
+    return folder
+
+
+LINKED_PAGE = (
+    f"<ul><li><a href='{RUN}'>CI run</a></li>"
+    "<li><a href='evidence/mcap/mcap/trial-01.mcap'>MCAP, all 1 trials</a></li>"
+    "<li class='evidence-video'><video controls src='evidence/video/trial-01-fail.mp4'></video>"
+    "</li></ul><table><tr><td><a href='evidence/video/trial-01-fail.mp4'>video</a></td></tr>"
+    "</table>"
+)
+MEDIA = ("evidence/video/trial-01-fail.mp4", "evidence/mcap/mcap/trial-01.mcap")
+
+
+def test_the_newest_run_page_must_link_the_ci_run(tmp_path: Path):
+    reports = _write_publishable_reports(tmp_path / "reports")
+    _write_run(reports, "2", "2026-11-28T05:19:19Z", LINKED_PAGE.replace(RUN, "#"), MEDIA)
+    with pytest.raises(SystemExit, match="CI run link"):
+        require_reports.require_published(reports, "success")
+    with pytest.raises(SystemExit, match="CI run link"):
+        require_reports.require_g1_build(reports, "success")
+
+
+def test_the_newest_run_page_must_link_the_video_and_recording_it_published(tmp_path: Path):
+    reports = _write_publishable_reports(tmp_path / "reports")
+    page = LINKED_PAGE.replace("evidence/video/trial-01-fail.mp4", "#")
+    folder = _write_run(reports, "2", "2026-11-28T05:19:19Z", page, MEDIA)
+    with pytest.raises(SystemExit, match="evidence/video/trial-01-fail.mp4"):
+        require_reports.require_published(reports, "success")
+    (folder / "index.html").write_text(
+        LINKED_PAGE.replace("evidence/mcap/mcap/trial-01.mcap", "#"), encoding="utf-8"
+    )
+    with pytest.raises(SystemExit, match="evidence/mcap/mcap/trial-01.mcap"):
+        require_reports.require_g1_build(reports, "success")
+    (folder / "index.html").write_text(LINKED_PAGE, encoding="utf-8")
+    require_reports.require_published(reports, "success")
+    require_reports.require_g1_build(reports, "success")
+
+
+def test_a_run_without_published_media_only_needs_the_ci_run_link(tmp_path: Path):
+    reports = _write_publishable_reports(tmp_path / "reports")
+    _write_run(reports, "2", "2026-11-28T05:19:19Z", f"<a href='{RUN}'>CI run</a>")
+    require_reports.require_published(reports, "success")
+
+
+def test_only_the_newest_run_is_held_to_the_link_check(tmp_path: Path):
+    reports = _write_publishable_reports(tmp_path / "reports")
+    _write_run(reports, "1", "2026-11-27T05:19:19Z", "plain text", MEDIA)
+    _write_run(reports, "2", "2026-11-28T05:19:19Z", LINKED_PAGE, MEDIA)
+    require_reports.require_published(reports, "success")

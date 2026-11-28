@@ -13,7 +13,7 @@ import { writePlan } from '../src/plan.mjs';
 
 const ROOT = new URL('..', import.meta.url);
 const SCENARIO_LINE = 'Living-Proof-Labs/livingproof-evaluator-scenario@v1.6.0/livingproof-evaluator.json';
-const LINE = 'Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json';
+const LINE = 'Living-Proof-Labs/livingproof-evaluator-run@v1.9.2/livingproof-evaluator.json';
 const HEALTH_LINE = 'Living-Proof-Labs/livingproof-evaluator-health@v1.2.0/livingproof-evaluator.json';
 const LINES = [SCENARIO_LINE, LINE, HEALTH_LINE];
 const FORBIDDEN = [
@@ -114,7 +114,7 @@ test('the report workflow passes the plan lines and still allows fifteen minutes
 
 test('no evaluators input ignores this repository file', async () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
-  assert.equal(readFileSync(path.join(root, 'evaluators.yml'), 'utf8').includes('@v1.9.0/'), true);
+  assert.equal(readFileSync(path.join(root, 'evaluators.yml'), 'utf8').includes('@v1.9.2/'), true);
   const planSource = readFileSync(new URL('../src/plan.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(planSource, /evaluators\.yml/);
   const absent = resolveCallerEvaluators('', root);
