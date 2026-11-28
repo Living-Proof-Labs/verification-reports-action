@@ -12,10 +12,9 @@ The plan job in [`.github/workflows/report.yml`](../.github/workflows/report.yml
 | livingproof-sim-mujoco | `releases.runner` | Release, tag commit, source archive sha256, attestation. `commit`, when present, must equal the peeled tag. |
 | robot-capability-specs | `releases.specs` | Release, tag commit, each `files` sha256, `sources.parameters.sha256`, attestation. `commit` must equal the peeled tag. Each `files` entry must equal that file at the tag. `sources.parameters.sha256`, when present, must equal `specs/scenarios/<scenario id>/parameters.json` at the specs commit. `sources.parameters.path` is the robot destination and is not the file that is hashed. |
 | livingproof-worlds | `world` | Release, tag commit, `worlds/<id>/<version>/world.json` sha256, attestation. `commit`, when present, must equal the peeled tag. `world.sha256` and `sources.world.sha256`, when present, must equal that file. |
-| livingproof-evaluator-scenario | `evaluators.livingproof-evaluator-scenario` | Release, tag commit, source archive sha256, attestation. `commit` in the lock is refused. |
 | livingproof-capability-report | `releases.reporter` | Release, tag commit, image digest, attestation. `commit` must equal the peeled tag. `image` and `digest` in the lock are refused. |
 
-Any other `evaluators` entry in the lock is ignored. The caller's `evaluators` input declares those lines. The plan prints one notice and does not name the entry. An empty input declares none. Run Integrity (`livingproof-evaluator-run`) is not one of those pins. The caller passes it with the `evaluators` input.
+No evaluator is one of these pins. Every `evaluators` entry in the lock is ignored, the Scenario entry too. The caller's `evaluators` input declares each evaluator, Scenario, Run Integrity and Health alike, and capability-verifier resolves, installs and runs them. The plan prints one notice when the lock has an entry and does not name it. An empty input declares none.
 
 The tag is read from the definition when the definition has one, and otherwise from the lock. The image name passed to the trial is `ghcr.io/living-proof-labs/capability-verifier-hallway` or `ghcr.io/living-proof-labs/livingproof-capability-report`. The lock does not name it.
 
@@ -30,13 +29,13 @@ For each input the plan asks GitHub for the Release named by the tag, peels the 
 
 `contents: read` is the workflow permission. The plan does not ask for `attestations: read`, because every caller of this reusable workflow would have to grant that permission before the plan job could start.
 
-The capability-verifier `uses:` lines stay a full commit SHA. GitHub rejects an expression there, so the plan cannot swap the called workflow. After the tag peels, that commit must be `bd6be5217b52b1348b4dc23613ee06d44bed9519` (`v2.14.0`). Any other commit fails before a trial. Renovate's GitHub Actions manager bumps that one line, SHA and `# vX.Y.Z` comment together. The lock's verifier tag must peel to the same commit. No lock hash is rewritten.
+The capability-verifier `uses:` lines stay a full commit SHA. GitHub rejects an expression there, so the plan cannot swap the called workflow. After the tag peels, that commit must be `5b702e5b2aa23338ba1d358692c6be96e97546cf` (`v3.1.1`). Any other commit fails before a trial. Renovate's GitHub Actions manager bumps that one line, SHA and `# vX.Y.Z` comment together. The lock's verifier tag must peel to the same commit. No lock hash is rewritten.
 
 ## Tag bump
 
-capability-verifier v2.14.0 accepts `verifier-commit`, `verifier-image`, `reporter-image`, and `evaluator-commit`. The plan passes the commit and the `image:semver@sha256` ref it resolved. The lock fields those inputs replace are refused when present: `releases.verifier.commit`, `releases.verifier.image`, `releases.verifier.digest`, `releases.reporter.image`, `releases.reporter.digest`, and `evaluators.livingproof-evaluator-scenario.commit`. A one-line edit of the verifier tag or the scenario-evaluator tag therefore needs no relock of a commit or digest.
+capability-verifier accepts `verifier-commit`, `verifier-image` and `reporter-image`. The plan passes the commit and the `image:semver@sha256` ref it resolved. The lock fields those inputs replace are refused when present: `releases.verifier.commit`, `releases.verifier.image`, `releases.verifier.digest`, `releases.reporter.image` and `releases.reporter.digest`. A one-line edit of the verifier tag therefore needs no relock of a commit or digest. The Scenario evaluator is not pinned here at all: its tag is the one in its `evaluators.yml` line, and capability-verifier peels it to a commit and records it.
 
-These fields stay, because v2.14.0 still reads them and has no input for them. A value that differs from the resolved tag is refused:
+These fields stay, because capability-verifier still reads them and has no input for them. A value that differs from the resolved tag is refused:
 
 - `releases.runner.commit`
 - `releases.specs.commit` and `releases.specs.files`
