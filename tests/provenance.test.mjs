@@ -540,7 +540,7 @@ test('a tag bump that leaves the lock commit and digest fails before a plan is w
       scenario[0].verifier_image,
       `ghcr.io/living-proof-labs/capability-verifier-hallway:${VERIFIER_WORKFLOW_TAG.slice(1)}@${IMAGE}`
     );
-    assert.equal(scenario[0].evaluator_commit, COMMIT);
+    assert.equal('evaluator_commit' in scenario[0], false);
     await assert.rejects(
       () =>
         runIfProvenancePasses(
@@ -1256,7 +1256,6 @@ test('a repository other than the expected one is refused', async () => {
     [['releases', 'reporter'], 'Living-Proof-Labs/livingproof-capability-report', 'livingproof-capability-report'],
     [['releases', 'runner'], 'Living-Proof-Labs/livingproof-sim-mujoco', 'livingproof-sim-mujoco'],
     [['releases', 'specs'], 'Living-Proof-Labs/robot-capability-specs', 'robot-capability-specs'],
-    [['evaluators', 'livingproof-evaluator-scenario'], 'Living-Proof-Labs/livingproof-evaluator-scenario', 'livingproof-evaluator-scenario'],
     [['world'], 'Living-Proof-Labs/livingproof-worlds', 'livingproof-worlds'],
   ];
   for (const [parts, repository, repoName] of fields) {
@@ -1285,13 +1284,8 @@ test('a repository other than the expected one is refused', async () => {
   );
   const lock = sampleLock();
   lock.releases.verifier.repository = 'living-proof-labs/capability-verifier';
-  lock.evaluators['livingproof-evaluator-scenario'].repository = 'LIVING-PROOF-LABS/livingproof-evaluator-scenario';
   const records = await assertPinnedInputs(item(lock), client());
   assert.equal(records.find((record) => record.name === 'capability-verifier').repository, 'Living-Proof-Labs/capability-verifier');
-  assert.equal(
-    records.find((record) => record.name === 'livingproof-evaluator-scenario').repository,
-    'Living-Proof-Labs/livingproof-evaluator-scenario'
-  );
 });
 
 test('missing, non-string, and empty lock fields are refused', async () => {
@@ -1306,8 +1300,6 @@ test('missing, non-string, and empty lock fields are refused', async () => {
     [['releases', 'specs'], 'repository', 'robot-capability-specs'],
     [['releases', 'specs'], 'tag', 'robot-capability-specs'],
     [['releases', 'specs'], 'commit', 'robot-capability-specs'],
-    [['evaluators', 'livingproof-evaluator-scenario'], 'repository', 'livingproof-evaluator-scenario'],
-    [['evaluators', 'livingproof-evaluator-scenario'], 'tag', 'livingproof-evaluator-scenario'],
     [['world'], 'repository', 'livingproof-worlds'],
     [['world'], 'tag', 'livingproof-worlds'],
   ];
@@ -1342,7 +1334,7 @@ test('a tag-only runner and world lock still passes', async () => {
   const records = await assertPinnedInputs(item(lock), client());
   assert.equal(records.find((record) => record.name === 'livingproof-sim-mujoco').status, 'not-published');
   assert.equal(records.find((record) => record.name === 'livingproof-worlds').status, 'not-published');
-  assert.equal(records.find((record) => record.name === 'livingproof-evaluator-scenario').status, 'not-published');
+  assert.equal(records.some((record) => record.name === 'livingproof-evaluator-scenario'), false);
 });
 
 test('a present optional lock field must still be valid', async () => {
@@ -1366,13 +1358,15 @@ test('a present optional lock field must still be valid', async () => {
   }
 });
 
-test('a lock evaluators entry other than the scenario evaluator is ignored', async () => {
+test('every lock evaluators entry is ignored, the Scenario one too', async () => {
   const lock = sampleLock();
   const key = 'example-evaluator';
   lock.evaluators[key] = { repository: 'Living-Proof-Labs/example', tag: 'v9.9.9', commit: 'not-a-commit' };
   const records = await assertPinnedInputs(item(lock), client());
   assert.equal(records.some((record) => record.name === key || record.lockField === `evaluators.${key}`), false);
   assert.deepEqual(records.map((record) => record.name), REQUIRED_INPUTS);
+  const scenarioOnly = { evaluators: { 'livingproof-evaluator-scenario': sampleLock().evaluators['livingproof-evaluator-scenario'] } };
+  assert.equal(typeof ignoredEvaluatorNotice(scenarioOnly), 'string');
   const notice = ignoredEvaluatorNotice(lock);
   assert.equal(typeof notice, 'string');
   assert.equal(notice.split('\n').length, 1);
@@ -1414,7 +1408,7 @@ test('a world with neither sha256 nor sources.world is unbound', async () => {
 });
 
 test('real release-please notes do not move the tag', async () => {
-  const fixtures = ['worlds-v1.4.0.json', 'specs-v2.3.0.json', 'evaluator-scenario-v1.5.3.json'].map((name) =>
+  const fixtures = ['worlds-v1.4.0.json', 'specs-v2.3.0.json'].map((name) =>
     JSON.parse(readFileSync(new URL(`./fixtures/releases/${name}`, import.meta.url), 'utf8'))
   );
   for (const fixture of fixtures) {
@@ -1434,14 +1428,11 @@ test('real release-please notes do not move the tag', async () => {
       lock.world.tag = fixture.tag;
       lock.world.commit = fixture.tagCommit;
       lock.world.sha256 = fileHash;
-    } else if (fixture.repository.endsWith('/robot-capability-specs')) {
+    } else {
       pinName = 'robot-capability-specs';
       lock.releases.specs.tag = fixture.tag;
       lock.releases.specs.commit = fixture.tagCommit;
       lock.releases.specs.files = { 'specs/scenarios/walk-corner-left/description.json': fileHash };
-    } else {
-      pinName = 'livingproof-evaluator-scenario';
-      lock.evaluators['livingproof-evaluator-scenario'].tag = fixture.tag;
     }
     const pin = collectPins(item(lock)).find((entry) => entry.name === pinName);
     const evidence = await resolvePin(pin, {
@@ -1563,10 +1554,8 @@ test('a lock value with surrounding whitespace is refused without trimming', asy
   );
   const paddedRepo = sampleLock();
   paddedRepo.evaluators['livingproof-evaluator-scenario'].repository = ' Living-Proof-Labs/livingproof-evaluator-scenario';
-  await assert.rejects(
-    () => assertPinnedInputs(item(paddedRepo), client()),
-    /livingproof-evaluator-scenario: evaluators\.livingproof-evaluator-scenario\.repository has surrounding whitespace/
-  );
+  const records = await assertPinnedInputs(item(paddedRepo), client());
+  assert.equal(records.some((record) => /scenario/.test(record.name)), false);
 });
 
 test('an attestation whose subject digest differs is not selected', async () => {

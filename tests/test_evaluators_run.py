@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -31,11 +32,11 @@ from evaluators_run import (
     run_downloaded,
 )
 
-PIN = "78c15b635cb558e322be4004b9f6ed9d24e3dc5d"
+PIN = "5b702e5b2aa23338ba1d358692c6be96e97546cf"
 
 
 def verifier_src() -> Path:
-    dest = Path("/tmp/capability-verifier")
+    dest = Path(tempfile.gettempdir()) / "capability-verifier"
     marker = dest / "src" / "capability_verifier" / "evaluators.py"
     if not marker.is_file() or PIN not in subprocess.check_output(
         ["git", "-C", str(dest), "rev-parse", "HEAD"], text=True
@@ -816,15 +817,15 @@ def test_evaluator_timestamps_reach_the_bundle_unchanged(tmp_path):
     assert stamps == {"started_at": started_at, "completed_at": completed_at}
 
 
-API_SHA = "78c15b635cb558e322be4004b9f6ed9d24e3dc5d"
+API_SHA = "5b702e5b2aa23338ba1d358692c6be96e97546cf"
 
 
-def test_the_loader_checkout_is_capability_verifier_v3_1_0():
+def test_the_loader_checkout_is_capability_verifier_v3_1_1():
     assert PIN == API_SHA
     root = Path(__file__).resolve().parents[1]
     for relative in (".github/workflows/report.yml", ".github/workflows/verify.yml"):
         text = (root / relative).read_text(encoding="utf-8")
-        assert f"ref: {API_SHA} # v3.1.0" in text
+        assert f"ref: {API_SHA} # v3.1.1" in text
     checkout = verifier_src().parent
     head = subprocess.check_output(
         ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True

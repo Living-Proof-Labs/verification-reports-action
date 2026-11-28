@@ -7,7 +7,7 @@ import { checkPin, collectPins, ignoredEvaluatorNotice, resolvedTrialInputs } fr
 import { imageDigestFromBody } from '../src/github-provenance.mjs';
 
 // Commits and digests recorded from a read-only live resolve on 2026-11-24.
-// The release notes of worlds v1.4.0, specs v2.3.0 and evaluator-scenario v1.5.3
+// The release notes of worlds v1.4.0 and specs v2.3.0
 // list other changelog SHAs; the peeled tag is what these records keep.
 const LOCKS = ['unitree-g1-stock-mujoco-corner-left', 'booster-t1-stock-mujoco-hallway'];
 
@@ -50,7 +50,7 @@ function evidenceFor(pin, recorded) {
 }
 
 const VERIFIER_RELEASE = JSON.parse(
-  readFileSync(new URL('./fixtures/releases/capability-verifier-v2.14.0.json', import.meta.url), 'utf8')
+  readFileSync(new URL('./fixtures/releases/capability-verifier-v3.1.1.json', import.meta.url), 'utf8')
 );
 
 function dropPassedFields(lock) {
@@ -60,7 +60,6 @@ function dropPassedFields(lock) {
   delete copy.releases.verifier.digest;
   delete copy.releases.reporter.image;
   delete copy.releases.reporter.digest;
-  delete copy.evaluators['livingproof-evaluator-scenario'].commit;
   copy.releases.verifier.tag = VERIFIER_WORKFLOW_TAG;
   return copy;
 }
@@ -81,7 +80,6 @@ for (const id of LOCKS) {
     const notice = ignoredEvaluatorNotice(item.lock);
     assert.equal(typeof notice, 'string');
     for (const key of Object.keys(item.lock.evaluators)) {
-      if (key === 'livingproof-evaluator-scenario') continue;
       assert.equal(notice.includes(key), false);
     }
     const records = [];
@@ -119,8 +117,11 @@ for (const id of LOCKS) {
       `${VERIFIER_RELEASE.image}:${VERIFIER_RELEASE.tag.slice(1)}@${VERIFIER_RELEASE.digest}`
     );
     const reporter = recorded.find((entry) => entry.name === 'livingproof-capability-report');
-    const evaluator = recorded.find((entry) => entry.name === 'livingproof-evaluator-scenario');
     assert.equal(inputs.reporter_image.endsWith(`@${reporter.digest}`), true);
-    assert.equal(inputs.evaluator_commit, evaluator.commit);
+    assert.equal('evaluator_commit' in inputs, false);
+    assert.equal(
+      pins.some((pin) => pin.name === 'livingproof-evaluator-scenario'),
+      false
+    );
   });
 }

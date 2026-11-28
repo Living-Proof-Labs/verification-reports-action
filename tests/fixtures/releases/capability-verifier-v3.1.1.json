@@ -1,0 +1,11 @@
+{
+  "repository": "Living-Proof-Labs/capability-verifier",
+  "tag": "v3.1.1",
+  "target_commitish": "main",
+  "tagCommit": "5b702e5b2aa23338ba1d358692c6be96e97546cf",
+  "tagObjectType": "commit",
+  "changelogCommit": "8c7637fe73bfb672b96292fbc07956b24f5f0893",
+  "image": "ghcr.io/living-proof-labs/capability-verifier-hallway",
+  "digest": "sha256:e2fd124729908892164b05043940457fbb76e7b53cb5a4e9b03b3f9e11603937",
+  "body": "## [3.1.1](https://github.com/Living-Proof-Labs/capability-verifier/compare/v3.1.0...v3.1.1) (2026-11-28)\n\n### fix\n\n* reject unknown route modes and explain a bad evaluators input ([8c7637f](https://github.com/Living-Proof-Labs/capability-verifier/commit/8c7637fe73bfb672b96292fbc07956b24f5f0893)), closes [#270](https://github.com/Living-Proof-Labs/capability-verifier/issues/270)\n* reject unknown route modes and explain a bad evaluators input ([#271](https://github.com/Living-Proof-Labs/capability-verifier/issues/271)) ([5b702e5](https://github.com/Living-Proof-Labs/capability-verifier/commit/5b702e5b2aa23338ba1d358692c6be96e97546cf))\n\n\n## Hallway image (linux/amd64, linux/arm64 index)\n\n`ghcr.io/living-proof-labs/capability-verifier-hallway:3.1.1@sha256:e2fd124729908892164b05043940457fbb76e7b53cb5a4e9b03b3f9e11603937`\n"
+}

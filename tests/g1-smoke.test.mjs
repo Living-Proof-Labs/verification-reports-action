@@ -240,8 +240,7 @@ test('the stock hallway definition and lock pin G1 v2.3.34 for one trial', () =>
   assert.equal(lock.releases.verifier.digest, undefined);
   assert.equal(lock.releases.reporter.image, undefined);
   assert.equal(lock.releases.reporter.digest, undefined);
-  assert.equal(lock.evaluators['livingproof-evaluator-scenario'].tag, 'v1.5.3');
-  assert.equal(lock.evaluators['livingproof-evaluator-scenario'].commit, undefined);
+  assert.equal(lock.evaluators['livingproof-evaluator-scenario'], undefined);
   assert.equal(lock.evaluators['livingproof-evaluator-run'].repository, 'Living-Proof-Labs/livingproof-evaluator-run');
   assert.equal(lock.evaluators['livingproof-evaluator-run'].tag, 'v1.8.6');
 });
@@ -404,8 +403,10 @@ test('the mock smoke and the real G1 smoke are both required, and their artifact
     reportWorkflow.jobs.scenario.uses,
     `Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@${VERIFIER_WORKFLOW_SHA}`,
   );
-  assert.equal(reportWorkflow.jobs['walk-hallway'].with['evaluator-commit'], '${{ matrix.evaluator_commit }}');
-  assert.equal(reportWorkflow.jobs.scenario.with['evaluator-commit'], '${{ matrix.evaluator_commit }}');
+  assert.equal('evaluator-commit' in reportWorkflow.jobs['walk-hallway'].with, false);
+  assert.equal('evaluator-commit' in reportWorkflow.jobs.scenario.with, false);
+  assert.equal(reportWorkflow.jobs['walk-hallway'].with.evaluators, '${{ needs.plan.outputs.evaluators }}');
+  assert.equal(reportWorkflow.jobs.scenario.with.evaluators, '${{ needs.plan.outputs.evaluators }}');
 
   assert.deepEqual(verifyWorkflow.jobs['verification-gate'].needs, gateNeeds);
   assert.deepEqual(verificationJobs, gateNeeds);
