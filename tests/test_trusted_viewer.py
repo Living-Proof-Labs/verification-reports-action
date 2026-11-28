@@ -8,9 +8,9 @@ import shutil
 from pathlib import Path
 
 import pytest
+from livingproof_capability_report.site.assemble import write_published_checksums
 
-from reports_common import SiteError
-from reports_site import write_published_checksums
+from reports_restore import SiteError
 from trusted_viewer import render_fresh, validate_history
 
 

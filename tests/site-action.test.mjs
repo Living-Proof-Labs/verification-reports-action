@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -11,6 +11,11 @@ import { runFixtureCli } from '../src/fixture-run.mjs';
 import { writePlan } from '../src/plan.mjs';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
+// site_action.py runs the pinned reporter's site command. site/action.yml installs it in an
+// isolated runtime put first on PATH; here the locked dev environment (`task setup`) has it.
+const venvBin = path.join(repoRoot, '.venv', 'bin');
+const python = existsSync(path.join(venvBin, 'python')) ? path.join(venvBin, 'python') : 'python3';
+const reporterPath = `${venvBin}${path.delimiter}${process.env.PATH ?? ''}`;
 
 test('site/action.yml defines the composite site step contract without Pages deployment', () => {
   const siteActionYml = readFileSync(path.join(repoRoot, 'site/action.yml'), 'utf8');
@@ -53,15 +58,16 @@ test('src/site_action.py executes end to end as a standalone process on fixture 
     const reportsDir = path.join(tempRoot, 'docs', 'reports');
     const githubOutput = path.join(tempRoot, 'github-output.txt');
 
-    execFileSync('python3', ['tools/site_fixture.py', 'write', runsDir, '--run-id', '77'], {
+    execFileSync(python, ['tools/site_fixture.py', 'write', runsDir, '--run-id', '77'], {
       cwd: repoRoot,
       encoding: 'utf8',
     });
 
-    execFileSync('python3', ['src/site_action.py'], {
+    execFileSync(python, ['src/site_action.py'], {
       cwd: repoRoot,
       env: {
         ...process.env,
+        PATH: reporterPath,
         INPUT_RUNS_DIR: runsDir,
         INPUT_OUTPUT_DIR: reportsDir,
         INPUT_EVIDENCE_RETENTION_DAYS: '7',
@@ -147,10 +153,11 @@ test('src/site_action.py consumes collectReports output from .github/workflows/r
 
     const reportsDir = path.join(tempRoot, 'docs', 'reports');
     const siteOut = path.join(tempRoot, 'site.out');
-    execFileSync('python3', ['src/site_action.py'], {
+    execFileSync(python, ['src/site_action.py'], {
       cwd: repoRoot,
       env: {
         ...baseEnv,
+        PATH: reporterPath,
         INPUT_RUNS_DIR: collectedDir,
         INPUT_OUTPUT_DIR: reportsDir,
         INPUT_RESTORE_HISTORY: 'false',
@@ -172,7 +179,7 @@ test('src/site_action.py consumes collectReports output from .github/workflows/r
     assert.ok(failPos !== -1 && passPos !== -1 && failPos < passPos);
 
     execFileSync(
-      'python3',
+      python,
       [
         'tools/site_fixture.py',
         'check',

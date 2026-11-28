@@ -10,7 +10,8 @@ import { collectReports } from '../src/collect.mjs';
 import { writePlan } from '../src/plan.mjs';
 import { runFixtureCli } from '../src/fixture-run.mjs';
 import { REQUIRED_INPUTS } from '../src/provenance.mjs';
-import { renderReport, writeChecksums } from '../src/report.mjs';
+import { writeChecksums } from '../src/report.mjs';
+import { reportFiles } from './report-files.mjs';
 
 const CALLER = 'Living-Proof-Labs/verification-reports-action';
 const SHA = '0123456789abcdef0123456789abcdef01234567';
@@ -179,7 +180,7 @@ test('a verifier plan does not merge another job\'s fixture reports', async () =
       'vra-unitree-g1-stock-mujoco-hallway-capability-report-stock'
     );
     mkdirSync(reportDir, { recursive: true });
-    for (const [name, contents] of Object.entries(renderReport({
+    for (const [name, contents] of Object.entries(reportFiles({
       capability: 'walk-hallway',
       system: { id: 'unitree-g1/stock' },
       grade: 'PASS',
@@ -261,7 +262,7 @@ test('verifier artifacts are assembled and a missing report fails', () => {
     };
     const reportDir = path.join(tempRoot, 'downloaded', 'reports', `vra-corner-capability-report-${configuration}`);
     mkdirSync(reportDir, { recursive: true });
-    const rendered = renderReport(summary);
+    const rendered = reportFiles(summary);
     for (const [name, contents] of Object.entries(rendered)) {
       writeFileSync(path.join(reportDir, name), contents);
     }

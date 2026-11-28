@@ -3,7 +3,8 @@
 
 from pathlib import Path
 
-import reports_site as site
+from livingproof_capability_report.site import assemble as site
+
 import site_fixture
 
 

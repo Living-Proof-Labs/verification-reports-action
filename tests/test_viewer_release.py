@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from reports_common import SiteError
+from reports_restore import SiteError
 from viewer_release import fetch_release_viewer
 
 

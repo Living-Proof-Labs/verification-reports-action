@@ -8,7 +8,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from reports_common import SiteError
+from reports_restore import SiteError
 
 DIRECTORY = "trusted-viewer"
 
@@ -183,9 +183,8 @@ def render_fresh(folder, viewers, *, command=None, existing=False):
         (target / "viewer.html").write_bytes(entry["bytes"])
         (target / "data/recording.json").write_bytes(raw)
         from livingproof_capability_report import TrustedViewer
+        from livingproof_capability_report.site.pages import checked_report_html
         from livingproof_capability_report.viewer_page import compose_viewer_page
-
-        from reports_render import checked_report_html
 
         page = compose_viewer_page(
             read_file(folder / "index.html").decode("utf-8"),
@@ -200,7 +199,7 @@ def render_fresh(folder, viewers, *, command=None, existing=False):
         if not existing:
             shutil.copytree(target, folder / DIRECTORY)
         shutil.copyfile(staging / "index.html", folder / "index.html")
-    from reports_site import write_published_checksums
+    from livingproof_capability_report.site.assemble import write_published_checksums
 
     write_published_checksums(folder)
     return True
@@ -209,9 +208,8 @@ def render_fresh(folder, viewers, *, command=None, existing=False):
 def validate_restored(folder, viewers):
     """Admit only exact Reporter-generated content, with no file writes."""
     from livingproof_capability_report import TrustedViewer
+    from livingproof_capability_report.site.pages import checked_report_html
     from livingproof_capability_report.viewer_page import validate_viewer_page
-
-    from reports_render import checked_report_html
 
     verify_manifest(folder)
     target = folder / DIRECTORY

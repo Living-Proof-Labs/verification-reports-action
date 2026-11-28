@@ -6,10 +6,10 @@ import shutil
 from pathlib import Path
 
 import pytest
+from livingproof_capability_report.site.assemble import write_published_checksums
 
 import trusted_viewer
-from reports_common import SiteError
-from reports_site import write_published_checksums
+from reports_restore import SiteError
 from site_action import run_site_action
 
 

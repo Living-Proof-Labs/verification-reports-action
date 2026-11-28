@@ -12,7 +12,7 @@ import json
 import re
 import urllib.error
 
-from reports_common import SiteError
+from reports_restore import SiteError
 
 DEPLOY_ACTION = "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e"
 MAX_LOG_BYTES = 1024 * 1024

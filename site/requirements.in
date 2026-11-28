@@ -1,5 +1,5 @@
-# Released Reporter v3.19.0, commit c0410d91eddbc3a564f2b8d8b61a55500cb39c1f.
+# Released Reporter v3.20.0, commit 9d6a93d4c0a90f16e03e5330b832c5aac4204ef9 (adds the site command).
 # Wheel digest verified against the release asset.
-livingproof-capability-report @ https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.19.0/livingproof_capability_report-3.19.0-py3-none-any.whl#sha256=b63f9f6f58f75a484e1ea5bda9bc99391688eafad8f040466f060562038a2085
+livingproof-capability-report @ https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.20.0/livingproof_capability_report-3.20.0-py3-none-any.whl#sha256=1a90b3e45ffbfcfbe74968abc0bfb1b66b873a09126cc3fb339d0fd7f15e8e67
 # Same immutable common-library dependency pinned by Reporter's release packaging.
 livingproof-common @ https://github.com/Living-Proof-Labs/livingproof-common/releases/download/v1.0.0/livingproof_common-1.0.0-py3-none-any.whl#sha256=8b7795748b54eeb89610f3716245f45db48ac0474465a5abbf974e7075c1476c

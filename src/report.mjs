@@ -4,26 +4,12 @@ import path from 'node:path';
 import { ReportError, assertConfigurationSlug, sha256 } from './definitions.mjs';
 import { fixtureProvenance } from './provenance.mjs';
 
-const REPORT_FILES = ['report.html', 'report.md', 'report.json', 'report.txt'];
+export const REPORT_FILES = ['report.html', 'report.md', 'report.json', 'report.txt'];
 
 function createdStamp(env) {
   const supplied = (env.VERIFICATION_CREATED ?? '').trim();
   if (supplied) return supplied;
   return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-}
-
-export function renderReport(summary) {
-  const line = `${summary.capability}: overall ${summary.grade}.`;
-  const document = {
-    report_version: '1.0.0',
-    summaries: [summary],
-  };
-  return {
-    'report.json': `${JSON.stringify(document, null, 2)}\n`,
-    'report.md': `# Verification report\n\n${line}\n`,
-    'report.txt': `${line}\n`,
-    'report.html': `<!DOCTYPE html>\n<html><body><p>${line}</p></body></html>\n`,
-  };
 }
 
 export function readSummaries(report, where) {

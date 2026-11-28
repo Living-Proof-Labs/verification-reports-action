@@ -6,16 +6,12 @@ import os
 import re
 import shutil
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlsplit
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT / "src") not in sys.path:
-    sys.path.insert(0, str(ROOT / "src"))
-
-import reports_site as site  # noqa: E402
-
-# reports_render._badge_html emits exactly one of these class attributes.
+# The reporter's site pages (livingproof_capability_report.site) emit exactly one of these
+# class attributes per grade badge.
 GRADE_BADGE = re.compile(r'class="badge badge-(?:pass|fail|warn|muted)"')
 FIXTURE_SEGMENTS = ("fixture-scenario-stock", "fixture-hallway-stock")
 FIXTURE_PHRASE = "this repository's fixture"
@@ -153,6 +149,26 @@ def _ci_run_link(repository: str | None) -> re.Pattern[str]:
     return re.compile(rf"""href=(["'])https://github\.com/{repo}/actions/runs/[0-9]+\1""")
 
 
+def run_url_problem(relative: str, record: object, repository: str | None) -> str | None:
+    """A run.json must carry a run.url that is this caller repository's own CI run page.
+
+    The same rule as the reporter's site command, kept here because docs.yml runs this gate
+    with the runner's python3, without the reporter installed.
+    """
+    url = None
+    if isinstance(record, dict) and isinstance(record.get("run"), dict):
+        url = record["run"].get("url")
+    if (
+        repository
+        and isinstance(url, str)
+        and re.fullmatch(rf"https://github\.com/{re.escape(repository)}/actions/runs/[0-9]+", url)
+    ):
+        return None
+    if url is None:
+        return f"{relative} run.url is missing"
+    return f"{relative} run.url is not this repository's run"
+
+
 def _has_trials_cell_link(page: str, relative: str) -> bool:
     for match in _TRIALS_CELL.finditer(page):
         if match.group("path") == relative:
@@ -160,17 +176,106 @@ def _has_trials_cell_link(page: str, relative: str) -> bool:
     return False
 
 
+# Elements whose content a browser does not render as page markup: raw text (script,
+# style, xmp, …), escapable raw text (textarea, title), inert template content, and noscript
+# with scripting on. A <video> inside one of them is not a player.
+_INERT_ELEMENTS = frozenset(
+    {
+        "iframe",
+        "noembed",
+        "noframes",
+        "noscript",
+        "plaintext",
+        "script",
+        "style",
+        "template",
+        "textarea",
+        "title",
+        "xmp",
+    }
+)
+_VOID_ELEMENTS = frozenset(
+    {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+)
+
+
+class _VideoPlayers(HTMLParser):
+    """Find a <video> that plays `relative`: its own first src, or, when it has no src
+    attribute, the first src of a <source> that is its direct child. Paths compare exactly;
+    tag and attribute names are case-insensitive, as html.parser lowercases them."""
+
+    def __init__(self, relative: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.relative = relative
+        self.found = False
+        self._inert: list[str] = []
+        self._in_video = False
+        self._video_has_src = False
+        self._depth = 0
+
+    def _start(self, tag: str, attrs: list[tuple[str, str | None]], *, closed: bool) -> None:
+        if self._inert:
+            if tag == "template" and self._inert[-1] == "template" and not closed:
+                self._inert.append(tag)
+            return
+        if tag in _INERT_ELEMENTS:
+            if not closed:
+                self._inert.append(tag)
+            return
+        src = next((value for name, value in attrs if name == "src"), None)
+        if self._in_video:
+            if tag == "source" and self._depth == 0 and not self._video_has_src:
+                self.found |= src == self.relative
+            elif tag not in _VOID_ELEMENTS and not closed:
+                self._depth += 1
+            return
+        if tag == "video":
+            self.found |= src == self.relative
+            self._video_has_src = src is not None
+            self._in_video = not closed
+            self._depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        self._start(tag, attrs, closed=False)
+
+    def handle_startendtag(self, tag, attrs):
+        self._start(tag, attrs, closed=True)
+
+    def handle_endtag(self, tag):
+        if self._inert:
+            if tag == self._inert[-1]:
+                self._inert.pop()
+            return
+        if not self._in_video:
+            return
+        if tag == "video" and self._depth == 0:
+            self._in_video = False
+        elif self._depth and tag not in _VOID_ELEMENTS:
+            self._depth -= 1
+
+
 def _has_video_player(page: str, relative: str) -> bool:
-    return (
-        re.search(
-            r"<video\b(?:(?!</video\b).)*"
-            + re.escape(relative)
-            + r"(?:(?!</video\b).)*</video\s*>",
-            page,
-            re.I | re.S,
-        )
-        is not None
-    )
+    """A <video> a browser renders whose own src, or direct <source> child, is exactly the
+    published path (see `_VideoPlayers`)."""
+    parser = _VideoPlayers(relative)
+    parser.feed(page)
+    parser.close()
+    return parser.found
 
 
 def run_page_problems(reports: Path, repository: str | None = None) -> list[str]:
@@ -191,7 +296,7 @@ def run_page_problems(reports: Path, repository: str | None = None) -> list[str]
         if record is None:
             continue
         relative = record_path.relative_to(reports).as_posix()
-        if issue := site.run_url_problem(relative, record, repository):
+        if issue := run_url_problem(relative, record, repository):
             problems.append(issue)
     for folder in folders:
         name = (folder / "index.html").relative_to(reports).as_posix()

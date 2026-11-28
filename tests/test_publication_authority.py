@@ -10,7 +10,7 @@ import pytest
 
 import publication_authority as authority
 import reports_restore
-from reports_common import SiteError
+from reports_restore import SiteError
 
 
 def log_bytes(artifact=11, commit="a" * 40):

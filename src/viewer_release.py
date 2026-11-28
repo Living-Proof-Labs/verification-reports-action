@@ -7,7 +7,7 @@ import re
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
-from reports_common import SiteError
+from reports_restore import SiteError
 
 LIMIT = 1024 * 1024
 
