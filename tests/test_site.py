@@ -37,6 +37,12 @@ BLOB_URL = "https://objects.githubusercontent.example/github-pages/artifact"
 SITE_URL = "https://docs.example/livingproof-unitree-g1/"
 
 
+def _run_url_id(run_id: str) -> str:
+    """GitHub run URLs use a numeric id; some tests use a non-numeric folder name."""
+    token = run_id.split("-")[0]
+    return token if token.isdigit() else "100"
+
+
 def _make_run_folder(
     parent: Path,
     name: str,
@@ -63,6 +69,7 @@ def _make_run_folder(
     evidence_files: dict[str, bytes] | None = None,
     html_override: str | None = None,
     thresholds_bytes: bytes | None = None,
+    caller: str | None = None,
 ) -> Path:
     folder = parent / name
     folder.mkdir(parents=True, exist_ok=True)
@@ -170,7 +177,7 @@ def _make_run_folder(
         "verification": f"{robot_slug}-{variant}",
         "run": {
             "id": run_id,
-            "url": f"https://github.com/{repository}/actions/runs/{run_id.split('-')[0]}",
+            "url": f"https://github.com/{caller or repository}/actions/runs/{_run_url_id(run_id)}",
             "created": created,
         },
         "commit": commit_info,
@@ -333,8 +340,8 @@ def test_single_robot_index_orders_failures_first(tmp_path: Path):
     )
     reports_dir = docs_root / "reports"
 
-    site_tool.build(reports_dir, runs_in)
-    assert site_fixture.check_reports_tree(reports_dir) == []
+    site_tool.build(reports_dir, runs_in, repository=REPO)
+    assert site_fixture.check_reports_tree(reports_dir, repository=REPO) == []
 
     index = (reports_dir / "index.html").read_text(encoding="utf-8")
     # Single-robot layout: no cross-robot <details class="robot"> accordion.
@@ -361,7 +368,7 @@ def test_single_robot_constraint_rejects_mixed_robots(tmp_path: Path):
     _make_run_folder(runs_in, "t1", repository="Living-Proof-Labs/livingproof-booster-t1")
 
     with pytest.raises(site_tool.SiteError, match="one robot per site.*booster-t1, unitree-g1"):
-        site_tool.build(tmp_path / "reports", runs_in)
+        site_tool.build(tmp_path / "reports", runs_in, repository=REPO)
 
 
 def test_index_all_pass_and_empty_states(tmp_path: Path):
@@ -392,7 +399,7 @@ def test_index_all_pass_and_empty_states(tmp_path: Path):
         required_passes=1,
     )
     reports_dir = tmp_path / "reports"
-    site_tool.build(reports_dir, runs_in)
+    site_tool.build(reports_dir, runs_in, repository=REPO)
     index = (reports_dir / "index.html").read_text(encoding="utf-8")
     assert '<p class="all-pass">All 2 latest results pass.</p>' in index
     assert "failed" not in index
@@ -423,8 +430,8 @@ def test_run_n_plus_one_restores_from_pages_artifact_and_keeps_run_n_immutable(
     )
 
     reports_v1 = docs_v1 / "reports"
-    site_tool.build(reports_v1, run1_input)
-    assert site_fixture.check_reports_tree(reports_v1) == []
+    site_tool.build(reports_v1, run1_input, repository=REPO)
+    assert site_fixture.check_reports_tree(reports_v1, repository=REPO) == []
 
     # Snapshot every file in runs/100/ after Run N to verify byte-for-byte immutability.
     run100_dir_v1 = reports_v1 / "unitree-g1/stock-mujoco-hallway/runs/100"
@@ -507,8 +514,8 @@ def test_run_n_plus_one_restores_from_pages_artifact_and_keeps_run_n_immutable(
     assert restored_artifact is not None and restored_artifact["id"] == 7
     assert not (reports_v2 / "obsolete-manual-page.html").exists()
 
-    site_tool.build(reports_v2, run2_input)
-    assert site_fixture.check_reports_tree(reports_v2) == []
+    site_tool.build(reports_v2, run2_input, repository=REPO)
+    assert site_fixture.check_reports_tree(reports_v2, repository=REPO) == []
 
     # Both runs 100 and 200 are present; history is newest first; latest/ points to 200.
     hallway_base = reports_v2 / "unitree-g1/stock-mujoco-hallway"
@@ -536,7 +543,7 @@ def test_run_n_plus_one_restores_from_pages_artifact_and_keeps_run_n_immutable(
     collide_input = tmp_path / "collide"
     site_fixture.write(collide_input, run_id="100", created="2026-11-23T06:00:00Z", repository=REPO)
     with pytest.raises(site_tool.SiteError, match="already published in history and is immutable"):
-        site_tool.build(reports_v2, collide_input)
+        site_tool.build(reports_v2, collide_input, repository=REPO)
 
 
 def test_restore_handles_manual_only_pages_artifact_before_first_report(
@@ -651,7 +658,7 @@ def test_restore_retries_transient_503_on_blob_download(
     docs = tmp_path / "docs"
     runs_in = tmp_path / "in"
     site_fixture.write(runs_in, run_id="100", created="2026-11-20T00:00:00Z")
-    site_tool.build(docs / "reports", runs_in)
+    site_tool.build(docs / "reports", runs_in, repository=REPO)
     archive = _pages_zip_from_docs_root(docs)
 
     artifacts_list = [_artifact_entry(7, "main", 100, "2026-11-20T00:05:00Z")]
@@ -717,14 +724,14 @@ def test_mcap_and_video_pruned_after_configurable_days_keeping_pages_and_checksu
         thresholds_bytes=b'{"max_lateral_drift_m": 0.5}\n',
     )
     reports_dir = tmp_path / "reports"
-    site_tool.build(reports_dir, run1, now="2026-11-01T00:00:00Z", days=7)
+    site_tool.build(reports_dir, run1, now="2026-11-01T00:00:00Z", days=7, repository=REPO)
 
     run100 = reports_dir / "unitree-g1/stock-mujoco-hallway/runs/100"
     assert (run100 / "evidence/trials.mcap").is_file()
     assert (run100 / "evidence/seed-01-fail.mp4").is_file()
     assert (run100 / "thresholds.json").is_file()
     assert "Evidence kept for 7 days" in (run100 / "index.html").read_text(encoding="utf-8")
-    assert site_fixture.check_reports_tree(reports_dir) == []
+    assert site_fixture.check_reports_tree(reports_dir, repository=REPO) == []
     subprocess.run(["sha256sum", "-c", "SHA256SUMS"], cwd=run100, check=True, capture_output=True)
 
     # 4 days later with retention=7 days: MCAP and video are still retained.
@@ -739,7 +746,7 @@ def test_mcap_and_video_pruned_after_configurable_days_keeping_pages_and_checksu
         n=20,
         required_passes=18,
     )
-    site_tool.build(reports_dir, run2, now="2026-11-05T00:00:00Z", days=7)
+    site_tool.build(reports_dir, run2, now="2026-11-05T00:00:00Z", days=7, repository=REPO)
     assert (run100 / "evidence/trials.mcap").is_file()
     assert (run100 / "evidence/seed-01-fail.mp4").is_file()
 
@@ -755,7 +762,7 @@ def test_mcap_and_video_pruned_after_configurable_days_keeping_pages_and_checksu
         n=20,
         required_passes=18,
     )
-    site_tool.build(reports_dir, run3, now="2026-11-05T12:00:00Z", days=3)
+    site_tool.build(reports_dir, run3, now="2026-11-05T12:00:00Z", days=3, repository=REPO)
 
     assert not (run100 / "evidence/trials.mcap").exists()
     assert not (run100 / "evidence/seed-01-fail.mp4").exists()
@@ -778,7 +785,7 @@ def test_mcap_and_video_pruned_after_configurable_days_keeping_pages_and_checksu
     assert "Evidence kept for" not in pruned_page
     assert "trials.mcap" in pruned_page  # label text remains without broken link
     assert "href='evidence/" not in pruned_page and 'href="evidence/' not in pruned_page
-    assert site_fixture.check_reports_tree(reports_dir) == []
+    assert site_fixture.check_reports_tree(reports_dir, repository=REPO) == []
     subprocess.run(["sha256sum", "-c", "SHA256SUMS"], cwd=run100, check=True, capture_output=True)
 
 
@@ -806,13 +813,13 @@ def test_evidence_manifest_controller_artifact_is_published(tmp_path: Path):
     payload = (json.dumps(manifest, indent=2) + "\n").encode()
     _make_run_folder(tmp_path / "in", "hallway", evidence_files={"manifest.json": payload})
     reports = tmp_path / "reports"
-    site_tool.build(reports, tmp_path / "in")
+    site_tool.build(reports, tmp_path / "in", repository=REPO)
     published = json.loads(
         next(reports.rglob("evidence/manifest.json")).read_text(encoding="utf-8")
     )
     stored = published["configuration"]["profile"]["controller"]["artifact"]
     assert stored["path"] == "deploy/pre_train/g1/motion.pt"
-    assert site_tool.public_page_problems(reports) == []
+    assert site_tool.public_page_problems(reports, repository=REPO) == []
 
 
 def _manifest_with_controller_artifact(artifact: dict, **extra: object) -> bytes:
@@ -831,7 +838,7 @@ def test_other_manifest_artifact_key_is_refused(tmp_path: Path):
     )
     _make_run_folder(tmp_path / "in", "hallway", evidence_files={"manifest.json": payload})
     with pytest.raises(site_tool.SiteError, match="manifest.json mentions an artifact"):
-        site_tool.build(tmp_path / "reports", tmp_path / "in")
+        site_tool.build(tmp_path / "reports", tmp_path / "in", repository=REPO)
 
 
 def test_artifact_wording_inside_controller_artifact_values_is_refused(tmp_path: Path):
@@ -840,7 +847,7 @@ def test_artifact_wording_inside_controller_artifact_values_is_refused(tmp_path:
     )
     _make_run_folder(tmp_path / "in", "hallway", evidence_files={"manifest.json": payload})
     with pytest.raises(site_tool.SiteError, match="manifest.json mentions an artifact"):
-        site_tool.build(tmp_path / "reports", tmp_path / "in")
+        site_tool.build(tmp_path / "reports", tmp_path / "in", repository=REPO)
 
 
 def test_duplicate_controller_artifact_key_is_refused(tmp_path: Path):
@@ -850,7 +857,7 @@ def test_duplicate_controller_artifact_key_is_refused(tmp_path: Path):
     )
     _make_run_folder(tmp_path / "in", "hallway", evidence_files={"manifest.json": payload})
     with pytest.raises(site_tool.SiteError, match="manifest.json mentions an artifact"):
-        site_tool.build(tmp_path / "reports", tmp_path / "in")
+        site_tool.build(tmp_path / "reports", tmp_path / "in", repository=REPO)
 
 
 def test_artifact_wording_in_rendered_page_text_is_refused(tmp_path: Path):
@@ -858,13 +865,17 @@ def test_artifact_wording_in_rendered_page_text_is_refused(tmp_path: Path):
     reports.mkdir()
     page = reports / "index.html"
     page.write_text("<p>Download the artifact.</p>", encoding="utf-8")
-    assert site_tool.public_page_problems(reports) == ["index.html mentions an artifact"]
+    assert site_tool.public_page_problems(reports, repository=REPO) == [
+        "index.html mentions an artifact"
+    ]
     assert site_tool.html_is_dirty(page.read_text(encoding="utf-8"))
     page.write_text(
         "<p><a href='https://github.com/org/repo/actions/runs/1/job/9'>job</a></p>",
         encoding="utf-8",
     )
-    assert site_tool.public_page_problems(reports) == ["index.html links to /actions/"]
+    assert site_tool.public_page_problems(reports, repository=REPO) == [
+        "index.html links to /actions/"
+    ]
 
 
 def test_actions_urls_and_artifact_wording_are_scrubbed_from_public_files(tmp_path: Path):
@@ -905,9 +916,9 @@ def test_actions_urls_and_artifact_wording_are_scrubbed_from_public_files(tmp_pa
     )
 
     reports_dir = tmp_path / "reports"
-    site_tool.build(reports_dir, runs_in)
-    assert site_tool.public_page_problems(reports_dir) == []
-    assert site_fixture.check_reports_tree(reports_dir) == []
+    site_tool.build(reports_dir, runs_in, repository=REPO)
+    assert site_tool.public_page_problems(reports_dir, repository=REPO) == []
+    assert site_fixture.check_reports_tree(reports_dir, repository=REPO) == []
 
 
 def test_inconclusive_integrity_and_spec_changed_chips_and_compared_runs(tmp_path: Path):
@@ -932,7 +943,7 @@ def test_inconclusive_integrity_and_spec_changed_chips_and_compared_runs(tmp_pat
         integrity_results={"livingproof-run-integrity": inconclusive_doc},
     )
     reports_dir = tmp_path / "reports"
-    site_tool.build(reports_dir, r1)
+    site_tool.build(reports_dir, r1, repository=REPO)
 
     r2 = tmp_path / "r2"
     _make_run_folder(
@@ -944,7 +955,7 @@ def test_inconclusive_integrity_and_spec_changed_chips_and_compared_runs(tmp_pat
         spec_tag="v3.1.0",
         finding="Drifted.",
     )
-    site_tool.build(reports_dir, r2)
+    site_tool.build(reports_dir, r2, repository=REPO)
 
     history = (reports_dir / "unitree-g1/stock-mujoco-hallway/index.html").read_text(
         encoding="utf-8"
@@ -960,7 +971,7 @@ def test_tampered_checksums_and_invalid_reports_fail_closed(tmp_path: Path):
     folder = _make_run_folder(runs_in, "hallway")
     (folder / "report.txt").write_text("tampered\n", encoding="utf-8")
     with pytest.raises(site_tool.SiteError, match="SHA256SUMS"):
-        site_tool.build(tmp_path / "reports", runs_in)
+        site_tool.build(tmp_path / "reports", runs_in, repository=REPO)
 
 
 # ---------------------------------------------------------------- client timezone script
@@ -970,7 +981,7 @@ def test_open_js_formats_viewer_timezone_without_relative_age(tmp_path: Path):
     runs_in = tmp_path / "in"
     _make_run_folder(runs_in, "hallway", created="2026-11-18T05:20:00Z")
     reports_dir = tmp_path / "reports"
-    site_tool.build(reports_dir, runs_in)
+    site_tool.build(reports_dir, runs_in, repository=REPO)
 
     index_html = (reports_dir / "index.html").read_text(encoding="utf-8")
     open_js = (reports_dir / "open.js").read_text(encoding="utf-8")
@@ -1078,6 +1089,7 @@ def test_site_action_pull_request_builds_artifact_only_without_restoring(
             "INPUT_UPLOAD_ARTIFACT": "auto",
             "GITHUB_EVENT_NAME": "pull_request",
             "GITHUB_RUN_ID": "999",
+            "GITHUB_REPOSITORY": REPO,
             "GITHUB_WORKSPACE": str(tmp_path),
             "GITHUB_RUN_ATTEMPT": "1",
             "GITHUB_OUTPUT": str(gh_out),
@@ -1178,8 +1190,8 @@ def test_multi_configuration_definition_folders_do_not_collide(tmp_path: Path):
         )
 
     reports_dir = tmp_path / "reports"
-    site_tool.build(reports_dir, runs_in)
-    assert site_fixture.check_reports_tree(reports_dir) == []
+    site_tool.build(reports_dir, runs_in, repository=REPO)
+    assert site_fixture.check_reports_tree(reports_dir, repository=REPO) == []
     assert (reports_dir / "unitree-g1/walk-hallway-modified/runs/42/run.json").is_file()
     assert (reports_dir / "unitree-g1/walk-hallway-stock/runs/42/run.json").is_file()
     index = (reports_dir / "index.html").read_text(encoding="utf-8")
@@ -1301,9 +1313,9 @@ def test_build_never_runs_a_reporter_binary_found_on_path(
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     runs_in = tmp_path / "runs"
     site_fixture.write(runs_in, run_id="77", created="2026-11-23T03:00:00Z")
-    site_tool.build(tmp_path / "reports", runs_in)
+    site_tool.build(tmp_path / "reports", runs_in, repository=REPO)
     assert not marker.exists()
-    assert site_fixture.check_reports_tree(tmp_path / "reports") == []
+    assert site_fixture.check_reports_tree(tmp_path / "reports", repository=REPO) == []
 
 
 def test_forged_run_json_hrefs_allow_only_https_and_relative_links(tmp_path: Path):
@@ -1322,7 +1334,7 @@ def test_forged_run_json_hrefs_allow_only_https_and_relative_links(tmp_path: Pat
     (folder / "run.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
     reports_dir = tmp_path / "reports"
-    site_tool.build(reports_dir, runs_in)
+    site_tool.build(reports_dir, runs_in, repository=REPO)
 
     history_html = (reports_dir / "unitree-g1/stock-mujoco-hallway/index.html").read_text(
         encoding="utf-8"
@@ -1356,6 +1368,7 @@ def test_site_action_rejects_unsafe_output_dir(tmp_path: Path, bad_output_dir: s
                 "INPUT_OUTPUT_DIR": bad_output_dir,
                 "INPUT_RESTORE_HISTORY": "false",
                 "INPUT_UPLOAD_ARTIFACT": "false",
+                "GITHUB_REPOSITORY": REPO,
                 "GITHUB_WORKSPACE": str(tmp_path),
             }
         )
@@ -1381,6 +1394,7 @@ def test_site_action_constrains_output_dir_to_github_workspace_and_ignores_input
                     "INPUT_OUTPUT_DIR": escaped,
                     "INPUT_RESTORE_HISTORY": "false",
                     "INPUT_UPLOAD_ARTIFACT": "false",
+                    "GITHUB_REPOSITORY": REPO,
                     "GITHUB_WORKSPACE": str(workspace),
                 }
             )
@@ -1398,6 +1412,7 @@ def test_site_action_constrains_output_dir_to_github_workspace_and_ignores_input
                 "INPUT_NOW": "2099-01-01T00:00:00Z",
                 "INPUT_RESTORE_HISTORY": "false",
                 "INPUT_UPLOAD_ARTIFACT": "false",
+                "GITHUB_REPOSITORY": REPO,
                 "GITHUB_EVENT_NAME": "push",
                 "GITHUB_WORKSPACE": str(workspace),
                 "GITHUB_RUN_ID": "77",
@@ -1452,7 +1467,7 @@ def test_generated_site_matches_the_golden_bytes():
 def test_theme_switch_markup_matches_the_packaged_styles(tmp_path: Path):
     runs_in = tmp_path / "in"
     site_fixture.write(runs_in, run_id="1", created="2026-11-20T06:00:00Z")
-    site_tool.build(tmp_path / "reports", runs_in)
+    site_tool.build(tmp_path / "reports", runs_in, repository=REPO)
     index_html = (tmp_path / "reports/index.html").read_text(encoding="utf-8")
     css = (tmp_path / "reports/styles.css").read_text(encoding="utf-8")
     assert '<fieldset class="theme">' in index_html
@@ -1538,6 +1553,7 @@ def test_site_action_from_another_checkout_loads_assets_from_the_action_path(tmp
         "INPUT_RESTORE_HISTORY": "false",
         "INPUT_UPLOAD_ARTIFACT": "false",
         "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REPOSITORY": REPO,
         "GITHUB_WORKSPACE": str(workspace),
         "GITHUB_OUTPUT": str(tmp_path / "out.txt"),
     }
@@ -1577,6 +1593,7 @@ def test_output_dir_is_resolved_in_the_workspace_not_the_cwd(tmp_path: Path, mon
         "INPUT_RESTORE_HISTORY": "false",
         "INPUT_UPLOAD_ARTIFACT": "false",
         "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REPOSITORY": REPO,
     }
     outputs = site_action.run_site_action(
         base | {"INPUT_OUTPUT_DIR": "site/reports", "GITHUB_WORKSPACE": str(workspace)}
@@ -1609,6 +1626,7 @@ def test_output_dir_symlink_to_a_parent_of_the_workspace_is_refused(tmp_path: Pa
                 "INPUT_OUTPUT_DIR": "up/escaped",
                 "INPUT_RESTORE_HISTORY": "false",
                 "INPUT_UPLOAD_ARTIFACT": "false",
+                "GITHUB_REPOSITORY": REPO,
                 "GITHUB_WORKSPACE": str(workspace),
             }
         )
@@ -1681,6 +1699,7 @@ def test_site_action_refuses_control_characters_before_writing_github_output(
         "INPUT_RESTORE_HISTORY": "false",
         "INPUT_UPLOAD_ARTIFACT": "false",
         "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REPOSITORY": REPO,
         "GITHUB_WORKSPACE": str(tmp_path),
         "GITHUB_OUTPUT": str(gh_out),
     }
@@ -1995,7 +2014,7 @@ def test_forged_run_folder_with_recomputed_sha256sums_and_hostile_report_is_refu
     _forged_run(tmp_path / "in", hostile)
     reports_dir = tmp_path / "reports"
     with pytest.raises(site_tool.SiteError, match="onload"):
-        site_tool.build(reports_dir, tmp_path / "in")
+        site_tool.build(reports_dir, tmp_path / "in", repository=REPO)
     assert not list(reports_dir.rglob("runs/909/index.html"))
 
 
@@ -2017,7 +2036,7 @@ def test_deleting_the_artifact_word_cannot_assemble_a_fetch(tmp_path: Path):
     )
     _forged_run(tmp_path / "in", hostile)
     with pytest.raises(site_tool.SiteError, match="style"):
-        site_tool.build(tmp_path / "reports", tmp_path / "in")
+        site_tool.build(tmp_path / "reports", tmp_path / "in", repository=REPO)
 
 
 def test_real_reporter_report_is_published_unchanged(tmp_path: Path):
@@ -2031,7 +2050,7 @@ def test_real_reporter_report_is_published_unchanged(tmp_path: Path):
     _make_run_folder(
         tmp_path / "in", "hallway", run_id="910", html_override=text, evidence_files=held
     )
-    site_tool.build(tmp_path / "reports", tmp_path / "in")
+    site_tool.build(tmp_path / "reports", tmp_path / "in", repository=REPO)
     run_dir = tmp_path / "reports/unitree-g1/stock-mujoco-hallway/runs/910"
     assert (run_dir / "report.html").read_text(encoding="utf-8") == text
     page = (run_dir / "index.html").read_text(encoding="utf-8")
@@ -2073,7 +2092,7 @@ def test_only_allowlisted_evidence_types_are_published(tmp_path: Path, stored: b
             for name in files
         ]
         (folder / "run.json").write_text(json.dumps(record), encoding="utf-8")
-    site_tool.build(tmp_path / "reports", tmp_path / "in")
+    site_tool.build(tmp_path / "reports", tmp_path / "in", repository=REPO)
     evidence = tmp_path / "reports/unitree-g1/stock-mujoco-hallway/runs/911/evidence"
     published = {p.relative_to(evidence).as_posix() for p in evidence.rglob("*") if p.is_file()}
     assert set(KEPT_EVIDENCE) <= published
@@ -2086,13 +2105,13 @@ def test_only_allowlisted_evidence_types_are_published(tmp_path: Path, stored: b
 def _restored_run(tmp_path: Path) -> tuple[Path, Path]:
     _make_run_folder(tmp_path / "in1", "hallway", run_id="920", created="2026-11-20T06:00:00Z")
     reports = tmp_path / "reports"
-    site_tool.build(reports, tmp_path / "in1")
+    site_tool.build(reports, tmp_path / "in1", repository=REPO)
     return reports, reports / "unitree-g1/stock-mujoco-hallway/runs/920"
 
 
 def _build_next_run(tmp_path: Path, reports: Path) -> None:
     _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
-    site_tool.build(reports, tmp_path / "in2")
+    site_tool.build(reports, tmp_path / "in2", repository=REPO)
 
 
 def test_a_clean_restored_run_is_rechecked_and_kept(tmp_path: Path):
@@ -2533,7 +2552,7 @@ def test_exclude_runs_skips_hostile_restored_run_and_keeps_other_runs_byte_for_b
     _make_run_folder(tmp_path / "in1/r1", "hallway", run_id="919", created="2026-11-19T06:00:00Z")
     _make_run_folder(tmp_path / "in1/r2", "hallway", run_id="920", created="2026-11-20T06:00:00Z")
     reports = tmp_path / "reports"
-    site_tool.build(reports, tmp_path / "in1")
+    site_tool.build(reports, tmp_path / "in1", repository=REPO)
 
     kept_run = reports / "unitree-g1/stock-mujoco-hallway/runs/919"
     hostile_run = reports / "unitree-g1/stock-mujoco-hallway/runs/920"
@@ -2551,10 +2570,10 @@ def test_exclude_runs_skips_hostile_restored_run_and_keeps_other_runs_byte_for_b
     reports_without_exclude = tmp_path / "reports-without-exclude"
     shutil.copytree(reports, reports_without_exclude)
     with pytest.raises(site_tool.SiteError, match="restored"):
-        site_tool.build(reports_without_exclude, tmp_path / "in2")
+        site_tool.build(reports_without_exclude, tmp_path / "in2", repository=REPO)
 
     capsys.readouterr()
-    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920",))
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920",), repository=REPO)
     err = capsys.readouterr().err
 
     assert "::warning::" in err
@@ -2588,11 +2607,11 @@ def test_exclude_runs_removes_empty_scenario_when_only_restored_run_is_excluded(
         created="2026-11-18T06:00:00Z",
     )
     reports = tmp_path / "reports"
-    site_tool.build(reports, tmp_path / "in1")
+    site_tool.build(reports, tmp_path / "in1", repository=REPO)
     assert (reports / "unitree-g1/stock-mujoco-corner-left/runs/918").is_dir()
 
     _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
-    site_tool.build(reports, tmp_path / "in2", exclude_runs=("918",))
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("918",), repository=REPO)
     err = capsys.readouterr().err
 
     assert "::warning::" in err
@@ -2610,7 +2629,7 @@ def test_exclude_runs_unknown_id_only_warns(tmp_path: Path, capsys):
 
     _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
     capsys.readouterr()
-    site_tool.build(reports, tmp_path / "in2", exclude_runs=("999999",))
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("999999",), repository=REPO)
     err = capsys.readouterr().err
 
     assert "::warning::" in err
@@ -2681,7 +2700,7 @@ def test_exclude_runs_matching_a_new_run_fails(tmp_path: Path):
 
     _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
     with pytest.raises(site_tool.SiteError, match="exclude-runs"):
-        site_tool.build(reports, tmp_path / "in2", exclude_runs=("921",))
+        site_tool.build(reports, tmp_path / "in2", exclude_runs=("921",), repository=REPO)
 
     assert {p: p.read_bytes() for p in run.rglob("*") if p.is_file()} == before
     assert not (reports / "unitree-g1/stock-mujoco-hallway/runs/921").exists()
@@ -2692,7 +2711,7 @@ def test_site_action_parses_whitespace_and_comma_separated_exclude_runs(tmp_path
     _make_run_folder(tmp_path / "in1/r2", "hallway", run_id="919", created="2026-11-19T06:00:00Z")
     _make_run_folder(tmp_path / "in1/r3", "hallway", run_id="920", created="2026-11-20T06:00:00Z")
     reports = tmp_path / "reports"
-    site_tool.build(reports, tmp_path / "in1")
+    site_tool.build(reports, tmp_path / "in1", repository=REPO)
 
     _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
     capsys.readouterr()
@@ -2704,6 +2723,7 @@ def test_site_action_parses_whitespace_and_comma_separated_exclude_runs(tmp_path
             "INPUT_EXCLUDE_RUNS": "918, 920\n999999",
             "GITHUB_WORKSPACE": str(tmp_path),
             "GITHUB_EVENT_NAME": "push",
+            "GITHUB_REPOSITORY": REPO,
             "GITHUB_RUN_ID": "921",
         }
     )
@@ -2731,12 +2751,12 @@ def test_exclude_runs_ids_are_global_and_remove_the_run_from_every_scenario(tmp_
         created="2026-11-20T06:00:00Z",
     )
     reports = tmp_path / "reports"
-    site_tool.build(reports, tmp_path / "in1")
+    site_tool.build(reports, tmp_path / "in1", repository=REPO)
     assert (reports / "unitree-g1/stock-mujoco-corner-left/runs/920").is_dir()
 
     _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
     capsys.readouterr()
-    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920", "920"))
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920", "920"), repository=REPO)
     err = capsys.readouterr().err
 
     assert not (reports / "unitree-g1/stock-mujoco-hallway/runs/920").exists()
@@ -2765,7 +2785,7 @@ def test_exclude_runs_skips_a_restored_run_with_unpublished_evidence(tmp_path: P
         _build_next_run(tmp_path, reports_without_exclude)
 
     _make_run_folder(tmp_path / "in3", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
-    site_tool.build(reports, tmp_path / "in3", exclude_runs=("920",))
+    site_tool.build(reports, tmp_path / "in3", exclude_runs=("920",), repository=REPO)
     assert not run.exists()
     assert (reports / "unitree-g1/stock-mujoco-hallway/runs/921/index.html").is_file()
 
@@ -2780,13 +2800,13 @@ def test_an_excluded_run_is_not_restored_by_the_next_build_without_the_entry(tmp
         encoding="utf-8",
     )
     _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
-    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920",))
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920",), repository=REPO)
 
     # The deployed tree is what the next build restores; the entry has been removed.
     deployed = tmp_path / "deployed"
     shutil.copytree(reports, deployed)
     _make_run_folder(tmp_path / "in3", "hallway", run_id="922", created="2026-11-22T06:00:00Z")
-    site_tool.build(deployed, tmp_path / "in3")
+    site_tool.build(deployed, tmp_path / "in3", repository=REPO)
 
     runs_root = deployed / "unitree-g1/stock-mujoco-hallway/runs"
     assert sorted(p.name for p in runs_root.iterdir()) == ["921", "922"]
@@ -2802,7 +2822,7 @@ def test_exclude_runs_matching_is_exact_not_prefix_or_case_insensitive(tmp_path:
     _make_run_folder(tmp_path / "in1/r1", "hallway", run_id="920", created="2026-11-19T06:00:00Z")
     _make_run_folder(tmp_path / "in1/r2", "hallway", run_id="AbC", created="2026-11-20T06:00:00Z")
     reports = tmp_path / "reports"
-    site_tool.build(reports, tmp_path / "in1")
+    site_tool.build(reports, tmp_path / "in1", repository=REPO)
 
     _make_run_folder(
         tmp_path / "in2/n1", "hallway", run_id="NewRun", created="2026-11-21T06:00:00Z"
@@ -2813,6 +2833,7 @@ def test_exclude_runs_matching_is_exact_not_prefix_or_case_insensitive(tmp_path:
         reports,
         tmp_path / "in2",
         exclude_runs=("92", "9200", "abc", "newrun"),
+        repository=REPO,
     )
     err = capsys.readouterr().err
 
@@ -2830,7 +2851,7 @@ def test_build_revalidates_exclude_runs_entries(tmp_path: Path, bad_entry: str):
 
     _make_run_folder(tmp_path / "in2", "hallway", run_id="921", created="2026-11-21T06:00:00Z")
     with pytest.raises(site_tool.SiteError, match="exclude-runs"):
-        site_tool.build(reports, tmp_path / "in2", exclude_runs=(bad_entry,))
+        site_tool.build(reports, tmp_path / "in2", exclude_runs=(bad_entry,), repository=REPO)
 
     assert {p: p.read_bytes() for p in run.rglob("*") if p.is_file()} == before
     assert not (reports / "unitree-g1/stock-mujoco-hallway/runs/921").exists()
@@ -2840,7 +2861,7 @@ def test_runs_skips_and_warns_unreadable_run_json_when_excluded(tmp_path: Path, 
     _make_run_folder(tmp_path / "in1/r1", "hallway", run_id="919", created="2026-11-19T06:00:00Z")
     _make_run_folder(tmp_path / "in1/r2", "hallway", run_id="920", created="2026-11-20T06:00:00Z")
     reports = tmp_path / "reports"
-    site_tool.build(reports, tmp_path / "in1")
+    site_tool.build(reports, tmp_path / "in1", repository=REPO)
 
     bad_run = reports / "unitree-g1/stock-mujoco-hallway/runs/920"
     (bad_run / "run.json").write_text("{not valid json", encoding="utf-8")
@@ -2862,7 +2883,7 @@ def test_build_excludes_restored_run_with_unreadable_run_json_and_fails_when_not
     _make_run_folder(tmp_path / "in1/r1", "hallway", run_id="919", created="2026-11-19T06:00:00Z")
     _make_run_folder(tmp_path / "in1/r2", "hallway", run_id="920", created="2026-11-20T06:00:00Z")
     reports = tmp_path / "reports"
-    site_tool.build(reports, tmp_path / "in1")
+    site_tool.build(reports, tmp_path / "in1", repository=REPO)
 
     bad_run = reports / "unitree-g1/stock-mujoco-hallway/runs/920"
     (bad_run / "run.json").write_text("{not valid json", encoding="utf-8")
@@ -2871,10 +2892,10 @@ def test_build_excludes_restored_run_with_unreadable_run_json_and_fails_when_not
     reports_without_exclude = tmp_path / "reports-without-exclude"
     shutil.copytree(reports, reports_without_exclude)
     with pytest.raises(site_tool.SiteError, match="not valid JSON"):
-        site_tool.build(reports_without_exclude, tmp_path / "in2")
+        site_tool.build(reports_without_exclude, tmp_path / "in2", repository=REPO)
 
     capsys.readouterr()
-    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920",))
+    site_tool.build(reports, tmp_path / "in2", exclude_runs=("920",), repository=REPO)
     err = capsys.readouterr().err
 
     assert "::warning::Excluded restored run 920" in err
@@ -3052,7 +3073,7 @@ def test_invalid_utf8_report_html_is_refused_with_file_and_byte_offset(tmp_path:
     )
     reports_dir = tmp_path / "reports"
     with pytest.raises(site_tool.SiteError) as exc_info:
-        site_tool.build(reports_dir, tmp_path / "in")
+        site_tool.build(reports_dir, tmp_path / "in", repository=REPO)
     message = str(exc_info.value)
     assert "report.html" in message
     assert f"byte {offset}" in message
@@ -3071,8 +3092,8 @@ def test_public_page_check_allows_the_ci_run_address_and_nothing_else_under_acti
     reports.mkdir()
     page = reports / "index.html"
     page.write_text(f"<p><a href='{CI_RUN}'>CI run</a> {CI_RUN}.</p>", encoding="utf-8")
-    assert site_tool.public_page_problems(reports) == []
-    assert not site_tool.html_is_dirty(page.read_text(encoding="utf-8"))
+    assert site_tool.public_page_problems(reports, repository="org/repo") == []
+    assert not site_tool.html_is_dirty(page.read_text(encoding="utf-8"), repository="org/repo")
     for bad in (
         CI_RUN + "/job/5",
         CI_RUN + "/attempts/2",
@@ -3083,30 +3104,33 @@ def test_public_page_check_allows_the_ci_run_address_and_nothing_else_under_acti
         "https://github.com/org/repo/actions/runs/",
     ):
         page.write_text(f"<p><a href='{CI_RUN}'>CI run</a> <a href='{bad}'>x</a></p>", "utf-8")
-        assert "index.html links to /actions/" in site_tool.public_page_problems(reports), bad
-        assert site_tool.html_is_dirty(page.read_text(encoding="utf-8")), bad
+        assert "index.html links to /actions/" in site_tool.public_page_problems(
+            reports, repository="org/repo"
+        ), bad
+        assert site_tool.html_is_dirty(page.read_text(encoding="utf-8"), repository="org/repo"), bad
 
 
 def test_the_ci_run_link_is_published_and_artifact_addresses_still_are_not(tmp_path: Path):
+    this_run = f"https://github.com/{REPO}/actions/runs/100"
     runs_in = tmp_path / "in"
     folder = _make_run_folder(
         runs_in,
         "hallway",
         html_override=(
             "<!doctype html><html><body><main><div class='card evidence'><h2>Evidence</h2><ul>"
-            f"<li><a href='{CI_RUN}'>CI run</a></li>"
-            f"<li><a href='{CI_RUN}/artifacts/101'>MCAP</a></li>"
+            f"<li><a href='{this_run}'>CI run</a></li>"
+            f"<li><a href='{this_run}/artifacts/101'>MCAP</a></li>"
             "</ul></div></main></body></html>\n"
         ),
     )
     rep = json.loads((folder / "report.json").read_text(encoding="utf-8"))
     rep["evidence_links"] = {
-        "run": CI_RUN,
-        "links": [{"label": "MCAP", "kind": "mcap", "url": CI_RUN + "/artifacts/101"}],
+        "run": this_run,
+        "links": [{"label": "MCAP", "kind": "mcap", "url": this_run + "/artifacts/101"}],
     }
     (folder / "report.json").write_text(json.dumps(rep), encoding="utf-8")
     (folder / "report.md").write_text(
-        f"**Evidence:** [CI run]({CI_RUN}) · [MCAP]({CI_RUN}/artifacts/101)\n", encoding="utf-8"
+        f"**Evidence:** [CI run]({this_run}) · [MCAP]({this_run}/artifacts/101)\n", encoding="utf-8"
     )
     (folder / "SHA256SUMS").write_text(
         "".join(
@@ -3116,19 +3140,19 @@ def test_the_ci_run_link_is_published_and_artifact_addresses_still_are_not(tmp_p
         encoding="utf-8",
     )
     reports_dir = tmp_path / "reports"
-    site_tool.build(reports_dir, runs_in)
+    site_tool.build(reports_dir, runs_in, repository=REPO)
     run = next(reports_dir.glob("*/*/runs/*"))
     page = (run / "index.html").read_text(encoding="utf-8")
-    assert f"<a href='{CI_RUN}'>CI run</a>" in page
+    assert f"<a href='{this_run}'>CI run</a>" in page
     assert "/artifacts/" not in page
-    assert f"<a href='{CI_RUN}'>CI run</a>" in (run / "report.html").read_text(encoding="utf-8")
-    assert f"[CI run]({CI_RUN})" in (run / "report.md").read_text(encoding="utf-8")
+    assert f"<a href='{this_run}'>CI run</a>" in (run / "report.html").read_text(encoding="utf-8")
+    assert f"[CI run]({this_run})" in (run / "report.md").read_text(encoding="utf-8")
     assert "/artifacts/" not in (run / "report.md").read_text(encoding="utf-8")
     assert (
         json.loads((run / "report.json").read_text(encoding="utf-8"))["evidence_links"]["run"]
-        == CI_RUN
+        == this_run
     )
-    assert site_tool.public_page_problems(reports_dir) == []
+    assert site_tool.public_page_problems(reports_dir, repository=REPO) == []
 
 
 def test_an_evidence_link_to_a_file_the_site_did_not_publish_is_plain_text(tmp_path: Path):
@@ -3148,7 +3172,7 @@ def test_an_evidence_link_to_a_file_the_site_did_not_publish_is_plain_text(tmp_p
         ),
     )
     reports_dir = tmp_path / "reports"
-    site_tool.build(reports_dir, runs_in)
+    site_tool.build(reports_dir, runs_in, repository=REPO)
     run = next(reports_dir.glob("*/*/runs/*"))
     for name in ("index.html", "report.html"):
         page = (run / name).read_text(encoding="utf-8")
@@ -3168,9 +3192,18 @@ def test_real_reporter_3_17_0_run_page_links_the_ci_run_video_and_recording(tmp_
     text = fixture.read_text(encoding="utf-8")
     media = {"video/trial-01-fail.mp4": b"mp4", "mcap/mcap/trial-01.mcap": b"mcap"}
     _make_run_folder(
-        tmp_path / "in", "hallway", run_id="46110994356", html_override=text, evidence_files=media
+        tmp_path / "in",
+        "hallway",
+        run_id="46110994356",
+        html_override=text,
+        evidence_files=media,
+        caller="Living-Proof-Labs/verification-reports-action",
     )
-    site_tool.build(tmp_path / "reports", tmp_path / "in")
+    site_tool.build(
+        tmp_path / "reports",
+        tmp_path / "in",
+        repository="Living-Proof-Labs/verification-reports-action",
+    )
     reports = tmp_path / "reports"
     run = next(reports.glob("*/*/runs/46110994356"))
     run_url = (
@@ -3182,5 +3215,51 @@ def test_real_reporter_3_17_0_run_page_links_the_ci_run_video_and_recording(tmp_
         assert "<a href='evidence/mcap/mcap/trial-01.mcap'>MCAP, all 1 trials</a>" in page
         assert "<video controls preload='metadata' src='evidence/video/trial-01-fail.mp4'>" in page
         assert "<td><a href='evidence/video/trial-01-fail.mp4'>video</a></td>" in page
-    assert require_reports.run_page_problems(reports) == []
-    assert site_tool.public_page_problems(reports) == []
+    assert (
+        require_reports.run_page_problems(
+            reports, repository="Living-Proof-Labs/verification-reports-action"
+        )
+        == []
+    )
+    assert (
+        site_tool.public_page_problems(
+            reports, repository="Living-Proof-Labs/verification-reports-action"
+        )
+        == []
+    )
+
+
+def test_a_run_link_to_another_repository_is_plain_text_on_the_published_page(tmp_path: Path):
+    this_run = f"https://github.com/{REPO}/actions/runs/100"
+    other = "https://github.com/other-org/other-repo/actions/runs/100"
+    runs_in = tmp_path / "in"
+    folder = _make_run_folder(
+        runs_in,
+        "hallway",
+        html_override=(
+            "<!doctype html><html><body><main><div class='card evidence'><h2>Evidence</h2><ul>"
+            f"<li><a href='{this_run}'>CI run</a></li>"
+            f"<li><a href='{other}'>other run</a></li>"
+            "</ul></div></main></body></html>\n"
+        ),
+    )
+    rep = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    rep["evidence_links"] = {"run": this_run, "links": []}
+    (folder / "report.json").write_text(json.dumps(rep), encoding="utf-8")
+    (folder / "SHA256SUMS").write_text(
+        "".join(
+            f"{hashlib.sha256((folder / n).read_bytes()).hexdigest()}  {n}\n"
+            for n in site_tool.REPORT_FILES
+        ),
+        encoding="utf-8",
+    )
+    reports_dir = tmp_path / "reports"
+    site_tool.build(reports_dir, runs_in, repository=REPO)
+    run = next(reports_dir.glob("*/*/runs/*"))
+    page = (run / "index.html").read_text(encoding="utf-8")
+    assert f"<a href='{this_run}'>CI run</a>" in page
+    assert f"<a href='{other}'>" not in page
+    assert "other run" in page
+    stored = json.loads((run / "report.json").read_text(encoding="utf-8"))
+    assert stored["evidence_links"]["run"] == this_run
+    assert site_tool.public_page_problems(reports_dir, repository=REPO) == []

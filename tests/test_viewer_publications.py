@@ -72,11 +72,16 @@ def publication(tmp_path, monkeypatch):
         record = json.loads((inputs / "run.json").read_bytes())
         record["run"]["id"] = str(number)
         record["run"]["created"] = date
+        caller = publish.overrides.get(
+            "GITHUB_REPOSITORY", "Living-Proof-Labs/verification-reports-action"
+        )
+        record["run"]["url"] = f"https://github.com/{caller}/actions/runs/{number}"
         (inputs / "run.json").write_text(json.dumps(record))
         write_published_checksums(inputs)
         run_site_action(
             dict(
                 GITHUB_WORKSPACE=str(tmp_path),
+                GITHUB_REPOSITORY="Living-Proof-Labs/verification-reports-action",
                 INPUT_RUNS_DIR=str(inputs.parent),
                 INPUT_OUTPUT_DIR=publish.output,
                 INPUT_TRUSTED_VIEWERS=str(config) if enabled else "",
@@ -250,6 +255,7 @@ def authenticated_publication(publication, authority_api, monkeypatch):  # noqa:
     import reports_restore
 
     root, publish = publication
+    publish.overrides["GITHUB_REPOSITORY"] = "owner/repo"
     publish.output = "published/g1"
     artifact, _, policy, responses, _ = authority_api
     policy["viewer_registry"] = str(Path(__file__).parents[1] / "config/viewers/evaluators.json")

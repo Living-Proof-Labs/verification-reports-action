@@ -565,8 +565,8 @@ def _history_transport(monkeypatch, docs: Path) -> None:
     def request(url, token):
         del token
         path = urllib.parse.urlsplit(url).path.rstrip("/")
-        if path == f"/repos/{REPO}":
-            value = {"id": REPO_ID, "full_name": REPO}
+        if path in {f"/repos/{REPO}", "/repos/Living-Proof-Labs/verification-reports-action"}:
+            value = {"id": REPO_ID, "full_name": path[len("/repos/") :]}
         elif path.endswith("/jobs"):
             value = {"jobs": [{"name": "deploy", "conclusion": "success"}]}
         elif "/actions/runs/" in path:
@@ -602,6 +602,7 @@ def test_old_published_runs_restore_byte_for_byte_and_evidence_still_expires(tmp
         tmp_path / "incoming",
         "new",
         repository="Living-Proof-Labs/livingproof-unitree-g1",
+        caller="Living-Proof-Labs/verification-reports-action",
         variant="unitree-g1-stock-mujoco-hallway",
         run_id="88888888888",
         created="2026-11-27T12:00:00Z",
@@ -615,7 +616,7 @@ def test_old_published_runs_restore_byte_for_byte_and_evidence_still_expires(tmp
             "INPUT_RESET_HISTORY": "false",
             "GITHUB_WORKSPACE": str(tmp_path),
             "GITHUB_EVENT_NAME": "push",
-            "GITHUB_REPOSITORY": REPO,
+            "GITHUB_REPOSITORY": "Living-Proof-Labs/verification-reports-action",
             "GITHUB_RUN_ID": "88888888888",
         }
     )
@@ -640,12 +641,17 @@ def test_old_published_runs_restore_byte_for_byte_and_evidence_still_expires(tmp
             "INPUT_EVIDENCE_RETENTION_DAYS": "7",
             "GITHUB_WORKSPACE": str(tmp_path),
             "GITHUB_EVENT_NAME": "push",
-            "GITHUB_REPOSITORY": REPO,
+            "GITHUB_REPOSITORY": "Living-Proof-Labs/verification-reports-action",
             "GITHUB_RUN_ID": "88888888888",
         }
     )
     # The new run's timestamp is the build clock, so force a later clock through render.
-    reports_site.render(expired, now="2027-02-01T00:00:00Z", days=7)
+    reports_site.render(
+        expired,
+        now="2027-02-01T00:00:00Z",
+        days=7,
+        repository="Living-Proof-Labs/verification-reports-action",
+    )
     old = expired / "unitree-g1/stock-mujoco-hallway/runs/45754832566"
     assert (old / "health.json").is_file()
     assert not (old / "evidence/video/trial-01-fail.mp4").exists()

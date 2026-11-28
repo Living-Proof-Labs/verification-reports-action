@@ -142,9 +142,12 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         if not reports_dir.is_relative_to(restore_dir):
             raise site_tool.SiteError("restore-root must contain output-dir")
     restored = None
+    repository = (env_map.get("GITHUB_REPOSITORY") or "").strip()
+    if not repository:
+        raise site_tool.SiteError("GITHUB_REPOSITORY is required")
+
     if should_restore:
         # History is only ever restored from the calling repository's own Pages deploys.
-        repository = (env_map.get("GITHUB_REPOSITORY") or "").strip()
         branch = (env_map.get("INPUT_BRANCH") or "main").strip()
         run_id_str = (env_map.get("GITHUB_RUN_ID") or "").strip()
         current_run = int(run_id_str) if run_id_str.isdigit() else None
@@ -198,12 +201,13 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         git_dir=git_dir,
         exclude_runs=exclude_runs,
         trusted_viewers=history_viewers,
+        repository=repository,
     )
 
     for folder in produced:
         trusted_viewer.render_fresh(folder, viewers)
 
-    issues = site_fixture.check_reports_tree(reports_dir)
+    issues = site_fixture.check_reports_tree(reports_dir, repository=repository)
     if issues:
         raise site_tool.SiteError("Generated reports/ check failed: " + "; ".join(issues))
 
