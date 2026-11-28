@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import hashlib
 import json
 import re
@@ -282,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("reports_dir", type=Path)
     c.add_argument(
         "--repository",
-        default=None,
+        default=os.environ.get("GITHUB_REPOSITORY"),
         help="caller repository (owner/name) whose CI run pages may be linked",
     )
 
