@@ -9,6 +9,12 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+
+import reports_site as site  # noqa: E402
+
 # reports_render._badge_html emits exactly one of these class attributes.
 GRADE_BADGE = re.compile(r'class="badge badge-(?:pass|fail|warn|muted)"')
 FIXTURE_SEGMENTS = ("fixture-scenario-stock", "fixture-hallway-stock")
@@ -19,14 +25,6 @@ STABLE_PAGE = Path("g1/unitree-g1/stock-mujoco-hallway/latest/index.html")
 RUN_ID_LINK = re.compile(r"reports/(?:[^/\s\"')<>]+/)*runs/[0-9]+/")
 _LOCAL_REF = re.compile(r"""(?P<attr>\b(?:href|src))=(?P<q>["'])(?P<url>.*?)(?P=q)""")
 MOCK_ROOT_FILES = ("site.json", "styles.css", "open.js")
-_REPO_SEGMENT = r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?"
-CI_RUN_LINK = re.compile(
-    r"""href=(["'])https://github\.com/"""
-    + _REPO_SEGMENT
-    + r"/"
-    + _REPO_SEGMENT
-    + r"""/actions/runs/[0-9]+\1"""
-)
 VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
 _TRIALS_CELL = re.compile(
     r"<td\b[^>]*>(?:(?!</td>).)*href=(['\"])(?P<path>evidence/[^'\"]+)\1",
@@ -116,17 +114,6 @@ def drop_published_fixtures(reports: Path) -> None:
             path.rmdir()
 
 
-def _caller_repository(record: dict) -> str | None:
-    url = (record.get("run") or {}).get("url")
-    if not isinstance(url, str):
-        return None
-    match = re.fullmatch(
-        r"https://github\.com/(" + _REPO_SEGMENT + r"/" + _REPO_SEGMENT + r")/actions/runs/[0-9]+",
-        url,
-    )
-    return match.group(1) if match else None
-
-
 def _read_run_record(path: Path) -> dict | None:
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
@@ -159,10 +146,10 @@ def _newest_run_folders(reports: Path) -> tuple[list[Path], list[str]]:
 
 
 def _ci_run_link(repository: str | None) -> re.Pattern[str]:
-    if repository:
-        repo = re.escape(repository)
-    else:
-        repo = f"{_REPO_SEGMENT}/{_REPO_SEGMENT}"
+    # Fail closed: with no caller, no CI run href is accepted.
+    if not repository:
+        return re.compile(r"(?!)")
+    repo = re.escape(repository)
     return re.compile(rf"""href=(["'])https://github\.com/{repo}/actions/runs/[0-9]+\1""")
 
 
@@ -173,15 +160,39 @@ def _has_trials_cell_link(page: str, relative: str) -> bool:
     return False
 
 
-def run_page_problems(reports: Path) -> list[str]:
+def _has_video_player(page: str, relative: str) -> bool:
+    return (
+        re.search(
+            r"<video\b(?:(?!</video\b).)*"
+            + re.escape(relative)
+            + r"(?:(?!</video\b).)*</video\s*>",
+            page,
+            re.I | re.S,
+        )
+        is not None
+    )
+
+
+def run_page_problems(reports: Path, repository: str | None = None) -> list[str]:
     """The newest run page of each scenario links this repo's CI run and its media.
 
-    Only the newest run is held to the link check: an older restored run was built before
-    its page carried the links, and its evidence may since have been pruned. An unreadable
-    run.json is still a problem. A published trial video must be linked from the trials
-    table, not only from a <video> tag.
+    The allowed repository is the caller, not whatever run.url says. A missing,
+    malformed or foreign run.url is a problem. Only the newest run is held to the
+    link check: an older restored run was built before its page carried the links,
+    and its evidence may since have been pruned. An unreadable run.json is still a
+    problem. A published trial video must appear as an inline <video> player and as
+    a link in the trials table.
     """
+    if repository is None:
+        repository = (os.environ.get("GITHUB_REPOSITORY") or "").strip() or None
     folders, problems = _newest_run_folders(reports)
+    for record_path in sorted(reports.rglob("runs/*/run.json")):
+        record = _read_run_record(record_path)
+        if record is None:
+            continue
+        relative = record_path.relative_to(reports).as_posix()
+        if issue := site.run_url_problem(relative, record, repository):
+            problems.append(issue)
     for folder in folders:
         name = (folder / "index.html").relative_to(reports).as_posix()
         page_path = folder / "index.html"
@@ -189,8 +200,6 @@ def run_page_problems(reports: Path) -> list[str]:
             problems.append(f"{name} is missing")
             continue
         page = page_path.read_text(encoding="utf-8")
-        record = _read_run_record(folder / "run.json")
-        repository = _caller_repository(record) if record else None
         if _ci_run_link(repository).search(page) is None:
             problems.append(f"{name} is missing the CI run link")
         evidence = folder / "evidence"
@@ -209,13 +218,17 @@ def run_page_problems(reports: Path) -> list[str]:
                     problems.append(
                         f"{name} does not link the published {relative} in the trials table"
                     )
+                if not _has_video_player(page, relative):
+                    problems.append(
+                        f"{name} does not include the published {relative} in the video player"
+                    )
                 continue
             if f"'{relative}'" not in page and f'"{relative}"' not in page:
                 problems.append(f"{name} does not link the published {relative}")
     return problems
 
 
-def require_published(reports: Path, g1_status: str) -> None:
+def require_published(reports: Path, g1_status: str, repository: str | None = None) -> None:
     """Fail unless the G1 site build succeeded and the public tree is the G1 example.
 
     A refused build can still leave index.html on disk, so file existence is not enough.
@@ -230,7 +243,7 @@ def require_published(reports: Path, g1_status: str) -> None:
         raise SystemExit(problems[0])
     if not (reports / STABLE_PAGE).is_file():
         raise SystemExit(f"built site is missing {SAMPLE_REPORT}")
-    if problems := run_page_problems(reports):
+    if problems := run_page_problems(reports, repository=repository):
         raise SystemExit(problems[0])
 
 
@@ -250,14 +263,14 @@ def require_readme_sample(site: Path, readme: Path) -> None:
         raise SystemExit(f"built site is missing {SAMPLE_REPORT}")
 
 
-def require_g1_build(reports: Path, status: str) -> None:
+def require_g1_build(reports: Path, status: str, repository: str | None = None) -> None:
     """Fail unless the pre-merge G1 site build succeeded and shows the real report."""
     if status != "success":
         raise SystemExit(f"refused site build: {status}")
     index = (reports / "index.html").read_text(encoding="utf-8")
     if "unitree-g1" not in index or GRADE_BADGE.search(index) is None:
         raise SystemExit("G1 site output is missing the expected report")
-    if problems := run_page_problems(reports):
+    if problems := run_page_problems(reports, repository=repository):
         raise SystemExit(problems[0])
 
 
@@ -269,11 +282,15 @@ def main(argv: list[str]) -> None:
         publish_public_index(Path(argv[2]))
         return
     if len(argv) == 3 and argv[1] == "check":
+        if not (os.environ.get("GITHUB_REPOSITORY") or "").strip():
+            raise SystemExit("GITHUB_REPOSITORY is required")
         reports = Path(argv[2])
         require_published(reports, os.environ.get("G1_STATUS", ""))
         require_readme_sample(reports.parent, Path("README.md"))
         return
     if len(argv) == 3 and argv[1] == "g1":
+        if not (os.environ.get("GITHUB_REPOSITORY") or "").strip():
+            raise SystemExit("GITHUB_REPOSITORY is required")
         require_g1_build(Path(argv[2]), os.environ.get("SITE_STATUS", ""))
         return
     raise SystemExit("usage: require_reports.py drop-fixtures|publish-index|check|g1 <reports-dir>")

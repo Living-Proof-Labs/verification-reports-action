@@ -205,7 +205,7 @@ def write(
     return written
 
 
-def check_reports_tree(reports_dir: Path) -> list[str]:
+def check_reports_tree(reports_dir: Path, repository: str | None = None) -> list[str]:
     """Return a list of link, checksum, or content issues inside `reports_dir`."""
     issues: list[str] = []
     if not (reports_dir / "index.html").is_file():
@@ -262,7 +262,7 @@ def check_reports_tree(reports_dir: Path) -> list[str]:
             if actual != digest:
                 issues.append(f"{run_folder.relative_to(reports_dir)}/{rel_name}: sha256 mismatch")
 
-    issues.extend(site_tool.public_page_problems(reports_dir))
+    issues.extend(site_tool.public_page_problems(reports_dir, repository=repository))
     return issues
 
 
@@ -280,6 +280,11 @@ def main(argv: list[str] | None = None) -> int:
 
     c = sub.add_parser("check", help="verify links, checksums, and scrubbed content in REPORTS_DIR")
     c.add_argument("reports_dir", type=Path)
+    c.add_argument(
+        "--repository",
+        default=None,
+        help="caller repository (owner/name) whose CI run pages may be linked",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "write":
@@ -295,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Wrote {folder}")
         return 0
 
-    issues = check_reports_tree(args.reports_dir)
+    issues = check_reports_tree(args.reports_dir, repository=args.repository)
     for line in issues:
         print(f"issue: {line}", file=sys.stderr)
     pages = len(list(args.reports_dir.rglob("*.html")))

@@ -12,6 +12,12 @@ import pytest
 import reports_site as site
 import require_reports
 
+
+@pytest.fixture(autouse=True)
+def _caller_env(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", OWNER_REPO)
+
+
 OWNER_REPO = "Living-Proof-Labs/verification-reports-action"
 OTHER_REPO = "Other-Org/other-repo"
 RUN = f"https://github.com/{OWNER_REPO}/actions/runs/46115314157"
@@ -64,10 +70,14 @@ def test_a_run_page_may_not_link_another_repository_that_is_elsewhere_on_the_sit
         "7",
         f"<a href='https://github.com/{OTHER_REPO}/actions/runs/7'>x</a>",
     )
-    assert site.public_page_problems(reports) == []
+    # A site is bound to the caller, not to whatever run.url says. The other
+    # repository's run.json and its own run link are refused.
+    problems = site.public_page_problems(reports, repository=OWNER_REPO)
+    assert any("b/runs/7/run.json run.url" in item for item in problems)
     page = reports / "a/runs/1/index.html"
     page.write_text(f"<a href='{OTHER_RUN}'>other</a>", encoding="utf-8")
-    assert site.public_page_problems(reports) == ["a/runs/1/index.html links to /actions/"]
+    problems = site.public_page_problems(reports, repository=OWNER_REPO)
+    assert "a/runs/1/index.html links to /actions/" in problems
 
 
 @pytest.mark.parametrize(
@@ -88,6 +98,7 @@ def _page(cell: str) -> str:
     return (
         f"<a href='{RUN}'>CI run</a>"
         "<a href='evidence/mcap/mcap/trial-01.mcap'>MCAP</a>"
+        "<video controls src='evidence/video/trial-01-fail.mp4'></video>"
         f"<table><tr><td>{cell}</td></tr></table>"
     )
 

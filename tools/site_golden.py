@@ -33,8 +33,9 @@ def build_golden_site(work: Path) -> Path:
         commit="b" * 40,
         tag="v2.3.33",
     )
-    reports_site.build(reports, work / "in1")
-    reports_site.build(reports, work / "in2", days=7)
+    caller = "Living-Proof-Labs/livingproof-unitree-g1"
+    reports_site.build(reports, work / "in1", repository=caller)
+    reports_site.build(reports, work / "in2", days=7, repository=caller)
     return reports
 
 

@@ -15,7 +15,14 @@ import evaluators_run
 import reports_site as site
 import require_reports
 
+
+@pytest.fixture(autouse=True)
+def _caller_env(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "Living-Proof-Labs/verification-reports-action")
+
+
 REPO = "https://github.com/Living-Proof-Labs/verification-reports-action"
+CALLER = "Living-Proof-Labs/verification-reports-action"
 RUN = f"{REPO}/actions/runs/46115314157"
 PAGE = (
     f"<a href='{RUN}'>CI run</a>"
@@ -31,7 +38,16 @@ def _run_folder(reports: Path, page: str, files: tuple[str, ...]) -> Path:
     folder = reports / "g1/unitree-g1/stock-mujoco-hallway/runs/1"
     folder.mkdir(parents=True)
     (folder / "run.json").write_text(
-        json.dumps({"run": {"id": "1", "created": "2026-11-28T05:19:19Z"}}), encoding="utf-8"
+        json.dumps(
+            {
+                "run": {
+                    "id": "1",
+                    "created": "2026-11-28T05:19:19Z",
+                    "url": RUN,
+                }
+            }
+        ),
+        encoding="utf-8",
     )
     (folder / "index.html").write_text(page, encoding="utf-8")
     for name in files:
@@ -105,16 +121,16 @@ def test_a_ci_run_link_in_text_does_not_count_as_a_link(tmp_path: Path):
 )
 def test_an_anchor_that_is_more_than_the_run_address_is_unwrapped(suffix: str):
     kept = f"<a href='{RUN}'>CI run</a>"
-    assert site.strip_actions_text(kept) == kept
-    cleaned = site.strip_actions_text(f"<a href='{RUN}{suffix}'>CI run</a>")
+    assert site.strip_actions_text(kept, repository=CALLER) == kept
+    cleaned = site.strip_actions_text(f"<a href='{RUN}{suffix}'>CI run</a>", repository=CALLER)
     assert cleaned == "CI run"
-    assert not site.html_is_dirty(cleaned)
+    assert not site.html_is_dirty(cleaned, repository=CALLER)
 
 
 @pytest.mark.parametrize("suffix", ["/job/7", "/attempts/2", "/artifacts/9", "?pr=1", "#summary"])
 def test_a_run_address_with_a_suffix_is_not_a_public_evidence_url(suffix: str):
-    assert not site._is_actions_url(RUN)
-    assert site._is_actions_url(RUN + suffix)
+    assert not site._is_actions_url(RUN, repository=CALLER)
+    assert site._is_actions_url(RUN + suffix, repository=CALLER)
 
 
 def test_a_fragment_on_the_run_address_is_refused_on_a_public_page(tmp_path: Path):
@@ -122,9 +138,11 @@ def test_a_fragment_on_the_run_address_is_refused_on_a_public_page(tmp_path: Pat
     reports.mkdir()
     page = reports / "index.html"
     page.write_text(f"<a href='{RUN}'>CI run</a>", encoding="utf-8")
-    assert site.public_page_problems(reports) == []
+    assert site.public_page_problems(reports, repository=CALLER) == []
     page.write_text(f"<a href='{RUN}#summary'>CI run</a>", encoding="utf-8")
-    assert site.public_page_problems(reports) == ["index.html links to /actions/"]
+    assert site.public_page_problems(reports, repository=CALLER) == [
+        "index.html links to /actions/"
+    ]
 
 
 # ------------------------------------------------ evidence the site did not publish: text
@@ -288,9 +306,11 @@ def test_a_run_url_from_another_repository_is_flagged_on_a_public_page(tmp_path:
     page = reports / "index.html"
     page.parent.mkdir(parents=True, exist_ok=True)
     page.write_text(f"<a href='{RUN}'>CI run</a>", encoding="utf-8")
-    assert site.public_page_problems(reports) == []
+    assert site.public_page_problems(reports, repository=CALLER) == []
     page.write_text(f"<a href='{OTHER}'>CI run</a>", encoding="utf-8")
-    assert site.public_page_problems(reports) == ["index.html links to /actions/"]
+    assert site.public_page_problems(reports, repository=CALLER) == [
+        "index.html links to /actions/"
+    ]
 
 
 def test_a_dotdot_or_encoded_slash_owner_is_not_a_run_address():
@@ -321,11 +341,13 @@ def test_a_near_miss_run_address_in_plain_text_is_flagged(tmp_path: Path, suffix
     reports.mkdir()
     page = reports / "index.html"
     page.write_text(f"See {RUN} for the log.", encoding="utf-8")
-    assert site.public_page_problems(reports) == []
+    assert site.public_page_problems(reports, repository=CALLER) == []
     page.write_text(f"See {RUN}{suffix} for the log.", encoding="utf-8")
-    assert site.public_page_problems(reports) == ["index.html links to /actions/"]
-    assert site.html_is_dirty(f"See {RUN}{suffix}.")
-    assert not site.html_is_dirty(f"See {RUN}.")
+    assert site.public_page_problems(reports, repository=CALLER) == [
+        "index.html links to /actions/"
+    ]
+    assert site.html_is_dirty(f"See {RUN}{suffix}.", repository=CALLER)
+    assert not site.html_is_dirty(f"See {RUN}.", repository=CALLER)
 
 
 @pytest.mark.parametrize("suffix", L3_SUFFIXES)
@@ -336,8 +358,8 @@ def test_a_near_miss_run_address_is_removed_from_evidence_links(suffix: str):
             "links": [{"label": "note", "url": RUN + suffix, "kind": "note"}],
         }
     }
-    assert site._is_actions_url(RUN + suffix)
-    assert site.strip_actions_links(report) is True
+    assert site._is_actions_url(RUN + suffix, repository=CALLER)
+    assert site.strip_actions_links(report, repository=CALLER) is True
     assert "run" not in report["evidence_links"]
     assert "url" not in report["evidence_links"]["links"][0]
 

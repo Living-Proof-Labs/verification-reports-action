@@ -80,9 +80,9 @@ def test_the_gate_binds_to_the_caller_not_a_foreign_run_url(tmp_path: Path):
 @pytest.mark.parametrize(
     "url",
     [
-        f"https://github.com/living-proof-labs/verification-reports-action/actions/runs/46115314157",
-        f"https://github.com/Living-Proof-Labs/VERIFICATION-REPORTS-ACTION/actions/runs/46115314157",
-        f"https://github.com/LIVING-PROOF-LABS/verification-reports-action/actions/runs/46115314157",
+        "https://github.com/living-proof-labs/verification-reports-action/actions/runs/46115314157",
+        "https://github.com/Living-Proof-Labs/VERIFICATION-REPORTS-ACTION/actions/runs/46115314157",
+        "https://github.com/LIVING-PROOF-LABS/verification-reports-action/actions/runs/46115314157",
     ],
 )
 def test_a_case_variant_of_this_repository_in_plain_text_is_stripped_not_a_build_error(

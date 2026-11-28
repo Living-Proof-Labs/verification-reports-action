@@ -10,6 +10,14 @@ import reports_site as site
 import require_reports
 import site_fixture
 
+CALLER = "Living-Proof-Labs/verification-reports-action"
+
+
+@pytest.fixture(autouse=True)
+def _caller_env(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", CALLER)
+
+
 BADGE = '<span class="badge badge-fail">Fail</span>'
 
 
@@ -17,7 +25,12 @@ def test_public_index_links_g1_paths(tmp_path: Path):
     runs = tmp_path / "runs"
     site_fixture.write(runs, repository="Living-Proof-Labs/livingproof-unitree-g1")
     reports = tmp_path / "reports"
-    site.build(reports / "g1", runs, now="2026-11-25T00:00:00Z")
+    site.build(
+        reports / "g1",
+        runs,
+        now="2026-11-25T00:00:00Z",
+        repository="Living-Proof-Labs/livingproof-unitree-g1",
+    )
     require_reports.publish_public_index(reports)
     text = (reports / "index.html").read_text(encoding="utf-8")
     assert "unitree-g1" in text
@@ -27,7 +40,9 @@ def test_public_index_links_g1_paths(tmp_path: Path):
     assert "fixture-scenario-stock" not in text
     assert "fixture-hallway-stock" not in text
     assert "verification-reports-action" not in text
-    require_reports.require_published(reports, "success")
+    require_reports.require_published(
+        reports, "success", repository="Living-Proof-Labs/livingproof-unitree-g1"
+    )
 
 
 def test_public_index_rejects_fixture_paths(tmp_path: Path):
@@ -211,12 +226,14 @@ RUN = "https://github.com/Living-Proof-Labs/verification-reports-action/actions/
 
 
 def _write_run(
-    reports: Path, run_id: str, created: str, page: str, files=(), url: str | None = None
+    reports: Path, run_id: str, created: str, page: str, files=(), url: str | None | bool = True
 ) -> Path:
     folder = reports / "g1/unitree-g1/stock-mujoco-hallway/runs" / run_id
     folder.mkdir(parents=True, exist_ok=True)
     record = {"run": {"id": run_id, "created": created}}
-    if url:
+    if url is True:
+        record["run"]["url"] = f"https://github.com/{CALLER}/actions/runs/{run_id}"
+    elif url:
         record["run"]["url"] = url
     (folder / "run.json").write_text(json.dumps(record) + "\n", encoding="utf-8")
     (folder / "index.html").write_text(page, encoding="utf-8")

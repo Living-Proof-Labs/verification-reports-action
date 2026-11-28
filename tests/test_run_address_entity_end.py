@@ -47,7 +47,7 @@ def test_the_embedded_report_json_on_a_real_run_page_keeps_its_run_address(tmp_p
         evidence_files=media,
         caller=OWNER_REPO,
     )
-    site.build(tmp_path / "reports", tmp_path / "in")
+    site.build(tmp_path / "reports", tmp_path / "in", repository=OWNER_REPO)
     run = next((tmp_path / "reports").glob("*/*/runs/46110994356"))
     for name in ("index.html", "report.html"):
         assert embedded in (run / name).read_text(encoding="utf-8"), name
@@ -72,7 +72,7 @@ def test_the_embedded_lossless_report_json_survives_intact(tmp_path: Path):
         evidence_files=media,
         caller=OWNER_REPO,
     )
-    site.build(tmp_path / "reports", tmp_path / "in")
+    site.build(tmp_path / "reports", tmp_path / "in", repository=OWNER_REPO)
     run = next((tmp_path / "reports").glob("*/*/runs/46110994356"))
     for name in ("index.html", "report.html"):
         assert block in (run / name).read_text(encoding="utf-8"), name
