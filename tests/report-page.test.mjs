@@ -21,16 +21,16 @@ function jobBlock(text, name, next) {
 test('the production pages job publishes the G1 report and not the fixture smoke', () => {
   const production = jobBlock(docsYml, 'production', 'deploy');
   const requireReports = readFileSync(new URL('../tools/require_reports.py', import.meta.url), 'utf8');
-  const restore = production.indexOf('src/reports_site.py restore artifacts/site/reports');
+  assert.doesNotMatch(production, /src\/reports_site\.py restore/);
   const drop = production.indexOf('require_reports.py drop-fixtures artifacts/site/reports');
   const g1Download = production.indexOf('name: g1-verification-report\n');
   const g1Site = production.indexOf('runs-dir: artifacts/g1-smoke-report');
   const publish = production.indexOf('require_reports.py publish-index artifacts/site/reports');
   const check = production.indexOf('require_reports.py check artifacts/site/reports');
   const upload = production.indexOf('actions/upload-pages-artifact@');
-  assert.ok(restore !== -1 && drop !== -1 && g1Download !== -1 && g1Site !== -1);
+  assert.ok(drop !== -1 && g1Download !== -1 && g1Site !== -1);
   assert.ok(publish !== -1 && check !== -1 && upload !== -1);
-  assert.ok(restore < drop && drop < g1Download && g1Download < g1Site);
+  assert.ok(g1Download < g1Site && g1Site < drop && drop < publish);
   assert.ok(g1Site < publish && publish < check && check < upload);
   assert.equal(production.split('uses: ./site').length - 1, 1);
   assert.doesNotMatch(production, /name: verification-report\n/);
@@ -49,11 +49,15 @@ test('the production pages job publishes the G1 report and not the fixture smoke
   assert.equal(production.split('run-id: ${{ steps.verify-run.outputs.id }}').length - 1, 1);
   assert.match(production, /output-dir: artifacts\/site\/reports\/g1/);
   const resetExpr = "${{ inputs.reset_history && 'true' || 'false' }}";
-  assert.equal(production.split(resetExpr).length - 1, 2);
+  assert.equal(production.split(resetExpr).length - 1, 1);
   assert.doesNotMatch(production, /reset-history: 'true'/);
   assert.doesNotMatch(production, /reset-history: 'false'/);
   const g1Inputs = production.slice(production.indexOf('runs-dir: artifacts/g1-smoke-report'));
-  assert.match(g1Inputs, /restore-history: 'false'/);
+  assert.match(g1Inputs, /restore-history: 'true'/);
+  assert.match(g1Inputs, /restore-root: artifacts\/site\/reports/);
+  assert.match(g1Inputs, /publication-approval: config\/viewers\/publication.json/);
+  assert.match(g1Inputs, /trusted-viewers: config\/viewers\/evaluators.json/);
+  assert.match(g1Inputs, /evaluators: evaluators.yml/);
   assert.doesNotMatch(g1Inputs, /restore-history: auto/);
   const pagesUpload = production.slice(production.indexOf('actions/upload-pages-artifact@'));
   const retention = pagesUpload.match(/retention-days:\s*(\d+)/);
