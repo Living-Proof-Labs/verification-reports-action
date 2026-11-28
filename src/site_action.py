@@ -125,6 +125,18 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
 
     runs_dir = Path(runs_dir_raw)
 
+    import json
+
+    import trusted_viewer
+
+    publication_policy = None
+    publication_file = env_map.get("INPUT_PUBLICATION_APPROVAL", "")
+    if publication_file:
+        publication_policy = json.loads(trusted_viewer.read_file(Path(publication_file)))
+        publication_policy["viewers"] = trusted_viewer.load_viewers(
+            publication_policy["viewer_registry"], publication=True
+        )
+    restored = None
     if should_restore:
         # History is only ever restored from the calling repository's own Pages deploys.
         repository = (env_map.get("GITHUB_REPOSITORY") or "").strip()
@@ -137,7 +149,10 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         pages_job = (env_map.get("INPUT_PAGES_JOB") or "").strip() or None
         api_url = (env_map.get("GITHUB_API_URL") or "https://api.github.com").strip()
 
-        site_tool.restore(
+        restore_options = {}
+        if publication_policy is not None:
+            restore_options["publication_policy"] = publication_policy
+        restored = site_tool.restore(
             reports_dir,
             repository,
             branch=branch,
@@ -148,19 +163,40 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
             reset_history=reset_history,
             pages_artifact=pages_artifact,
             pages_job=pages_job,
+            **restore_options,
         )
 
     allow_replace = (env_map.get("GITHUB_RUN_ID") or "").strip() or None
     git_dir = Path(workspace) if workspace and Path(workspace).is_dir() else None
 
-    site_tool.build(
+    import trusted_viewer
+    from evaluators_run import resolve_caller_evaluators
+
+    declarations = resolve_caller_evaluators(
+        env_map.get("INPUT_EVALUATORS", ""), Path(workspace or ".")
+    )
+    viewers = trusted_viewer.load_viewers(
+        env_map.get("INPUT_TRUSTED_VIEWERS", ""), declarations["lines"]
+    )
+    history_viewers = trusted_viewer.load_history_viewers(
+        env_map.get("INPUT_HISTORICAL_VIEWERS", "")
+    )
+    if restored is not None and publication_policy is not None:
+        history_viewers = restored.get("_viewer_approvals", [])
+    trusted_viewer.validate_history(reports_dir, history_viewers)
+
+    produced = site_tool.build(
         reports_dir,
         runs_dir,
         days=retention_days,
         allow_replace_run_id=allow_replace,
         git_dir=git_dir,
         exclude_runs=exclude_runs,
+        trusted_viewers=history_viewers,
     )
+
+    for folder in produced:
+        trusted_viewer.render_fresh(folder, viewers)
 
     issues = site_fixture.check_reports_tree(reports_dir)
     if issues:
