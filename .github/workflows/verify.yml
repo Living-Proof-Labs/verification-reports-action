@@ -313,7 +313,6 @@ jobs:
         uses: ./site
         with:
           runs-dir: artifacts/smoke-report
-          trusted-viewers: config/viewers/evaluators.json
           output-dir: artifacts/g1-site-check
           reset-history: 'false'
           restore-history: 'false'

@@ -266,7 +266,6 @@ jobs:
         id: g1-site
         uses: ./site
         with:
-          trusted-viewers: config/viewers/evaluators.json
           runs-dir: artifacts/g1-smoke-report
           output-dir: artifacts/site/reports/g1
           reset-history: ${{ inputs.reset_history && 'true' || 'false' }}
