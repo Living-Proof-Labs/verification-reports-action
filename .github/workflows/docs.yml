@@ -235,26 +235,6 @@ jobs:
             exit 1
           fi
           echo "id=$id" >> "$GITHUB_OUTPUT"
-      - name: Restore published report history
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RESET_HISTORY: ${{ inputs.reset_history && 'true' || 'false' }}
-        run: |
-          set -euo pipefail
-          extra=()
-          if [ "$RESET_HISTORY" = true ]; then
-            extra+=(--reset-history)
-          fi
-          python3 src/reports_site.py restore artifacts/site/reports \
-            --site-url https://docs.livingprooflabs.com/verification-reports-action/ \
-            --branch main \
-            "${extra[@]}"
-      # Earlier deploys published fixture smoke beside reports/g1. Drop those
-      # paths before building so they are not uploaded again. The G1 build
-      # keeps restore-history false: this restore already unpacked reports/g1,
-      # and restoring the same archive into reports/g1 would nest it.
-      - name: Drop fixture smoke from the public tree
-        run: python3 tools/require_reports.py drop-fixtures artifacts/site/reports
       - name: Download the real G1 smoke report
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -269,9 +249,16 @@ jobs:
           runs-dir: artifacts/g1-smoke-report
           output-dir: artifacts/site/reports/g1
           reset-history: ${{ inputs.reset_history && 'true' || 'false' }}
-          restore-history: 'false'
+          restore-root: artifacts/site/reports
+          restore-history: 'true'
+          evaluators: evaluators.yml
+          trusted-viewers: config/viewers/evaluators.json
+          publication-approval: config/viewers/publication.json
           upload-artifact: 'false'
           site-url: https://docs.livingprooflabs.com/verification-reports-action/
+      # Keep the existing fixture cleanup after the same-process restore/build.
+      - name: Drop fixture smoke from the public tree
+        run: python3 tools/require_reports.py drop-fixtures artifacts/site/reports
       - name: Publish the G1 index
         run: python3 tools/require_reports.py publish-index artifacts/site/reports
       - name: Require the published reports

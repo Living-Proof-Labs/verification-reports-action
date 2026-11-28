@@ -1617,7 +1617,7 @@ def remember_stored_wording(folder: Path, record: dict) -> bool:
     return True
 
 
-def recheck_restored_run(folder: Path) -> None:
+def recheck_restored_run(folder: Path, trusted_viewers=()) -> None:
     """Check a run restored from the last deployment that this build does not republish.
 
     Its pages and evidence were published by an earlier build, so a gap fixed since then
@@ -1628,7 +1628,14 @@ def recheck_restored_run(folder: Path) -> None:
     # The site writes each evidence listing as evidence/<name>.html. A restored one is a
     # page on the Pages origin like report.html, so it gets the same check.
     listings = sorted(evidence.glob("*.html")) if evidence.is_dir() else []
+    decorated = (folder / "trusted-viewer").is_dir()
+    if decorated:
+        from trusted_viewer import validate_restored
+
+        validate_restored(folder, trusted_viewers)
     for path in [folder / "report.html", folder / "index.html", *listings]:
+        if decorated and path == folder / "index.html":
+            continue  # Exact native panel and remaining shell validated by Reporter.
         if not path.is_file():
             continue
         text = _read_utf8_text(path)
@@ -1654,9 +1661,13 @@ def render(
     now: str = "",
     days: int = DEFAULT_RETENTION_DAYS,
     publish_folders: set[Path] | None = None,
+    trusted_viewers=(),
     repository: str | None = None,
 ) -> dict[tuple[str, str], list[dict]]:
     validate_retention_days(days)
+    from trusted_viewer import validate_history
+
+    validate_history(reports_dir, trusted_viewers)
     _, pruned_folders = prune_expired_evidence(reports_dir, now, days)
     history = runs(reports_dir)
     _require_single_robot({robot for robot, _ in history})
@@ -1697,8 +1708,12 @@ def render(
                     trial=trials[record["folder"]],
                     repository=repository,
                 )
+                if (run_folder / "trusted-viewer").is_dir():
+                    from trusted_viewer import render_fresh
+
+                    render_fresh(run_folder, trusted_viewers, existing=True)
             else:
-                recheck_restored_run(run_folder)
+                recheck_restored_run(run_folder, trusted_viewers)
         (base / "index.html").write_text(
             _history_page_html(robot, variant, records, loaded_reports), encoding="utf-8"
         )
@@ -1716,6 +1731,7 @@ def build(
     allow_replace_run_id: str | None = None,
     git_dir: Path | None = None,
     exclude_runs: Iterable[str] = (),
+    trusted_viewers=(),
     repository: str | None = None,
 ) -> list[Path]:
     validate_retention_days(days)
@@ -1782,6 +1798,7 @@ def build(
         now=effective_now,
         days=days,
         publish_folders=set(added_folders),
+        trusted_viewers=trusted_viewers,
         repository=repository,
     )
     if problems := public_page_problems(reports_dir, repository=repository):
