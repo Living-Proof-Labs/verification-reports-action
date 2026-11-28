@@ -223,10 +223,47 @@ def test_published_migration_requires_exact_manifest_and_bytes(case):
     from trusted_viewer import apply_declarations, load_declarations, prepare_history
 
     declarations = load_declarations(registry)
-    prepare_history(root, declarations)
-    apply_declarations(root, declarations)
+    for _ in range(2):
+        prepare_history(root, declarations)
+        apply_declarations(root, declarations)
     assert (target / "report.json").read_bytes() == original_report
     assert (target / "recording.json").read_bytes() == original_data
     assert untouched == {
         p.relative_to(other): p.read_bytes() for p in other.rglob("*") if p.is_file()
+    }
+
+
+@pytest.mark.parametrize("change", ["modified", "extra", "missing"])
+def test_restored_unrelated_evidence_refused_without_writes(case, change):
+    import shutil
+
+    from reports_site import write_published_checksums
+    from trusted_viewer import apply_declarations, prepare_history
+
+    folder, pin, viewer = case
+    root = folder / "history"
+    relative = "robot/hallway/runs/123"
+    target = root / relative
+    target.mkdir(parents=True)
+    for name in ("report.json", "index.html", "recording.json"):
+        shutil.copyfile(folder / name, target / name)
+    (target / "evidence").mkdir()
+    evidence = target / "evidence/unrelated.json"
+    evidence.write_bytes(b'{"original":true}')
+    write_published_checksums(target)
+    declarations = {relative: (pin, viewer)}
+    apply_declarations(root, declarations)
+    original_manifest = (target / "SHA256SUMS").read_bytes()
+    if change == "modified":
+        evidence.write_bytes(b'{"modified":true}')
+    elif change == "extra":
+        (target / "evidence/extra.json").write_bytes(b"{}")
+    else:
+        evidence.unlink()
+    before = {p.relative_to(target): p.read_bytes() for p in target.rglob("*") if p.is_file()}
+    with pytest.raises(SiteError):
+        prepare_history(root, declarations)
+    assert (target / "SHA256SUMS").read_bytes() == original_manifest
+    assert before == {
+        p.relative_to(target): p.read_bytes() for p in target.rglob("*") if p.is_file()
     }

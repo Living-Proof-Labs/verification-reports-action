@@ -57,35 +57,31 @@ The viewer bytes are generated from the released Health source identified above,
 not supplied by an evaluator or downloaded from a report.
 
 The documentation workflow retains its current-protected-main, immutable tag,
-and published stable release checks in both production and deploy. It adds two
-mutually exclusive, optional inputs selecting reviewed files in released code:
+and published stable release checks in both production and deploy. Its only
+retained input is `retained_history: config/retained/g1-published-history.json`.
+The reset guard executes before restoration; retained history with reset is refused.
+The unverified raw ZIP mode has been removed from this first delivery.
 
-- `retained_source: config/retained/g1-46083905519.json` downloads an exact
-  successful main-push Verify artifact, verifies repository/workflow/run/commit,
-  artifact ID, expiry and archive digest, then uses the normal site builder.
-- `retained_history: config/retained/g1-published-history.json` requires normal
-  restored Pages history and refuses reset-history. It verifies the exact old
-  published manifest and all bytes, sanitizes retained pages, inserts the viewer,
-  and checks the complete resulting tree. This is a published-history migration,
-  never represented as a raw Verify artifact. If history is missing or changed,
-  it refuses rather than rebuilding or simulating.
+The history migration requires normal restored Pages history. It verifies the
+exact original published manifest and every listed file, refuses extra/missing
+files, sanitizes pages, inserts the viewer, and checks the resulting tree. This
+is never represented as raw Verify input. Missing, changed or expired history
+refuses; no rebuilding, reset, simulation or identity spoofing occurs.
 
-Neither path calls the report workflow or dispatches Verify. The normal path,
-without either input, still chooses the new release's Verify artifact. Future
-normal builds revalidate the caller declaration for the historical embedded run.
-The workflow does not waive normal merge or release CI requirements.
+Before stripping any restored embed, every affected run's complete file set and
+SHA256SUMS are verified, including unrelated evidence. All affected runs validate
+before any is modified. Modified evidence therefore cannot be blessed by newly
+written checksums. Both restore cycles preserve the original portable bytes.
 
-The exact source artifact is 15238557586 from Verify 46083905519, source commit
-`b09453aeb35c5071368b53fe1ad32810f805b9a2`, API archive digest
-`b252d60d4664b7caa059beb0dafa2a7225a5fb42fa14624d3d3695d31654f0f5`.
-The authorized archive download returned 403 locally; its bytes are unverified.
-The complete public run was independently downloaded and matched published
-manifest SHA-256 `dc706f47eb7ebbae263b53f721ea9639c65761bf34e4ebb2fa18b2440f4a8eab`.
-Its migration and subsequent restore/reapply passed locally with original report,
-raw JSON and evidence bytes unchanged. Hosted restoration availability is still
-unverified; a missing retained Pages artifact is a blocker, not permission to reset.
+The complete public run 46083905519 matched manifest SHA-256
+`dc706f47eb7ebbae263b53f721ea9639c65761bf34e4ebb2fa18b2440f4a8eab`.
+Two restore/reapply cycles passed with complete run-byte parity and the site
+checker. A regression also preserves a second historical fixture unchanged.
+Authorized raw-artifact download returned 403; that path is not shipped.
+Hosted Pages restoration availability remains unverified. No reset is allowed.
 
-After #72 merges, transplant the local commits onto its integrated main,
-review the workflow delta independently, and release through existing protections.
-Only a released version containing this code can use these inputs. No dispatch,
-push, deployment, or simulation was performed to prepare this patch.
+This candidate includes #72 head `5cd731fb149744dc9647e06c303e34cb4489ac45`.
+After #72 integrates, transplant the local commits to integrated main, review the
+exact resulting head, and release through existing protections. Only released
+site code containing this input can use it. No push, dispatch, reset, simulation,
+or deployment was performed. #72's unrelated repair remains with its owner.

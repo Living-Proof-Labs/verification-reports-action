@@ -9,7 +9,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from reports_common import SiteError
 from reports_site import recheck_restored_run
-from trusted_viewer import apply_declarations, load_declarations, read_file, revalidate
+from trusted_viewer import (
+    apply_declarations,
+    load_declarations,
+    read_file,
+    revalidate,
+    verify_manifest,
+)
 
 
 def migrate(root, registry, manifest_digests):
@@ -18,26 +24,9 @@ def migrate(root, registry, manifest_digests):
         if relative not in declarations or not re.fullmatch("[a-f0-9]{64}", expected):
             raise SiteError("Migration requires a caller-selected run and manifest digest")
         folder = root / relative
-        manifest = read_file(folder / "SHA256SUMS")
+        manifest = verify_manifest(folder)
         if hashlib.sha256(manifest).hexdigest() != expected:
             raise SiteError("Published manifest differs from caller pin")
-        names = set()
-        for line in manifest.decode().splitlines():
-            digest, name = line.split("  ", 1)
-            path = Path(name)
-            if path.is_absolute() or ".." in path.parts or "\\" in name or name in names:
-                raise SiteError("Unsafe published manifest path")
-            names.add(name)
-            if hashlib.sha256(read_file(folder / name)).hexdigest() != digest:
-                raise SiteError("Published file digest mismatch")
-        if names != {
-            p.relative_to(folder).as_posix()
-            for p in folder.rglob("*")
-            if p.is_file() and p.name != "SHA256SUMS"
-        }:
-            raise SiteError("Published file set differs from pinned manifest")
-        if any(p.is_symlink() for p in folder.rglob("*")):
-            raise SiteError("Symlink in retained history")
         recheck_restored_run(folder)
     if set(manifest_digests) != set(declarations):
         raise SiteError("Every migrated declaration needs a pinned published manifest")

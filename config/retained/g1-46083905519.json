@@ -1,7 +1,0 @@
-{
-  "run": 46083905519,
-  "commit": "b09453aeb35c5071368b53fe1ad32810f805b9a2",
-  "artifact": 15238557586,
-  "sha256": "b252d60d4664b7caa059beb0dafa2a7225a5fb42fa14624d3d3695d31654f0f5",
-  "trusted_viewers": "config/retained/g1-viewers.json"
-}

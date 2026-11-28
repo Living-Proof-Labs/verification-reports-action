@@ -175,13 +175,17 @@ def prepare_history(root, declarations):
 
     from reports_site import write_published_checksums
 
+    pending = []
     for target in root.glob("*/*/runs/*/trusted-viewer"):
         folder = target.parent
         key = folder.relative_to(root).as_posix()
         if key not in declarations:
             raise SiteError("Restored viewer has no current caller declaration")
+        verify_manifest(folder)
         pin, _ = declarations[key]
-        source = revalidate(folder, pin)
+        pending.append((folder, target, revalidate(folder, pin)))
+    # Validate every incoming run before modifying any of them.
+    for folder, target, source in pending:
         (folder / "index.html").write_text(source, encoding="utf-8")
         shutil.rmtree(target)
         write_published_checksums(folder)
@@ -199,3 +203,39 @@ def apply_declarations(root, declarations):
             raise SiteError("Declared viewer path cannot contain a symlink")
         install(folder, pin, viewer)
         write_published_checksums(folder)
+
+
+def verify_manifest(folder):
+    """Verify the complete incoming file set before regenerating any checksums."""
+    from pathlib import PurePosixPath
+
+    if any(p.is_symlink() for p in [folder, *folder.parents, *folder.rglob("*")]):
+        raise SiteError("Symlink in retained history")
+    manifest = read_file(folder / "SHA256SUMS")
+    names = set()
+    for line in manifest.decode("utf-8").splitlines():
+        match = re.fullmatch(r"([a-f0-9]{64})  (.+)", line)
+        if not match:
+            raise SiteError("Malformed published manifest")
+        expected, name = match.groups()
+        path = PurePosixPath(name)
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or "\\" in name
+            or path.as_posix() != name
+            or name in names
+            or name == "SHA256SUMS"
+        ):
+            raise SiteError("Unsafe published manifest path")
+        names.add(name)
+        if digest(read_file(folder / name)) != expected:
+            raise SiteError("Published file digest mismatch")
+    actual = {
+        p.relative_to(folder).as_posix()
+        for p in folder.rglob("*")
+        if p.is_file() and p != folder / "SHA256SUMS"
+    }
+    if actual != names:
+        raise SiteError("Published file set differs from manifest")
+    return manifest
