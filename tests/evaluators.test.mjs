@@ -12,7 +12,7 @@ import { writePlan } from '../src/plan.mjs';
 
 const ROOT = new URL('..', import.meta.url);
 const LINE = 'Living-Proof-Labs/livingproof-evaluator-run@v1.9.2/livingproof-evaluator.json';
-const HEALTH_LINE = 'Living-Proof-Labs/livingproof-evaluator-health@v1.2.0/livingproof-evaluator.json';
+const HEALTH_LINE = 'Living-Proof-Labs/livingproof-evaluator-health@v1.3.0/livingproof-evaluator.json';
 const LINES = [LINE, HEALTH_LINE];
 const FORBIDDEN = ['livingproof-evaluator-run', 'livingproof_evaluator_run', 'livingproof-run-integrity'];
 const HEALTH_NAMES = [
