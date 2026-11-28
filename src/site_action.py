@@ -299,9 +299,19 @@ def run_site_action(
     for folder in added_run_folders(output):
         composed |= trusted_viewer.render_fresh(reports_dir / folder, viewers)
     for folder, page in pages.items():
-        if (folder / "index.html").read_bytes() != page:
-            # Ordinary expiry republished this run's shell; compose its approved panel again.
-            composed |= trusted_viewer.render_fresh(folder, history_viewers, existing=True)
+        if (folder / "index.html").read_bytes() == page:
+            continue
+        # Ordinary evidence expiry republished this run's page as plain; compose its approved
+        # viewer again and check the result as a restored page. Anything else is refused,
+        # so the plain page is never published silently.
+        if not trusted_viewer.render_fresh(folder, history_viewers, existing=True):
+            raise SiteError(
+                f"{folder.relative_to(reports_dir).as_posix()}: evidence expiry rewrote its "
+                "trusted-viewer page and the viewer could not be composed again "
+                "(no historical-viewers approval for it)."
+            )
+        trusted_viewer.validate_restored(folder, history_viewers)
+        composed = True
 
     if composed:
         # The site command checked the tree it wrote; check it again after the viewers.
