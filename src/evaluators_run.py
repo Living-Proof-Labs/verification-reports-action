@@ -544,6 +544,7 @@ def apply_configuration(
             lines = select(lines)
             if not lines:
                 return False
+            evaluator = declared_evaluator(lines)
         attach_scenario_results(bundle_path, results_dir, report_dir)
         out.mkdir(parents=True, exist_ok=True)
         lines_file = out / "lines.txt"
