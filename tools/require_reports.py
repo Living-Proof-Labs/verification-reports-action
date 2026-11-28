@@ -9,13 +9,8 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT / "src") not in sys.path:
-    sys.path.insert(0, str(ROOT / "src"))
-
-import reports_site as site  # noqa: E402
-
-# reports_render._badge_html emits exactly one of these class attributes.
+# The reporter's site pages (livingproof_capability_report.site) emit exactly one of these
+# class attributes per grade badge.
 GRADE_BADGE = re.compile(r'class="badge badge-(?:pass|fail|warn|muted)"')
 FIXTURE_SEGMENTS = ("fixture-scenario-stock", "fixture-hallway-stock")
 FIXTURE_PHRASE = "this repository's fixture"
@@ -153,6 +148,26 @@ def _ci_run_link(repository: str | None) -> re.Pattern[str]:
     return re.compile(rf"""href=(["'])https://github\.com/{repo}/actions/runs/[0-9]+\1""")
 
 
+def run_url_problem(relative: str, record: object, repository: str | None) -> str | None:
+    """A run.json must carry a run.url that is this caller repository's own CI run page.
+
+    The same rule as the reporter's site command, kept here because docs.yml runs this gate
+    with the runner's python3, without the reporter installed.
+    """
+    url = None
+    if isinstance(record, dict) and isinstance(record.get("run"), dict):
+        url = record["run"].get("url")
+    if (
+        repository
+        and isinstance(url, str)
+        and re.fullmatch(rf"https://github\.com/{re.escape(repository)}/actions/runs/[0-9]+", url)
+    ):
+        return None
+    if url is None:
+        return f"{relative} run.url is missing"
+    return f"{relative} run.url is not this repository's run"
+
+
 def _has_trials_cell_link(page: str, relative: str) -> bool:
     for match in _TRIALS_CELL.finditer(page):
         if match.group("path") == relative:
@@ -194,7 +209,7 @@ def run_page_problems(reports: Path, repository: str | None = None) -> list[str]
         if record is None:
             continue
         relative = record_path.relative_to(reports).as_posix()
-        if issue := site.run_url_problem(relative, record, repository):
+        if issue := run_url_problem(relative, record, repository):
             problems.append(issue)
     for folder in folders:
         name = (folder / "index.html").relative_to(reports).as_posix()

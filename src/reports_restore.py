@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+import argparse
 import http.client
 import io
 import json
+import os
 import random
 import re
+import sys
 import tarfile
 import time
 import urllib.error
@@ -17,9 +20,10 @@ import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from reports_common import (
-    SiteError,
-)
+
+class SiteError(Exception):
+    """Raised when the site action's inputs or the history restore fail."""
+
 
 PAGES_ARTIFACT = "github-pages"
 PAGES_ARTIFACT_PATTERN = re.compile(r"github-pages(?:-[A-Za-z0-9._-]+)?")
@@ -774,3 +778,49 @@ def restore(
     )
     print(f"Restored {count} files into {destination}.")
     return artifact
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    r = sub.add_parser(
+        "restore",
+        help="restore earlier runs from the last successfully deployed Pages artifact",
+    )
+    r.add_argument("reports_dir", type=Path, help="destination reports/ directory")
+    r.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"))
+    r.add_argument("--branch", default="main")
+    r.add_argument(
+        "--current-run",
+        type=int,
+        default=int(os.environ["GITHUB_RUN_ID"]) if os.environ.get("GITHUB_RUN_ID") else None,
+    )
+    r.add_argument("--dry-run", action="store_true")
+    r.add_argument("--site-url", default=os.environ.get("SITE_URL") or None)
+    r.add_argument("--pages-artifact", default=None)
+    r.add_argument("--pages-job", default=None)
+    r.add_argument("--deploy-workflow", default=None)
+    r.add_argument("--reset-history", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        restore(
+            args.reports_dir,
+            args.repository,
+            args.branch,
+            args.current_run,
+            os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"),
+            dry_run=args.dry_run,
+            site_url=args.site_url,
+            reset_history=args.reset_history,
+            pages_artifact=args.pages_artifact or None,
+            pages_job=args.pages_job or None,
+            deploy_workflow=args.deploy_workflow or None,
+        )
+    except SiteError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

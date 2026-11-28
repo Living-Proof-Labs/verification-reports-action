@@ -35,7 +35,8 @@ import {
   ignoredEvaluatorNotice,
   runIfProvenancePasses,
 } from '../src/provenance.mjs';
-import { pinnedInputLine, renderReport, writeConfiguration } from '../src/report.mjs';
+import { pinnedInputLine, writeConfiguration } from '../src/report.mjs';
+import { reportFiles } from './report-files.mjs';
 import { runAction } from '../src/run.mjs';
 
 const COMMIT = VERIFIER_WORKFLOW_SHA;
@@ -355,7 +356,7 @@ test('an attestation HTTP status other than 200 or 404 fails the run', async () 
 function renderedReport(inputs) {
   const directory = mkdtempSync(path.join(tmpdir(), 'vra-status-'));
   writeConfiguration(directory, {
-    files: renderReport({ capability: 'walk', system: { id: 'robot' }, grade: 'PASS' }),
+    files: reportFiles({ capability: 'walk', system: { id: 'robot' }, grade: 'PASS' }),
     evidence: null,
     runRecord: { inputs },
   });

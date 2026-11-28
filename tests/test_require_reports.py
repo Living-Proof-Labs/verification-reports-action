@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 
 import pytest
+from livingproof_capability_report.site import assemble as site
 
-import reports_site as site
 import require_reports
 import site_fixture
 

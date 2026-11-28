@@ -156,7 +156,7 @@ This is a reusable workflow, `.github/workflows/report.yml`, because the runs go
 
 ### The site step
 
-Use the [`site` step](https://github.com/Living-Proof-Labs/verification-reports-action/blob/main/site/action.yml) after downloading the report artifact, so a robot repository's documentation build can include `reports/` directly. Layout, inputs, history across deployments, and recovery are in [docs/workflow.md](docs/workflow.md).
+Use the [`site` step](https://github.com/Living-Proof-Labs/verification-reports-action/blob/main/site/action.yml) after downloading the report artifact, so a robot repository's documentation build can include `reports/` directly. The step restores earlier runs from your last Pages deploy and runs the pinned reporter's `livingproof-capability-report site` command, which renders and checks the section. Layout, inputs, history across deployments, and recovery are in [docs/workflow.md](docs/workflow.md).
 
 ```yaml
 - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0

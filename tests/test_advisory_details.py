@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 from livingproof_capability_report.core import digest, render
+from livingproof_capability_report.site import assemble as reporter_site
 
 import reports_restore
-import reports_site
 import site_action
 from details_files import cited_details_uris
 from drop_advisory_lines import DropError, keep_lines
@@ -179,13 +179,13 @@ def _assemble(report_dir: Path, output: Path) -> Path:
 
 
 def _publish(source: Path, reports: Path) -> Path:
-    folder, _key, record = reports_site.add_run_folder(
+    folder, _key, record = reporter_site.add_run_folder(
         reports,
         source,
         restored_keys=set(),
         seen_in_batch=set(),
     )
-    reports_site.publish_run_page(folder, record, now="2026-11-27T12:00:00Z", days=7, trial=False)
+    reporter_site.publish_run_page(folder, record, now="2026-11-27T12:00:00Z", days=7, trial=False)
     return folder
 
 
@@ -358,21 +358,21 @@ def test_no_advisory_line_publishes_the_run_only_page(tmp_path):
     assert saved["html"] == direct
     record = json.loads((published / "run.json").read_text(encoding="utf-8"))
     report = json.loads((published / "report.json").read_text(encoding="utf-8"))
-    expected = reports_site.scrub_reporter_html(
+    expected = reporter_site.scrub_reporter_html(
         (assembled / "report.html").read_text(encoding="utf-8"),
         record,
         trial=False,
         expired=False,
         days=7,
     )
-    expected = reports_site.unlink_unpublished_evidence(expected, published)
-    expected = reports_site.with_site_nav(
+    expected = reporter_site.unlink_unpublished_evidence(expected, published)
+    expected = reporter_site.with_site_nav(
         expected,
         overview_href="../../../../../index.html",
         reports_href="../../../../index.html",
     )
-    expected = reports_site.with_spec_provenance(expected, record, report)
-    expected = reports_site.checked_report_html(expected, str(published / "index.html"))
+    expected = reporter_site.with_spec_provenance(expected, record, report)
+    expected = reporter_site.checked_report_html(expected, str(published / "index.html"))
     assert page == expected
 
 
@@ -496,46 +496,6 @@ def test_checksums_accept_one_advisory_result_or_a_list(tmp_path):
     assert cited_details_uris({"assessment": {"advisory_results": [one]}}) == [NOTES]
 
 
-@pytest.mark.parametrize(
-    ("uri", "mutate", "message"),
-    [
-        (NOTES, "sha", "does not match SHA256SUMS"),
-        ("../x.json", "path", "is not a relative path"),
-        ("/tmp/x.json", "absolute", "is absolute"),
-        (NOTES, "symlink", "is a symlink"),
-        (NOTES, "missing", "not listed in SHA256SUMS"),
-    ],
-)
-def test_the_site_refuses_an_unsafe_cited_details_file(tmp_path, uri, mutate, message):
-    """T3 site guards. Reverting one guard lets that case through."""
-    data = b"{}\n"
-    digest_hex = "0" * 64 if mutate == "sha" else hashlib.sha256(data).hexdigest()
-    listed = "other.json" if mutate == "missing" else uri
-    source = tmp_path / "source"
-    source.mkdir()
-    if mutate in {"path", "absolute"}:
-        (source / "SHA256SUMS").write_text("", encoding="utf-8")
-    else:
-        (source / "SHA256SUMS").write_text(f"{digest_hex}  {listed}\n", encoding="utf-8")
-    if mutate == "symlink":
-        (source / "target.json").write_bytes(data)
-        (source / NOTES).symlink_to("target.json")
-    elif mutate == "missing":
-        (source / NOTES).write_bytes(data)
-        (source / "other.json").write_bytes(data)
-    elif mutate not in {"path", "absolute"}:
-        (source / uri).write_bytes(data)
-    report = {
-        "source_bundle": {
-            "assessment": {
-                "advisory_results": {"cited": {"advisory": {"details_file": {"uri": uri}}}}
-            }
-        }
-    }
-    with pytest.raises(reports_site.SiteError, match=message):
-        reports_site._publish_cited_details(source, tmp_path / "out", report)
-
-
 def test_a_refused_advisory_result_publishes_with_no_details_file(tmp_path):
     """T3. advisory_not_run is a Reporter NOT RUN card and does not fail the build."""
     template = _template()
@@ -646,7 +606,7 @@ def test_old_published_runs_restore_byte_for_byte_and_evidence_still_expires(tmp
         }
     )
     # The new run's timestamp is the build clock, so force a later clock through render.
-    reports_site.render(
+    reporter_site.render(
         expired,
         now="2027-02-01T00:00:00Z",
         days=7,

@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-import reports_site as site
 import require_reports
 
 
@@ -37,61 +36,6 @@ def _run(reports: Path, name: str, repo: str, run_id: str, page: str) -> Path:
     (folder / "run.json").write_text(json.dumps(record), encoding="utf-8")
     (folder / "index.html").write_text(page, encoding="utf-8")
     return folder
-
-
-def test_a_url_in_evidence_links_to_another_repository_is_dropped():
-    report = {
-        "evidence_links": {
-            "run": RUN,
-            "links": [
-                {"label": "mine", "kind": "note", "url": RUN},
-                {"label": "theirs", "kind": "note", "url": OTHER_RUN},
-            ],
-        }
-    }
-    assert site.strip_actions_links(report, repository=OWNER_REPO)
-    links = report["evidence_links"]["links"]
-    assert links[0]["url"] == RUN
-    assert "url" not in links[1]
-    assert report["evidence_links"]["run"] == RUN
-
-
-def test_a_run_page_may_not_link_another_repository_that_is_elsewhere_on_the_site(
-    tmp_path: Path,
-):
-    # Two repositories publish to one site. A run page is held to its own repository,
-    # not to every repository on the site.
-    reports = tmp_path / "reports"
-    _run(reports, "a", OWNER_REPO, "1", f"<a href='{RUN}'>CI run</a>")
-    _run(
-        reports,
-        "b",
-        OTHER_REPO,
-        "7",
-        f"<a href='https://github.com/{OTHER_REPO}/actions/runs/7'>x</a>",
-    )
-    # A site is bound to the caller, not to whatever run.url says. The other
-    # repository's run.json and its own run link are refused.
-    problems = site.public_page_problems(reports, repository=OWNER_REPO)
-    assert any("b/runs/7/run.json run.url" in item for item in problems)
-    page = reports / "a/runs/1/index.html"
-    page.write_text(f"<a href='{OTHER_RUN}'>other</a>", encoding="utf-8")
-    problems = site.public_page_problems(reports, repository=OWNER_REPO)
-    assert "a/runs/1/index.html links to /actions/" in problems
-
-
-@pytest.mark.parametrize(
-    "href",
-    [
-        f"https://github.com/{OWNER_REPO.lower()}/actions/runs/46115314157",
-        f"https://github.com/{OWNER_REPO.upper()}/actions/runs/46115314157",
-        "https://github.com/Living-Proof-Labs/Verification-Reports-Action/actions/runs/1",
-    ],
-)
-def test_the_owner_and_repository_are_matched_exactly_not_by_case(href: str):
-    # Fails closed: a different spelling of this repository is not kept as a link.
-    cleaned = site.strip_actions_text(f"<a href='{href}'>run</a>", repository=OWNER_REPO)
-    assert cleaned == "run"
 
 
 def _page(cell: str) -> str:

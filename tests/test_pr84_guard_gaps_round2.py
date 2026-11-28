@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 
 import pytest
+from livingproof_capability_report.site import assemble as site
 
-import reports_site as site
 import require_reports
 import site_fixture
 
@@ -45,67 +45,6 @@ def _problems(reports: Path) -> list[str]:
 
 
 # --- encoded /actions/ in an href: every layer is decoded ---------------------------
-
-ENCODED = [
-    "https://github.com/evil/repo/%2561ctions/runs/1",
-    "https://github.com/evil/repo/&amp;#97;ctions/runs/1",
-    "https://github.com/evil/repo/&amp;#x61;ctions/runs/1",
-    "https://github.com/evil/repo/%26%2397;ctions/runs/1",
-    "https://github.com/evil/repo/%2526%252397;ctions/runs/1",
-    "https://github.com/evil/repo%2Factions%2Fruns%2F1",
-    "https://github.com/evil/repo%252Factions%252Fruns%252F1",
-    "https://github.com/evil/repo/%41CTIONS/runs/1",
-]
-
-
-@pytest.mark.parametrize("href", ENCODED)
-def test_a_multiply_encoded_actions_href_is_unwrapped_and_flagged(href: str):
-    raw = f"<a href='{href}'>run</a>"
-    assert site.mentions_actions(raw, repository=OWNER)
-    assert site.strip_actions_text(raw, repository=OWNER) == "run"
-
-
-@pytest.mark.parametrize("href", ENCODED)
-def test_the_reporter_page_scrub_unwraps_an_encoded_actions_href(href: str):
-    raw = f"<p><a href='{href}'>run</a></p>"
-    cleaned = site.scrub_reporter_html(
-        raw, {"evidence": []}, trial=False, expired=False, days=90, repository=OWNER
-    )
-    assert "<a " not in cleaned
-    assert "evil/repo" not in cleaned
-    assert not site.mentions_actions(cleaned, repository=OWNER)
-
-
-@pytest.mark.parametrize(
-    "href",
-    [
-        "https://github.com/evil/repo/ACTIONS/runs/1",
-        "https://github.com/evil/repo/Actions/runs/1/job/2",
-    ],
-)
-def test_an_upper_case_actions_href_is_not_a_kept_link(href: str):
-    raw = f"<a href='{href}'>run</a>"
-    assert site.mentions_actions(raw, repository=OWNER)
-    assert site.strip_actions_text(raw, repository=OWNER) == "run"
-
-
-def test_an_upper_case_anchor_tag_with_an_encoded_actions_href_is_unwrapped():
-    raw = "<A HREF='https://github.com/evil/repo/%61ctions/runs/1'>run</A>"
-    assert site.mentions_actions(raw, repository=OWNER)
-    assert site.strip_actions_text(raw, repository=OWNER) == "run"
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "HTTPS://GITHUB.COM/evil/repo/actions/runs/1",
-        "https://GitHub.com/evil/repo/actions/runs/1",
-        "https://github.com/evil/repo/ACTIONS/runs/1",
-    ],
-)
-def test_a_case_variant_of_the_host_scheme_or_actions_in_plain_text_is_stripped(text: str):
-    cleaned = site.strip_actions_text(f"<p>see {text} now</p>", repository=OWNER)
-    assert cleaned == "<p>see  now</p>"
 
 
 # --- the gate: CI link, video player, video cell -------------------------------------
@@ -201,17 +140,6 @@ def test_an_older_run_without_a_run_url_fails_the_gate_even_when_the_newest_is_f
     assert any("runs/1/run.json" in item and "run.url" in item for item in problems), problems
 
 
-def test_an_unreadable_run_json_does_not_hide_a_later_run_json_without_a_run_url(
-    tmp_path: Path,
-):
-    reports = tmp_path / "reports"
-    first = _run_folder(reports, "1", RUN)
-    (first / "run.json").write_text("{not json", encoding="utf-8")
-    _run_folder(reports, "2", None)
-    problems = site.public_page_problems(reports, repository=OWNER)
-    assert any("runs/2/run.json run.url is missing" in item for item in problems), problems
-
-
 # --- the caller repository defaults to GITHUB_REPOSITORY on the command lines --------
 
 
@@ -232,13 +160,3 @@ def test_site_fixture_check_defaults_to_github_repository(tmp_path: Path, monkey
     assert site_fixture.main(["check", str(reports)]) == 1
     monkeypatch.delenv("GITHUB_REPOSITORY")
     assert site_fixture.main(["check", str(reports)]) == 1
-
-
-def test_reports_site_build_defaults_to_github_repository(tmp_path: Path, monkeypatch):
-    repository = "Living-Proof-Labs/livingproof-unitree-g1"
-    runs = tmp_path / "runs"
-    site_fixture.write(runs, repository=repository)
-    monkeypatch.setenv("GITHUB_REPOSITORY", "other-org/other-repo")
-    assert site.main(["build", str(tmp_path / "bad"), "--runs", str(runs)]) != 0
-    monkeypatch.setenv("GITHUB_REPOSITORY", repository)
-    assert site.main(["build", str(tmp_path / "good"), "--runs", str(runs)]) == 0

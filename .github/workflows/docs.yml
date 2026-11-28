@@ -245,7 +245,7 @@ jobs:
           if [ "$RESET_HISTORY" = true ]; then
             extra+=(--reset-history)
           fi
-          python3 src/reports_site.py restore artifacts/site/reports \
+          python3 src/reports_restore.py restore artifacts/site/reports \
             --site-url https://docs.livingprooflabs.com/verification-reports-action/ \
             --branch main \
             "${extra[@]}"

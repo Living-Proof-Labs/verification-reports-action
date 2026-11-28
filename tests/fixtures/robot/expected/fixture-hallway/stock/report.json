@@ -1,0 +1,16 @@
+{
+  "report_version": "1.0.0",
+  "summaries": [
+    {
+      "capability": "walk-hallway",
+      "system": {
+        "id": "fixture-robot/stock",
+        "version": "0"
+      },
+      "grade": "PASS",
+      "k": 1,
+      "n": 1,
+      "required_passes": 1
+    }
+  ]
+}
