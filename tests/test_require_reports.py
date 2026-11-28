@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The public reports index is the G1 example, and fixture smoke is refused."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -209,12 +210,15 @@ def _write_publishable_reports(reports: Path) -> Path:
 RUN = "https://github.com/Living-Proof-Labs/verification-reports-action/actions/runs/46110994356"
 
 
-def _write_run(reports: Path, run_id: str, created: str, page: str, files=()) -> Path:
+def _write_run(
+    reports: Path, run_id: str, created: str, page: str, files=(), url: str | None = None
+) -> Path:
     folder = reports / "g1/unitree-g1/stock-mujoco-hallway/runs" / run_id
-    folder.mkdir(parents=True)
-    (folder / "run.json").write_text(
-        f'{{"run": {{"id": "{run_id}", "created": "{created}"}}}}\n', encoding="utf-8"
-    )
+    folder.mkdir(parents=True, exist_ok=True)
+    record = {"run": {"id": run_id, "created": created}}
+    if url:
+        record["run"]["url"] = url
+    (folder / "run.json").write_text(json.dumps(record) + "\n", encoding="utf-8")
     (folder / "index.html").write_text(page, encoding="utf-8")
     for name in files:
         (folder / name).parent.mkdir(parents=True, exist_ok=True)
@@ -268,3 +272,35 @@ def test_only_the_newest_run_is_held_to_the_link_check(tmp_path: Path):
     _write_run(reports, "1", "2026-11-27T05:19:19Z", "plain text", MEDIA)
     _write_run(reports, "2", "2026-11-28T05:19:19Z", LINKED_PAGE, MEDIA)
     require_reports.require_published(reports, "success")
+
+
+def test_a_ci_run_link_to_another_repository_is_rejected(tmp_path: Path):
+    reports = _write_publishable_reports(tmp_path / "reports")
+    other = "https://github.com/other-org/other-repo/actions/runs/46110994356"
+    _write_run(
+        reports,
+        "2",
+        "2026-11-28T05:19:19Z",
+        LINKED_PAGE.replace(RUN, other),
+        MEDIA,
+        url=RUN,
+    )
+    with pytest.raises(SystemExit, match="CI run link"):
+        require_reports.require_published(reports, "success")
+    _write_run(reports, "2", "2026-11-28T05:19:19Z", LINKED_PAGE, MEDIA, url=RUN)
+    require_reports.require_published(reports, "success")
+
+
+def test_a_page_with_only_the_video_player_fails_the_published_check(tmp_path: Path):
+    reports = _write_publishable_reports(tmp_path / "reports")
+    page = (
+        f"<ul><li><a href='{RUN}'>CI run</a></li>"
+        "<li><a href='evidence/mcap/mcap/trial-01.mcap'>MCAP, all 1 trials</a></li>"
+        "<li class='evidence-video'><video controls src='evidence/video/trial-01-fail.mp4'>"
+        "</video></li></ul>"
+    )
+    _write_run(reports, "2", "2026-11-28T05:19:19Z", page, MEDIA)
+    with pytest.raises(SystemExit, match="trials table"):
+        require_reports.require_published(reports, "success")
+    with pytest.raises(SystemExit, match="trials table"):
+        require_reports.require_g1_build(reports, "success")

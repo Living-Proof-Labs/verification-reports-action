@@ -256,3 +256,116 @@ def test_two_candidate_videos_for_one_trial_are_not_guessed_between(tmp_path: Pa
 def test_a_video_the_page_must_not_point_at_gets_no_site_path(tmp_path: Path, name: str):
     prefix = _media(tmp_path / "dl", video_dir="video-stock-seed-1-fail", video_name=name)
     assert "path" not in _resolve(tmp_path, prefix)[1]
+
+
+# ------------------------------------------------ L2: only this repository's run URLs
+
+
+OTHER = "https://github.com/other-org/other-repo/actions/runs/46115314157"
+THIS_REPO = "Living-Proof-Labs/verification-reports-action"
+
+
+def test_a_run_url_from_another_repository_is_not_kept_as_a_link():
+    kept = f"<a href='{RUN}'>CI run</a>"
+    assert site.strip_actions_text(kept, repository=THIS_REPO) == kept
+    cleaned = site.strip_actions_text(f"<a href='{OTHER}'>CI run</a>", repository=THIS_REPO)
+    assert cleaned == "CI run"
+    assert OTHER not in cleaned
+    assert not site.html_is_dirty(cleaned, repository=THIS_REPO)
+
+
+def test_a_run_url_from_another_repository_is_flagged_on_a_public_page(tmp_path: Path):
+    reports = tmp_path / "reports"
+    folder = reports / "unitree-g1/stock-mujoco-hallway/runs/1"
+    folder.mkdir(parents=True)
+    (folder / "run.json").write_text(
+        json.dumps({"run": {"id": "1", "url": RUN, "created": "2026-11-28T05:19:19Z"}}),
+        encoding="utf-8",
+    )
+    page = reports / "index.html"
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text(f"<a href='{RUN}'>CI run</a>", encoding="utf-8")
+    assert site.public_page_problems(reports) == []
+    page.write_text(f"<a href='{OTHER}'>CI run</a>", encoding="utf-8")
+    assert site.public_page_problems(reports) == ["index.html links to /actions/"]
+
+
+def test_a_dotdot_or_encoded_slash_owner_is_not_a_run_address():
+    for host_path in ("../other/actions/runs/1", "o%2Fx/repo/actions/runs/1"):
+        url = f"https://github.com/{host_path}"
+        assert not site.RUN_ADDRESS.fullmatch(url)
+        assert site._is_actions_url(url)
+
+
+def test_another_repository_run_url_is_dropped_from_evidence_links():
+    report = {"evidence_links": {"run": OTHER, "links": []}}
+    assert site.strip_actions_links(report, repository=THIS_REPO) is True
+    assert "run" not in report["evidence_links"]
+    report = {"evidence_links": {"run": RUN, "links": []}}
+    assert site.strip_actions_links(report, repository=THIS_REPO) is False
+    assert report["evidence_links"]["run"] == RUN
+
+
+# -------------------------------- L3: near-miss addresses are end-of-address misses
+
+
+L3_SUFFIXES = (".zip", ";a=1", ":80", "&x=1", "%2Fattempts%2F2")
+
+
+@pytest.mark.parametrize("suffix", L3_SUFFIXES)
+def test_a_near_miss_run_address_in_plain_text_is_flagged(tmp_path: Path, suffix: str):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    page = reports / "index.html"
+    page.write_text(f"See {RUN} for the log.", encoding="utf-8")
+    assert site.public_page_problems(reports) == []
+    page.write_text(f"See {RUN}{suffix} for the log.", encoding="utf-8")
+    assert site.public_page_problems(reports) == ["index.html links to /actions/"]
+    assert site.html_is_dirty(f"See {RUN}{suffix}.")
+    assert not site.html_is_dirty(f"See {RUN}.")
+
+
+@pytest.mark.parametrize("suffix", L3_SUFFIXES)
+def test_a_near_miss_run_address_is_removed_from_evidence_links(suffix: str):
+    report = {
+        "evidence_links": {
+            "run": RUN + suffix,
+            "links": [{"label": "note", "url": RUN + suffix, "kind": "note"}],
+        }
+    }
+    assert site._is_actions_url(RUN + suffix)
+    assert site.strip_actions_links(report) is True
+    assert "run" not in report["evidence_links"]
+    assert "url" not in report["evidence_links"]["links"][0]
+
+
+# -------------------------------- L5: the trials-table video cell, and unreadable run.json
+
+
+def test_a_page_with_only_the_video_tag_is_missing_the_cell_link(tmp_path: Path):
+    reports = _run_folder(
+        tmp_path,
+        PAGE,
+        ("evidence/video/trial-01-fail.mp4", "evidence/mcap/mcap/trial-01.mcap"),
+    )
+    assert require_reports.run_page_problems(reports) == [
+        "g1/unitree-g1/stock-mujoco-hallway/runs/1/index.html does not link the published "
+        "evidence/video/trial-01-fail.mp4 in the trials table"
+    ]
+
+
+def test_an_unreadable_run_json_is_a_problem_not_a_skip(tmp_path: Path):
+    reports = _run_folder(
+        tmp_path,
+        PAGE.replace(
+            "<video controls src='evidence/video/trial-01-fail.mp4'></video>",
+            "<video controls src='evidence/video/trial-01-fail.mp4'></video>"
+            "<table><tr><td><a href='evidence/video/trial-01-fail.mp4'>video</a></td></tr></table>",
+        ),
+        ("evidence/video/trial-01-fail.mp4", "evidence/mcap/mcap/trial-01.mcap"),
+    )
+    (reports / "g1/unitree-g1/stock-mujoco-hallway/runs/1/run.json").write_text(
+        "not-json", encoding="utf-8"
+    )
+    problems = require_reports.run_page_problems(reports)
+    assert any("run.json" in item and "unreadable" in item for item in problems), problems

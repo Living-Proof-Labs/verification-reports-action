@@ -3184,3 +3184,39 @@ def test_real_reporter_3_17_0_run_page_links_the_ci_run_video_and_recording(tmp_
         assert "<td><a href='evidence/video/trial-01-fail.mp4'>video</a></td>" in page
     assert require_reports.run_page_problems(reports) == []
     assert site_tool.public_page_problems(reports) == []
+
+
+def test_a_run_link_to_another_repository_is_plain_text_on_the_published_page(tmp_path: Path):
+    this_run = f"https://github.com/{REPO}/actions/runs/100"
+    other = "https://github.com/other-org/other-repo/actions/runs/100"
+    runs_in = tmp_path / "in"
+    folder = _make_run_folder(
+        runs_in,
+        "hallway",
+        html_override=(
+            "<!doctype html><html><body><main><div class='card evidence'><h2>Evidence</h2><ul>"
+            f"<li><a href='{this_run}'>CI run</a></li>"
+            f"<li><a href='{other}'>other run</a></li>"
+            "</ul></div></main></body></html>\n"
+        ),
+    )
+    rep = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    rep["evidence_links"] = {"run": this_run, "links": []}
+    (folder / "report.json").write_text(json.dumps(rep), encoding="utf-8")
+    (folder / "SHA256SUMS").write_text(
+        "".join(
+            f"{hashlib.sha256((folder / n).read_bytes()).hexdigest()}  {n}\n"
+            for n in site_tool.REPORT_FILES
+        ),
+        encoding="utf-8",
+    )
+    reports_dir = tmp_path / "reports"
+    site_tool.build(reports_dir, runs_in)
+    run = next(reports_dir.glob("*/*/runs/*"))
+    page = (run / "index.html").read_text(encoding="utf-8")
+    assert f"<a href='{this_run}'>CI run</a>" in page
+    assert f"<a href='{other}'>" not in page
+    assert "other run" in page
+    stored = json.loads((run / "report.json").read_text(encoding="utf-8"))
+    assert stored["evidence_links"]["run"] == this_run
+    assert site_tool.public_page_problems(reports_dir) == []
