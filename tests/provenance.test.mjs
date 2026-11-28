@@ -1646,6 +1646,8 @@ test('provenance docs name the lock fields that stay and the fields that are ref
   assert.doesNotMatch(page, /bumping a tag also means updating that input's commit and digest/);
   assert.match(page, /No `report\.json` is written/);
   assert.match(page, /livingproof-evaluator-run/);
+  assert.doesNotMatch(page, /\| livingproof-evaluator-scenario \|/);
+  assert.match(page, /the Scenario entry too/);
   assert.match(readme, /docs\/provenance\.md/);
   assert.match(page, /`verified`/);
   assert.match(page, /`not-published`/);

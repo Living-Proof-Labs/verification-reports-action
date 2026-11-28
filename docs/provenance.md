@@ -14,7 +14,7 @@ The plan job in [`.github/workflows/report.yml`](../.github/workflows/report.yml
 | livingproof-worlds | `world` | Release, tag commit, `worlds/<id>/<version>/world.json` sha256, attestation. `commit`, when present, must equal the peeled tag. `world.sha256` and `sources.world.sha256`, when present, must equal that file. |
 | livingproof-capability-report | `releases.reporter` | Release, tag commit, image digest, attestation. `commit` must equal the peeled tag. `image` and `digest` in the lock are refused. |
 
-No evaluator is one of these pins. Every `evaluators` entry in the lock is ignored, the Scenario entry too. The caller's `evaluators` input declares each evaluator, Scenario, Run Integrity and Health alike, and capability-verifier resolves, installs and runs them. The plan prints one notice when the lock has an entry and does not name it. An empty input declares none.
+No evaluator is one of these pins. Every `evaluators` entry in the lock is ignored, the Scenario entry too. The caller's `evaluators` input declares each evaluator, Scenario, Run Integrity (`livingproof-evaluator-run`) and Health alike, and capability-verifier resolves, installs and runs them. The plan prints one notice when the lock has an entry and does not name it. An empty input declares none.
 
 The tag is read from the definition when the definition has one, and otherwise from the lock. The image name passed to the trial is `ghcr.io/living-proof-labs/capability-verifier-hallway` or `ghcr.io/living-proof-labs/livingproof-capability-report`. The lock does not name it.
 
