@@ -73,7 +73,28 @@ def test_historical_allowlist_requires_explicit_well_typed_trials(monkeypatch, a
     import trusted_viewer
 
     monkeypatch.setattr(
-        trusted_viewer, "load_viewers", lambda path: [{"approved_trials": approval}]
+        trusted_viewer, "load_viewers", lambda path, **kwargs: [{"approved_trials": approval}]
     )
     with pytest.raises(SiteError):
         trusted_viewer.load_history_viewers("caller-reviewed.json")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "",
+        "Living-Proof-Labs/livingproof-evaluator-health@main/livingproof-evaluator.json",
+        "Other/repo@v1.2.0/livingproof-evaluator.json",
+    ],
+)
+def test_fresh_version_requires_matching_stable_declaration(tmp_path, monkeypatch, line):
+    from pathlib import Path
+
+    import trusted_viewer
+
+    config = Path(__file__).parents[1] / "config/viewers/evaluators.json"
+    if not line or line.startswith("Other/"):
+        assert trusted_viewer.load_viewers(config, [line]) == []
+    else:
+        with pytest.raises(SiteError, match="version-pinned"):
+            trusted_viewer.load_viewers(config, [line])

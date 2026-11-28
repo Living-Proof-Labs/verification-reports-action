@@ -2,7 +2,6 @@
   {
     "evaluator": {
       "id": "livingproof-health",
-      "version": "1.2.0",
       "publisher": "Living Proof Labs",
       "kind": "advisory"
     },
@@ -11,6 +10,8 @@
     "viewer_sha256": "9c08b355bd6a90f80a79f1d4369282050473db5ae092ae7ddb41ecf46f490995",
     "recording_format": "livingproof-evaluator-health/1",
     "viewer_repository": "Living-Proof-Labs/livingproof-health",
-    "viewer_asset": "livingproof-health-viewer.html"
+    "viewer_asset": "livingproof-health-viewer.html",
+    "evaluator_repository": "Living-Proof-Labs/livingproof-evaluator-health",
+    "evaluator_descriptor": "livingproof-evaluator.json"
   }
 ]

@@ -28,20 +28,47 @@ def publication(tmp_path, monkeypatch):
         (Path(__file__).parents[1] / "config/viewers/evaluators.json").read_text()
     )
     declaration[0]["bytes"] = Path(asset).read_bytes()
-    monkeypatch.setattr(trusted_viewer, "load_viewers", lambda path: declaration if path else [])
+    import viewer_release
+
+    monkeypatch.setattr(
+        viewer_release, "fetch_release_viewer", lambda entry: Path(asset).read_bytes()
+    )
+    config = Path(__file__).parents[1] / "config/viewers/evaluators.json"
+    evaluator_file = tmp_path / "evaluators.yml"
+
     import copy
 
     history = copy.deepcopy(declaration)
+    history[0]["evaluator"]["version"] = "1.2.0"
     recording = json.loads((Path(report) / "health.json").read_bytes())
     history[0]["approved_trials"] = [recording["trials"][0]["trial"]]
     monkeypatch.setattr(
         trusted_viewer, "load_history_viewers", lambda path: history if path else []
     )
 
-    def publish(number, date, enabled=True):
+    def publish(number, date, enabled=True, version="1.2.0"):
+        line = (
+            f"Living-Proof-Labs/livingproof-evaluator-health@v{version}/livingproof-evaluator.json"
+        )
+        evaluator_file.write_text("- " + line + "\n")
         inputs = tmp_path / f"input-{number}" / "run"
         shutil.copytree(fixture, inputs)
         shutil.copyfile(Path(report) / "regenerated-report.json", inputs / "report.json")
+        if version != "1.2.0":
+            # Compatible producer-upgrade fixture, not a claimed released version.
+            from livingproof_capability_report import render
+            from livingproof_capability_report.core import digest
+
+            doc = json.loads((inputs / "report.json").read_bytes())
+            assessment = doc["source_bundle"]["assessment"]
+            result = assessment["advisory_results"]["livingproof-health"]
+            result["evaluator"]["version"] = version
+            result["advisory"]["summary"] = "Compatible new sampled metric is visible."
+            prov = assessment["advisory_provenance"]["livingproof-health"]
+            prov.update(line=line, ref="v" + version, installed_version=version)
+            doc["source_bundle_sha256"] = digest(doc["source_bundle"])
+            (inputs / "report.json").write_text(json.dumps(doc))
+            (inputs / "report.html").write_text(render(doc, "html"))
         record = json.loads((inputs / "run.json").read_bytes())
         record["run"]["id"] = str(number)
         record["run"]["created"] = date
@@ -52,7 +79,8 @@ def publication(tmp_path, monkeypatch):
                 GITHUB_WORKSPACE=str(tmp_path),
                 INPUT_RUNS_DIR=str(inputs.parent),
                 INPUT_OUTPUT_DIR="published",
-                INPUT_TRUSTED_VIEWERS="test" if enabled else "",
+                INPUT_TRUSTED_VIEWERS=str(config) if enabled else "",
+                INPUT_EVALUATORS="evaluators.yml",
                 INPUT_HISTORICAL_VIEWERS="reviewed-history",
                 INPUT_RESTORE_HISTORY="false",
                 INPUT_UPLOAD_ARTIFACT="false",
@@ -161,3 +189,20 @@ def test_active_selection_cannot_substitute_for_history_approval(publication, mo
         publish(2, "2026-11-29T06:00:00Z", True)
     assert snap(first) == before
     assert not (root / "published/unitree-g1/stock-mujoco-hallway/runs/2").exists()
+
+
+def test_compatible_metric_upgrade_needs_only_declaration_pin(publication):
+    root, publish = publication
+    config = Path(__file__).parents[1] / "config/viewers/evaluators.json"
+    before_config = config.read_bytes()
+    assert "version" not in json.loads(before_config)[0]["evaluator"]
+    first = publish(1, "2026-11-28T06:00:00Z")
+    before = snap(first)
+    second = publish(2, "2026-11-29T06:00:00Z", version="1.2.1")
+    assert "@v1.2.1/" in (root / "evaluators.yml").read_text()
+    assert config.read_bytes() == before_config
+    assert snap(first) == before
+    assert "Compatible new sampled metric is visible." in (second / "index.html").read_text()
+    assert "<iframe " in (second / "index.html").read_text()
+    assert json.loads((second / "report.json").read_bytes())["summaries"][0]["grade"] == "FAIL"
+    assert (second / "health.json").read_bytes() == before["health.json"]

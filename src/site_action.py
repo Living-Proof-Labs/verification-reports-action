@@ -154,8 +154,14 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
     git_dir = Path(workspace) if workspace and Path(workspace).is_dir() else None
 
     import trusted_viewer
+    from evaluators_run import resolve_caller_evaluators
 
-    viewers = trusted_viewer.load_viewers(env_map.get("INPUT_TRUSTED_VIEWERS", ""))
+    declarations = resolve_caller_evaluators(
+        env_map.get("INPUT_EVALUATORS", ""), Path(workspace or ".")
+    )
+    viewers = trusted_viewer.load_viewers(
+        env_map.get("INPUT_TRUSTED_VIEWERS", ""), declarations["lines"]
+    )
     history_viewers = trusted_viewer.load_history_viewers(
         env_map.get("INPUT_HISTORICAL_VIEWERS", "")
     )

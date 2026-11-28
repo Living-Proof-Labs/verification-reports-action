@@ -62,3 +62,32 @@ Reporter #139 remains separate and untouched. #75's site/index/history refactor 
 not a dependency. Release compatibility for old renderer fragments must remain
 pinned; unknown fragments fail rather than being rewritten. Runtime package pins
 must be resolved from real immutable releases before pushing this Action revision.
+
+## Routine evaluator upgrades: one declaration pin
+
+Fresh `trusted-viewers` entries declare evaluator id/publisher/kind and the stable
+repository/descriptor path, but NO evaluator version. The existing `evaluators`
+input (the same caller evaluators.yml or declaration lines) supplies the exact
+stable version tag. Selection requires one matching declaration and compares it
+against the normal validated loader's report-bound advisory provenance: declaration
+line, repository, ref, installed version, resolved commit, descriptor digest and
+successful result outcome. Result identity must match that caller-derived version.
+Result data cannot choose the viewer URL, asset bytes, digest or a different version.
+
+Use the same `evaluators.yml` for evaluator execution and site generation. Updating
+that one pin (plus existing documentation/test snapshots) is enough for compatible
+new data, metrics and card text. The Health viewer asset trust pin remains independent.
+Historical entries KEEP their exact version and approved trial list; changing the
+current evaluator pin does not reinterpret prior approvals or rewrite old pages.
+
+The focused upgrade regression uses a synthetic compatible producer-result upgrade
+around the real retained G1 recording. With only the caller declaration changed,
+it shows the new summary and embedded player, preserves the FAIL grade and raw
+recording, and leaves the previous publication byte-for-byte unchanged. It does not
+claim the synthetic v1.2.1 fixture is an official release. An undeclared evaluator adds no player. Ambiguous or nonstable targeted
+declarations and mismatched result provenance fail closed.
+
+A new executable viewer asset is a different trust decision: it still requires a
+separately reviewed immutable asset digest/release pin. Automatically authorizing
+new executable bytes from an evaluator pin would need a larger signed/trusted
+contract and is intentionally outside this routine data-upgrade patch.

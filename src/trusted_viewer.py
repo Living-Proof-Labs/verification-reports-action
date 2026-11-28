@@ -23,7 +23,7 @@ def read_file(path):
     return path.read_bytes()
 
 
-def load_viewers(filename):
+def load_viewers(filename, declarations=(), *, historical=False):
     """Executable bytes and evaluator identities come only from the caller."""
     from pathlib import Path
 
@@ -38,14 +38,36 @@ def load_viewers(filename):
         if not isinstance(entry.get("recording_format"), str) or not entry["recording_format"]:
             raise SiteError("Caller must declare recording format")
         identity = entry["evaluator"]
-        if (
-            set(identity) != {"id", "version", "publisher", "kind"}
-            or identity["kind"] != "advisory"
-        ):
+        expected = {"id", "publisher", "kind"} | ({"version"} if historical else set())
+        if set(identity) != expected or identity["kind"] != "advisory":
             raise SiteError("Expected exact advisory evaluator identity")
         if identity["id"] in seen:
             raise SiteError("Duplicate viewer evaluator declaration")
         seen.add(identity["id"])
+        if not historical:
+            repository = entry.get("evaluator_repository")
+            descriptor = entry.get("evaluator_descriptor")
+            if not isinstance(repository, str) or not isinstance(descriptor, str):
+                raise SiteError("Fresh viewer requires an evaluator repository and descriptor path")
+            targeted = [
+                line
+                for line in declarations
+                if line.startswith(repository + "@") and line.endswith("/" + descriptor)
+            ]
+            if not targeted:
+                continue  # This evaluator is optional and not selected by the caller.
+            matches = []
+            for line in targeted:
+                match = re.fullmatch(r"([^@]+)@v([0-9]+\.[0-9]+\.[0-9]+)/(.+)", line)
+                if match and match[1] == repository and match[3] == descriptor:
+                    matches.append((line, match[2]))
+            if len(matches) != 1:
+                raise SiteError(
+                    "Fresh viewer requires one stable version-pinned evaluator declaration"
+                )
+            line, version = matches[0]
+            entry["evaluator"] = dict(identity, version=version)
+            entry["declaration_line"] = line
         raw = fetch_release_viewer(entry)
         entry["bytes"] = raw
     return entries
@@ -53,7 +75,7 @@ def load_viewers(filename):
 
 def load_history_viewers(filename):
     """Independent caller-reviewed allowlist, never recovered from published data."""
-    entries = load_viewers(filename)
+    entries = load_viewers(filename, historical=True)
     for entry in entries:
         trials = entry.get("approved_trials")
         if not isinstance(trials, list) or not trials:
@@ -107,6 +129,26 @@ def render_fresh(folder, viewers, *, command=None, existing=False):
     if len(matched) != 1:
         raise SiteError("Only one viewer per report is supported")
     entry, document = matched[0]
+    if not existing:
+        line = entry.get("declaration_line")
+        provenance = (
+            report.get("source_bundle", {})
+            .get("assessment", {})
+            .get("advisory_provenance", {})
+            .get(entry["evaluator"]["id"], {})
+        )
+        if (
+            not line
+            or provenance.get("line") != line
+            or provenance.get("repo") != entry.get("evaluator_repository")
+            or provenance.get("ref") != "v" + entry["evaluator"]["version"]
+            or provenance.get("installed_version") != entry["evaluator"]["version"]
+            or provenance.get("outcome") != "result"
+            or provenance.get("exit_code") != 0
+            or not re.fullmatch(r"[a-f0-9]{40}", provenance.get("commit", ""))
+            or not re.fullmatch(r"[a-f0-9]{64}", provenance.get("descriptor_sha256", ""))
+        ):
+            raise SiteError("Fresh result provenance differs from the caller evaluator declaration")
     identity = entry["evaluator"]
     details = document["advisory"]["details_file"]
     if not re.fullmatch(r"[A-Za-z0-9_-]+\.json", details["uri"]):

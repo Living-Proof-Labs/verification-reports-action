@@ -42,6 +42,8 @@ def case(tmp_path):
         evaluator=dict(
             id="livingproof-health", version="1.2.0", publisher="Living Proof Labs", kind="advisory"
         ),
+        evaluator_repository="Living-Proof-Labs/livingproof-evaluator-health",
+        declaration_line="Living-Proof-Labs/livingproof-evaluator-health@v1.2.0/livingproof-evaluator.json",
         recording_format="livingproof-evaluator-health/1",
         bytes=raw,
         viewer_sha256=hashlib.sha256(raw).hexdigest(),
@@ -121,3 +123,12 @@ def test_adapter_contains_no_html_renderer():
     assert "<iframe" not in source
     assert "html.escape" not in source
     assert ".replace(" not in source
+
+
+def test_result_cannot_choose_undeclared_evaluator_version(case):
+    root, pins, command = case
+    pins[0]["declaration_line"] = pins[0]["declaration_line"].replace("v1.2.0", "v1.2.1")
+    before = snapshot(root)
+    with pytest.raises(SiteError, match="provenance"):
+        render_fresh(root, pins, command=command)
+    assert snapshot(root) == before
