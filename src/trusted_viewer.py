@@ -5,7 +5,6 @@ import hashlib
 import json
 import re
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -52,7 +51,7 @@ def load_viewers(filename):
     return entries
 
 
-def render_fresh(folder, viewers, *, command=("livingproof-capability-report",)):
+def render_fresh(folder, viewers, *, command=None, existing=False):
     """Render a new run through the installed pinned Reporter, then move output.
 
     No mutation occurs until Reporter has validated all selected inputs.
@@ -92,7 +91,7 @@ def render_fresh(folder, viewers, *, command=("livingproof-capability-report",))
     raw = read_file(folder / details["uri"])
     if digest(raw) != details["sha256"] or digest(entry["bytes"]) != entry["viewer_sha256"]:
         raise SiteError("Viewer or recording digest mismatch")
-    if (folder / DIRECTORY).exists() or (folder / DIRECTORY).is_symlink():
+    if not existing and ((folder / DIRECTORY).exists() or (folder / DIRECTORY).is_symlink()):
         raise SiteError("Fresh viewer installation refuses existing assets")
     pin = dict(
         evaluator_id=identity["id"],
@@ -110,30 +109,23 @@ def render_fresh(folder, viewers, *, command=("livingproof-capability-report",))
         (target / "data").mkdir(parents=True)
         (target / "viewer.html").write_bytes(entry["bytes"])
         (target / "data/recording.json").write_bytes(raw)
-        (staging / "pins.json").write_text(json.dumps([pin]))
-        result = subprocess.run(
-            [
-                *command,
-                "render",
-                str(staging / "report.json"),
-                "--format",
-                "html",
-                "--trusted-viewers",
-                str(staging / "pins.json"),
-                "--asset-root",
-                str(staging),
-                "--output",
-                str(staging / "index.html"),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
+        from livingproof_capability_report import TrustedViewer
+        from livingproof_capability_report.viewer_page import compose_viewer_page
+
+        from reports_render import checked_report_html
+
+        page = compose_viewer_page(
+            read_file(folder / "index.html").decode("utf-8"),
+            report,
+            trusted_viewers=[TrustedViewer(**pin)],
+            asset_root=staging,
+            validate_shell=lambda value: checked_report_html(value, "existing shell"),
         )
-        if result.returncode:
-            raise SiteError(f"Pinned Reporter refused viewer: {result.stderr.strip()}")
+        (staging / "index.html").write_text(page, encoding="utf-8")
         # Recheck all incoming bytes after the subprocess, before publishing output.
         verify_manifest(folder)
-        shutil.copytree(target, folder / DIRECTORY)
+        if not existing:
+            shutil.copytree(target, folder / DIRECTORY)
         shutil.copyfile(staging / "index.html", folder / "index.html")
     from reports_site import write_published_checksums
 
@@ -141,11 +133,45 @@ def render_fresh(folder, viewers, *, command=("livingproof-capability-report",))
     return True
 
 
-def refuse_decorated_history(root):
-    # No historical regeneration or silent removal. Restoration needs a separately
-    # reviewed Reporter validation interface before this local candidate can ship.
-    if any(root.glob("*/*/runs/*/trusted-viewer")):
-        raise SiteError("Restored trusted viewers require Reporter-owned validation")
+def validate_restored(folder, viewers):
+    """Admit only exact Reporter-generated content, with no file writes."""
+    from livingproof_capability_report import TrustedViewer
+    from livingproof_capability_report.viewer_page import validate_viewer_page
+
+    from reports_render import checked_report_html
+
+    verify_manifest(folder)
+    target = folder / DIRECTORY
+    if {p.relative_to(target).as_posix() for p in target.rglob("*") if p.is_file()} != {
+        "viewer.html",
+        "data/recording.json",
+    }:
+        raise SiteError("Unexpected file in trusted viewer assets")
+    if not viewers:
+        raise SiteError("Restored viewer requires current trusted caller pins")
+    pins = [
+        TrustedViewer(
+            evaluator_id=v["evaluator"]["id"],
+            evaluator_version=v["evaluator"]["version"],
+            evaluator_publisher=v["evaluator"]["publisher"],
+            viewer_href=f"{DIRECTORY}/viewer.html",
+            viewer_sha256=v["viewer_sha256"],
+            recording_format=v["recording_format"],
+        )
+        for v in viewers
+    ]
+    validate_viewer_page(
+        read_file(folder / "index.html").decode("utf-8"),
+        json.loads(read_file(folder / "report.json")),
+        trusted_viewers=pins,
+        asset_root=folder,
+        validate_shell=lambda value: checked_report_html(value, "restored shell"),
+    )
+
+
+def validate_history(root, viewers):
+    for target in root.glob("*/*/runs/*/trusted-viewer"):
+        validate_restored(target.parent, viewers)
 
 
 def verify_manifest(folder):

@@ -11,7 +11,7 @@ import pytest
 
 from reports_common import SiteError
 from reports_site import write_published_checksums
-from trusted_viewer import refuse_decorated_history, render_fresh
+from trusted_viewer import render_fresh, validate_history
 
 
 def snapshot(root):
@@ -32,7 +32,11 @@ def case(tmp_path):
             source / name, tmp_path / ("report.json" if name.startswith("regenerated") else name)
         )
     raw = Path(asset).read_bytes()
-    (tmp_path / "index.html").write_text("Existing caller output")
+    from livingproof_capability_report import render
+
+    (tmp_path / "index.html").write_text(
+        render(json.loads((tmp_path / "report.json").read_bytes()), "html")
+    )
     write_published_checksums(tmp_path)
     pin = dict(
         evaluator=dict(
@@ -88,7 +92,7 @@ def test_refusal_has_no_output_changes(case, fault):
     else:
         (root / "unrelated-evidence.json").write_text("unlisted")
     before = snapshot(root)
-    with pytest.raises(SiteError):
+    with pytest.raises((SiteError, ValueError)):
         render_fresh(root, pins, command=command)
     assert snapshot(root) == before
 
@@ -103,8 +107,8 @@ def test_no_historical_regeneration(tmp_path):
     target.mkdir(parents=True)
     (target / "viewer.html").write_text("existing")
     before = snapshot(tmp_path)
-    with pytest.raises(SiteError, match="Reporter-owned validation"):
-        refuse_decorated_history(tmp_path)
+    with pytest.raises(SiteError):
+        validate_history(tmp_path, [])
     assert snapshot(tmp_path) == before
 
 

@@ -1,76 +1,58 @@
-# Caller-pinned replay inputs (local integration candidate)
+# Trusted viewer consumer integration (local candidate)
 
-Health owns the reviewed immutable player. Reporter owns the entire report page
-and embedded wrapper. The Action fetches the caller-pinned release, stages its
-bytes beside an unchanged recording, and invokes the installed Reporter CLI.
-No evaluator chooses executable code or URLs. This change contains no player,
-iframe renderer, HTML insertion or HTML removal.
+Action stages the Health-owned release asset and unchanged report-bound JSON.
+Reporter owns exact native panel composition and validation. No new Action HTML
+renderer, iframe markup, insertion or removal is used. Reporter follow-up candidate
+786dfea7487af645a9b2df036e6694a7083a7ab1 is installed only in the isolated local test
+environment. Committed requirements retain the real v3.17.0 release; this candidate
+cannot ship until the new Reporter API is reviewed, released and pinned normally.
 
-`./site` accepts `trusted-viewers`, a caller-owned registry with exact evaluator
-id/version/publisher/kind, recording format, and viewer repository/tag/commit/asset/
-SHA-256. `config/viewers/evaluators.json` pins Health v1.4.0. Empty input leaves the
-ordinary path unchanged. Fresh produced runs alone are selected; ambiguous identity,
-changed manifest, wrong bytes or invalid Reporter trial binding fail before installing
-a player. Temporary page output is directly inside its verified asset root, matching
-Reporter #139. The original portable reports and recording are not rewritten by the
-viewer adapter. Existing site publication still has its own pre-existing transformations.
+## Publication and restore
 
-## Not release-ready
+Fresh runs use ordinary site processing, including existing navigation, Pinned
+inputs, provenance and evidence policy. After verifying the complete file manifest,
+Action stages the caller-pinned viewer plus adjacent JSON and invokes Reporter's
+`compose_viewer_page` against the resulting native panel. All other HTML bytes stay
+with the existing caller-generated page. Raw reports, grade and JSON are preserved.
 
-Reporter #139 must release before updating `site/requirements.in` and the compiled
-hash lock. Those files intentionally retain the real v3.17.0 pin in this local
-candidate. No temporary/candidate dependency pin is committed. With that old runtime,
-explicit viewer use fails closed because the new CLI option does not exist.
+Before any build/pruning of restored decorated runs, verify the complete manifest,
+exact viewer file set, release asset/data digests and trial binding. Reporter checks
+the exact decorated native panel and passes its in-memory undecorated projection
+to the existing shell validator. No historical page is written during this check.
+All other restored report/evidence checks remain. An unchanged old run survives a
+normal successive publication byte-for-byte while the new run gets its own viewer.
 
-Restored decorated pages currently fail closed before build. Reporter-owned validation
-for restoration is still required; this candidate does not strip or regenerate historical
-HTML or relax incoming executable-content rejection. Default undecorated history remains
-on the ordinary path. Do not merge this intermediate candidate.
+No declaration gives fresh runs no player. Already-published executable viewers
+still require current trusted caller pins to validate restoration; removing trust
+is not permission to admit their code blindly. No old unadorned page is backfilled.
 
-The native Reporter page also needs parity review for existing Action-owned additions
-(Pinned inputs, site navigation and provenance). Those cannot be copied by Action HTML
-manipulation. This local adapter deliberately does not reproduce them.
+## Expiry
 
-The current public run 46110994356 report has a source-bundle digest mismatch and is
-correctly refused by Reporter. The raw main G1 artifact ZIP download returned Forbidden;
-its earlier generation-stage provenance has not been independently verified. Do not
-silently recalculate the digest. Local on/off proof uses the previously prepared explicit
-fixture report with genuine retained recording, not a claim about current hosted input.
+Ordinary retention prunes copied MCAP/video/media and updates evidence links. The
+recorded JSON and its adjacent unchanged copy remain, so replay remains usable.
+For a previously decorated run affected by that ordinary retention update, Reporter
+recomposes its exact native panel after the existing expiry policy updates the shell.
+This is the explicit normal expiry transition, not a general historical rerender or
+migration. Nonexpired restored pages remain byte-identical.
 
-## Normal generation provenance proof
+A missing/modified JSON payload, mismatched trial, extra executable asset, altered
+viewer or untrusted iframe fails BEFORE normal publication/pruning. Even a rewritten
+complete manifest cannot authorize a missing recorded payload. No broken interactive
+card is silently published and no checksum or trial check is skipped.
 
-The stale digest has a reproducible normal-path cause: `stampReportInputs` parsed
-and reserialized the full Python-generated report in JavaScript. Values such as
-`27.0`, `0.0` and `1.0` inside `source_bundle` became integer spellings; Reporter's
-canonical digest distinguishes them. The local revision now replaces only the
-top-level `inputs` JSON field, retaining every nested field's raw JSON bytes.
-This neither updates nor forgives an existing source digest.
+## Evidence and boundaries
 
-Proof used the installed Reporter candidate on its original G1 corner manifest,
-then the ordinary `assembleVerifierDefinition` path with artifact checksums. The
-new report renders successfully after assembly; source digest remains
-`ab31a6d1a95b163902a625616a322ac694944194e81ed5c435ac5a1cee21a2f7`, and decisions
-and summaries equal the freshly generated input. This is a recorded G1 fixture
-and a local artifact-shaped test, not a newly hosted simulation or reconstruction
-of a historical published report. Regression tests also cover escaped keys,
-nested punctuation, repeated stamping and integers beyond JavaScript precision.
+Installed candidate integration tests use the existing genuine 574-sample G1
+recording and an explicit valid local report fixture. Two successive publication
+IDs and later expiry date are test wrappers around that same retained trial; they
+are not new simulator runs. Tests prove byte-identical first-run restore; successful
+next publication; shell pins/provenance/navigation; unchanged raw data and FAIL;
+normal media expiry with working JSON; missing payload refusal without new output;
+extra executable refusal; no-declaration fresh report. No deployment is claimed.
 
-## Exact Reporter features still needed
-
-1. Compose the caller's approved existing report page with a bound viewer while
-   preserving its navigation, Pinned inputs and provenance additions, OR provide
-   typed inputs for those existing additions in native full-page rendering.
-   Current `render` only has the run-history link slot, not those three additions.
-   Action cannot replace `index.html` with native output without losing them, nor
-   copy the additions into the new output without prohibited HTML manipulation.
-2. Validate an already published viewer-bearing page and its pinned assets/binding
-   without rewriting the page. Action can verify the complete file manifest and
-   pass data/pins; Reporter must own admission of its generated wrapper. Current
-   `render` is not a validation interface. Existing `recheck_restored_run` rejects
-   iframe content; simply skipping it or allowing arbitrary iframe markup would
-   weaken the existing trust boundary. The local fail-closed guard remains until
-   that narrow validation interface exists. Therefore this candidate still cannot
-   promise a second production publication after enabling viewers.
-
-These are concrete composition/validation seams on the existing renderer, not a
-request for the unrelated #75 site/index/history command or a history migration.
+The separate provenance fix is Action #81, head
+a3890bde5ea8ce1f7dfa87eaa4196a985d865312. Do not amend that review from this branch.
+Reporter #139 remains separate and untouched. #75's site/index/history refactor is
+not a dependency. Release compatibility for old renderer fragments must remain
+pinned; unknown fragments fail rather than being rewritten. Runtime package pins
+must be resolved from real immutable releases before pushing this Action revision.

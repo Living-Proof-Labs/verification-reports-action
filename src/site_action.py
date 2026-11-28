@@ -156,7 +156,7 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
     import trusted_viewer
 
     viewers = trusted_viewer.load_viewers(env_map.get("INPUT_TRUSTED_VIEWERS", ""))
-    trusted_viewer.refuse_decorated_history(reports_dir)
+    trusted_viewer.validate_history(reports_dir, viewers)
 
     produced = site_tool.build(
         reports_dir,
@@ -165,6 +165,7 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         allow_replace_run_id=allow_replace,
         git_dir=git_dir,
         exclude_runs=exclude_runs,
+        trusted_viewers=viewers,
     )
 
     for folder in produced:
