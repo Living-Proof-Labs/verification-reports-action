@@ -124,7 +124,7 @@ def _newest_run_folders(reports: Path) -> list[Path]:
 
 
 def run_page_problems(reports: Path) -> list[str]:
-    """The newest run page of each scenario links its CI run and the media it published.
+    """The newest run page of each scenario links a CI run page and the media it published.
 
     Only the newest run is held to this: an older restored run was built before its page
     carried the links, and its evidence may since have been pruned.
