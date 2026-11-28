@@ -29,6 +29,14 @@ def publication(tmp_path, monkeypatch):
     )
     declaration[0]["bytes"] = Path(asset).read_bytes()
     monkeypatch.setattr(trusted_viewer, "load_viewers", lambda path: declaration if path else [])
+    import copy
+
+    history = copy.deepcopy(declaration)
+    recording = json.loads((Path(report) / "health.json").read_bytes())
+    history[0]["approved_trials"] = [recording["trials"][0]["trial"]]
+    monkeypatch.setattr(
+        trusted_viewer, "load_history_viewers", lambda path: history if path else []
+    )
 
     def publish(number, date, enabled=True):
         inputs = tmp_path / f"input-{number}" / "run"
@@ -45,6 +53,7 @@ def publication(tmp_path, monkeypatch):
                 INPUT_RUNS_DIR=str(inputs.parent),
                 INPUT_OUTPUT_DIR="published",
                 INPUT_TRUSTED_VIEWERS="test" if enabled else "",
+                INPUT_HISTORICAL_VIEWERS="reviewed-history",
                 INPUT_RESTORE_HISTORY="false",
                 INPUT_UPLOAD_ARTIFACT="false",
                 GITHUB_EVENT_NAME="pull_request",
@@ -73,7 +82,9 @@ def test_successive_publications_and_normal_media_expiry(publication):
     assert json.loads((first / "report.json").read_bytes())["summaries"][0]["grade"] == "FAIL"
     assert not list((first / "evidence").rglob("*.mcap"))
     # No hidden media-specific re-signing: restored manifest and binding verify again.
-    trusted_viewer.validate_history(root / "published", trusted_viewer.load_viewers("test"))
+    trusted_viewer.validate_history(
+        root / "published", trusted_viewer.load_history_viewers("reviewed-history")
+    )
 
 
 def test_missing_expired_payload_refuses_before_publication(publication):
@@ -103,5 +114,50 @@ def test_extra_executable_refuses_before_publication(publication):
     before = snap(first)
     with pytest.raises(SiteError, match="Unexpected file"):
         publish(2, "2026-11-29T06:00:00Z")
+    assert snap(first) == before
+    assert not (root / "published/unitree-g1/stock-mujoco-hallway/runs/2").exists()
+
+
+def test_first_embedded_second_undeclared_preserves_history(publication):
+    _, publish = publication
+    first = publish(1, "2026-11-28T06:00:00Z")
+    before = snap(first)
+    second = publish(2, "2026-11-29T06:00:00Z", False)
+    assert snap(first) == before
+    assert "<iframe " not in (second / "index.html").read_text()
+    assert "Recorded data" in (second / "index.html").read_text()
+
+
+@pytest.mark.parametrize("fault", ["unrelated", "wrong-asset", "wrong-trial", "plain-shell"])
+def test_unapproved_history_refused_without_mutation(publication, monkeypatch, fault):
+    root, publish = publication
+    first = publish(1, "2026-11-28T06:00:00Z")
+    import copy
+
+    approved = copy.deepcopy(trusted_viewer.load_history_viewers("reviewed-history"))
+    if fault == "unrelated":
+        approved[0]["evaluator"]["id"] = "unrelated"
+    if fault == "wrong-asset":
+        approved[0]["viewer_sha256"] = "0" * 64
+    if fault == "wrong-trial":
+        approved[0]["approved_trials"][0]["run_id"] = "other"
+    if fault == "plain-shell":
+        (first / "index.html").write_text((first / "report.html").read_text())
+        write_published_checksums(first)
+    monkeypatch.setattr(trusted_viewer, "load_history_viewers", lambda path: approved)
+    before = snap(first)
+    with pytest.raises((SiteError, ValueError)):
+        publish(2, "2026-11-29T06:00:00Z", False)
+    assert snap(first) == before
+    assert not (root / "published/unitree-g1/stock-mujoco-hallway/runs/2").exists()
+
+
+def test_active_selection_cannot_substitute_for_history_approval(publication, monkeypatch):
+    root, publish = publication
+    first = publish(1, "2026-11-28T06:00:00Z")
+    before = snap(first)
+    monkeypatch.setattr(trusted_viewer, "load_history_viewers", lambda path: [])
+    with pytest.raises(SiteError, match="trusted caller pins"):
+        publish(2, "2026-11-29T06:00:00Z", True)
     assert snap(first) == before
     assert not (root / "published/unitree-g1/stock-mujoco-hallway/runs/2").exists()

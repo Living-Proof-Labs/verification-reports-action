@@ -51,6 +51,29 @@ def load_viewers(filename):
     return entries
 
 
+def load_history_viewers(filename):
+    """Independent caller-reviewed allowlist, never recovered from published data."""
+    entries = load_viewers(filename)
+    for entry in entries:
+        trials = entry.get("approved_trials")
+        if not isinstance(trials, list) or not trials:
+            raise SiteError("Historical viewer approval requires explicit trial identities")
+        for trial in trials:
+            if (
+                not isinstance(trial, dict)
+                or set(trial) != {"run_id", "configuration", "index", "observation_sha256"}
+                or type(trial.get("index")) is not int
+                or trial["index"] <= 0
+                or not all(
+                    isinstance(trial.get(k), str) and trial[k]
+                    for k in ("run_id", "configuration", "observation_sha256")
+                )
+                or not re.fullmatch(r"[a-f0-9]{64}", trial["observation_sha256"])
+            ):
+                raise SiteError("Invalid historical trial approval")
+    return entries
+
+
 def render_fresh(folder, viewers, *, command=None, existing=False):
     """Render a new run through the installed pinned Reporter, then move output.
 
@@ -149,6 +172,35 @@ def validate_restored(folder, viewers):
         raise SiteError("Unexpected file in trusted viewer assets")
     if not viewers:
         raise SiteError("Restored viewer requires current trusted caller pins")
+    report = json.loads(read_file(folder / "report.json"))
+    documents = report.get("source_bundle", {}).get("assessment", {}).get("advisory_results", {})
+    recording = json.loads(read_file(target / "data/recording.json"))
+    trials = recording.get("trials") if isinstance(recording, dict) else None
+    if not isinstance(trials, list) or len(trials) != 1 or not isinstance(trials[0], dict):
+        raise SiteError("Restored viewer requires one recorded trial")
+    trial = trials[0].get("trial")
+    if not isinstance(trial, dict) or type(trial.get("index")) is not int:
+        raise SiteError("Invalid restored trial identity")
+    asset_digest = digest(read_file(target / "viewer.html"))
+    approved = []
+    for v in viewers:
+        identity = v["evaluator"]
+        docs = [
+            d
+            for d in documents.values()
+            if isinstance(d, dict)
+            and isinstance(d.get("evaluator"), dict)
+            and all(d["evaluator"].get(k) == value for k, value in identity.items())
+        ]
+        if (
+            len(docs) == 1
+            and v["viewer_sha256"] == asset_digest
+            and trial in v.get("approved_trials", [])
+        ):
+            approved.append(v)
+    if len(approved) != 1:
+        raise SiteError("Restored executable lacks one exact evaluator/trial/asset approval")
+    v = approved[0]
     pins = [
         TrustedViewer(
             evaluator_id=v["evaluator"]["id"],
@@ -158,11 +210,16 @@ def validate_restored(folder, viewers):
             viewer_sha256=v["viewer_sha256"],
             recording_format=v["recording_format"],
         )
-        for v in viewers
     ]
+    # An absent evaluator yields no fragment in Reporter's optional API. Restoration
+    # must require a real matched fragment, not treat a clean plain shell as approval.
+    from livingproof_capability_report.trusted_viewer import viewer_panels
+
+    if set(viewer_panels(pins, report, folder)) != {v["evaluator"]["id"]}:
+        raise SiteError("Restored executable has no corresponding native panel")
     validate_viewer_page(
         read_file(folder / "index.html").decode("utf-8"),
-        json.loads(read_file(folder / "report.json")),
+        report,
         trusted_viewers=pins,
         asset_root=folder,
         validate_shell=lambda value: checked_report_html(value, "restored shell"),

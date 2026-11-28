@@ -51,3 +51,29 @@ def test_only_exact_caller_release_asset_is_loaded(fault):
     else:
         assert fetch_release_viewer(pin, read) == raw
     assert all("untrusted" not in r for r in reads)
+
+
+@pytest.mark.parametrize(
+    "approval",
+    [
+        None,
+        [],
+        [{}],
+        [
+            {
+                "run_id": "run",
+                "configuration": "stock",
+                "index": True,
+                "observation_sha256": "a" * 64,
+            }
+        ],
+    ],
+)
+def test_historical_allowlist_requires_explicit_well_typed_trials(monkeypatch, approval):
+    import trusted_viewer
+
+    monkeypatch.setattr(
+        trusted_viewer, "load_viewers", lambda path: [{"approved_trials": approval}]
+    )
+    with pytest.raises(SiteError):
+        trusted_viewer.load_history_viewers("caller-reviewed.json")

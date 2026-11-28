@@ -22,9 +22,15 @@ to the existing shell validator. No historical page is written during this check
 All other restored report/evidence checks remain. An unchanged old run survives a
 normal successive publication byte-for-byte while the new run gets its own viewer.
 
-No declaration gives fresh runs no player. Already-published executable viewers
-still require current trusted caller pins to validate restoration; removing trust
-is not permission to admit their code blindly. No old unadorned page is backfilled.
+No declaration gives fresh runs no player. Already-published executable viewers require the separate `historical-viewers`
+caller-reviewed allowlist. `trusted-viewers` controls fresh-run selection only and
+cannot authorize history. Each historical entry contains the immutable release pin,
+exact evaluator identity and `approved_trials`: explicit `run_id`, `configuration`,
+positive integer `index` and `observation_sha256` objects. Every restored executable
+must match exactly one approval's evaluator/trial/asset digest and a verified native
+decorated panel. An unrelated approved asset or clean plain shell is insufficient.
+Disabling fresh selection preserves approved history; removing historical trust is
+not permission to admit executable bytes blindly. No old unadorned page is backfilled.
 
 ## Expiry
 
