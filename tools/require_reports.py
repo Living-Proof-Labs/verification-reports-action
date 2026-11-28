@@ -19,10 +19,19 @@ STABLE_PAGE = Path("g1/unitree-g1/stock-mujoco-hallway/latest/index.html")
 RUN_ID_LINK = re.compile(r"reports/(?:[^/\s\"')<>]+/)*runs/[0-9]+/")
 _LOCAL_REF = re.compile(r"""(?P<attr>\b(?:href|src))=(?P<q>["'])(?P<url>.*?)(?P=q)""")
 MOCK_ROOT_FILES = ("site.json", "styles.css", "open.js")
+_REPO_SEGMENT = r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?"
 CI_RUN_LINK = re.compile(
-    r"""href=(["'])https://github\.com/[^/"'<>\s]+/[^/"'<>\s]+/actions/runs/[0-9]+\1"""
+    r"""href=(["'])https://github\.com/"""
+    + _REPO_SEGMENT
+    + r"/"
+    + _REPO_SEGMENT
+    + r"""/actions/runs/[0-9]+\1"""
 )
 VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
+_TRIALS_CELL = re.compile(
+    r"<td\b[^>]*>(?:(?!</td>).)*href=(['\"])(?P<path>evidence/[^'\"]+)\1",
+    re.I | re.S,
+)
 
 
 def _keep_public_url(url: str) -> bool:
@@ -107,37 +116,82 @@ def drop_published_fixtures(reports: Path) -> None:
             path.rmdir()
 
 
-def _newest_run_folders(reports: Path) -> list[Path]:
-    """The newest run folder of each scenario history, by the time its record says."""
+def _caller_repository(record: dict) -> str | None:
+    url = (record.get("run") or {}).get("url")
+    if not isinstance(url, str):
+        return None
+    match = re.fullmatch(
+        r"https://github\.com/(" + _REPO_SEGMENT + r"/" + _REPO_SEGMENT + r")/actions/runs/[0-9]+",
+        url,
+    )
+    return match.group(1) if match else None
+
+
+def _read_run_record(path: Path) -> dict | None:
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    run = record.get("run") if isinstance(record.get("run"), dict) else None
+    created = None if run is None else run.get("created")
+    if not isinstance(created, str):
+        return None
+    return record
+
+
+def _newest_run_folders(reports: Path) -> tuple[list[Path], list[str]]:
+    """The newest readable run folder of each scenario, plus unreadable run.json paths."""
     newest: dict[Path, tuple[str, Path]] = {}
-    for record in sorted(reports.rglob("runs/*/run.json")):
-        try:
-            created = json.loads(record.read_text(encoding="utf-8"))["run"]["created"]
-        except (OSError, ValueError, KeyError, TypeError):
+    problems: list[str] = []
+    for record_path in sorted(reports.rglob("runs/*/run.json")):
+        relative = record_path.relative_to(reports).as_posix()
+        record = _read_run_record(record_path)
+        if record is None:
+            problems.append(f"{relative} is unreadable")
             continue
-        if not isinstance(created, str):
-            continue
-        history = record.parent.parent
+        created = record["run"]["created"]
+        history = record_path.parent.parent
         if history not in newest or created > newest[history][0]:
-            newest[history] = (created, record.parent)
-    return [folder for _, folder in newest.values()]
+            newest[history] = (created, record_path.parent)
+    return [folder for _, folder in newest.values()], problems
+
+
+def _ci_run_link(repository: str | None) -> re.Pattern[str]:
+    if repository:
+        repo = re.escape(repository)
+    else:
+        repo = f"{_REPO_SEGMENT}/{_REPO_SEGMENT}"
+    return re.compile(rf"""href=(["'])https://github\.com/{repo}/actions/runs/[0-9]+\1""")
+
+
+def _has_trials_cell_link(page: str, relative: str) -> bool:
+    for match in _TRIALS_CELL.finditer(page):
+        if match.group("path") == relative:
+            return True
+    return False
 
 
 def run_page_problems(reports: Path) -> list[str]:
-    """The newest run page of each scenario links a CI run page and the media it published.
+    """The newest run page of each scenario links this repo's CI run and its media.
 
-    Only the newest run is held to this: an older restored run was built before its page
-    carried the links, and its evidence may since have been pruned.
+    Only the newest run is held to the link check: an older restored run was built before
+    its page carried the links, and its evidence may since have been pruned. An unreadable
+    run.json is still a problem. A published trial video must be linked from the trials
+    table, not only from a <video> tag.
     """
-    problems: list[str] = []
-    for folder in _newest_run_folders(reports):
+    folders, problems = _newest_run_folders(reports)
+    for folder in folders:
         name = (folder / "index.html").relative_to(reports).as_posix()
         page_path = folder / "index.html"
         if not page_path.is_file():
             problems.append(f"{name} is missing")
             continue
         page = page_path.read_text(encoding="utf-8")
-        if CI_RUN_LINK.search(page) is None:
+        record = _read_run_record(folder / "run.json")
+        repository = _caller_repository(record) if record else None
+        if _ci_run_link(repository).search(page) is None:
             problems.append(f"{name} is missing the CI run link")
         evidence = folder / "evidence"
         for file in sorted(evidence.rglob("*")) if evidence.is_dir() else []:
@@ -149,6 +203,12 @@ def run_page_problems(reports: Path) -> list[str]:
                 ".robot.mcap"
             )
             if not file.is_file() or not (published_video or published_recording):
+                continue
+            if published_video:
+                if not _has_trials_cell_link(page, relative):
+                    problems.append(
+                        f"{name} does not link the published {relative} in the trials table"
+                    )
                 continue
             if f"'{relative}'" not in page and f'"{relative}"' not in page:
                 problems.append(f"{name} does not link the published {relative}")

@@ -63,6 +63,7 @@ def _make_run_folder(
     evidence_files: dict[str, bytes] | None = None,
     html_override: str | None = None,
     thresholds_bytes: bytes | None = None,
+    caller: str | None = None,
 ) -> Path:
     folder = parent / name
     folder.mkdir(parents=True, exist_ok=True)
@@ -170,7 +171,7 @@ def _make_run_folder(
         "verification": f"{robot_slug}-{variant}",
         "run": {
             "id": run_id,
-            "url": f"https://github.com/{repository}/actions/runs/{run_id.split('-')[0]}",
+            "url": f"https://github.com/{caller or repository}/actions/runs/{run_id.split('-')[0]}",
             "created": created,
         },
         "commit": commit_info,
@@ -3088,25 +3089,26 @@ def test_public_page_check_allows_the_ci_run_address_and_nothing_else_under_acti
 
 
 def test_the_ci_run_link_is_published_and_artifact_addresses_still_are_not(tmp_path: Path):
+    this_run = f"https://github.com/{REPO}/actions/runs/100"
     runs_in = tmp_path / "in"
     folder = _make_run_folder(
         runs_in,
         "hallway",
         html_override=(
             "<!doctype html><html><body><main><div class='card evidence'><h2>Evidence</h2><ul>"
-            f"<li><a href='{CI_RUN}'>CI run</a></li>"
-            f"<li><a href='{CI_RUN}/artifacts/101'>MCAP</a></li>"
+            f"<li><a href='{this_run}'>CI run</a></li>"
+            f"<li><a href='{this_run}/artifacts/101'>MCAP</a></li>"
             "</ul></div></main></body></html>\n"
         ),
     )
     rep = json.loads((folder / "report.json").read_text(encoding="utf-8"))
     rep["evidence_links"] = {
-        "run": CI_RUN,
-        "links": [{"label": "MCAP", "kind": "mcap", "url": CI_RUN + "/artifacts/101"}],
+        "run": this_run,
+        "links": [{"label": "MCAP", "kind": "mcap", "url": this_run + "/artifacts/101"}],
     }
     (folder / "report.json").write_text(json.dumps(rep), encoding="utf-8")
     (folder / "report.md").write_text(
-        f"**Evidence:** [CI run]({CI_RUN}) · [MCAP]({CI_RUN}/artifacts/101)\n", encoding="utf-8"
+        f"**Evidence:** [CI run]({this_run}) · [MCAP]({this_run}/artifacts/101)\n", encoding="utf-8"
     )
     (folder / "SHA256SUMS").write_text(
         "".join(
@@ -3119,14 +3121,14 @@ def test_the_ci_run_link_is_published_and_artifact_addresses_still_are_not(tmp_p
     site_tool.build(reports_dir, runs_in)
     run = next(reports_dir.glob("*/*/runs/*"))
     page = (run / "index.html").read_text(encoding="utf-8")
-    assert f"<a href='{CI_RUN}'>CI run</a>" in page
+    assert f"<a href='{this_run}'>CI run</a>" in page
     assert "/artifacts/" not in page
-    assert f"<a href='{CI_RUN}'>CI run</a>" in (run / "report.html").read_text(encoding="utf-8")
-    assert f"[CI run]({CI_RUN})" in (run / "report.md").read_text(encoding="utf-8")
+    assert f"<a href='{this_run}'>CI run</a>" in (run / "report.html").read_text(encoding="utf-8")
+    assert f"[CI run]({this_run})" in (run / "report.md").read_text(encoding="utf-8")
     assert "/artifacts/" not in (run / "report.md").read_text(encoding="utf-8")
     assert (
         json.loads((run / "report.json").read_text(encoding="utf-8"))["evidence_links"]["run"]
-        == CI_RUN
+        == this_run
     )
     assert site_tool.public_page_problems(reports_dir) == []
 
@@ -3168,7 +3170,12 @@ def test_real_reporter_3_17_0_run_page_links_the_ci_run_video_and_recording(tmp_
     text = fixture.read_text(encoding="utf-8")
     media = {"video/trial-01-fail.mp4": b"mp4", "mcap/mcap/trial-01.mcap": b"mcap"}
     _make_run_folder(
-        tmp_path / "in", "hallway", run_id="46110994356", html_override=text, evidence_files=media
+        tmp_path / "in",
+        "hallway",
+        run_id="46110994356",
+        html_override=text,
+        evidence_files=media,
+        caller="Living-Proof-Labs/verification-reports-action",
     )
     site_tool.build(tmp_path / "reports", tmp_path / "in")
     reports = tmp_path / "reports"

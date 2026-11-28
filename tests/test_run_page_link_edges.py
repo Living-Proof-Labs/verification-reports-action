@@ -22,6 +22,9 @@ PAGE = (
     "<a href='evidence/mcap/mcap/trial-01.mcap'>MCAP</a>"
     "<video controls src='evidence/video/trial-01-fail.mp4'></video>"
 )
+PAGE_WITH_CELL = (
+    PAGE + "<table><tr><td><a href='evidence/video/trial-01-fail.mp4'>video</a></td></tr></table>"
+)
 
 
 def _run_folder(reports: Path, page: str, files: tuple[str, ...]) -> Path:
@@ -44,7 +47,7 @@ def test_the_robot_side_recording_is_not_a_link_the_page_must_carry(tmp_path: Pa
     # The real run folder holds trial-01.robot.mcap; the reporter never links it.
     reports = _run_folder(
         tmp_path,
-        PAGE,
+        PAGE_WITH_CELL,
         (
             "evidence/video/trial-01-fail.mp4",
             "evidence/mcap/mcap/trial-01.mcap",
