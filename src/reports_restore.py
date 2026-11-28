@@ -166,13 +166,20 @@ def _redirect_target(current: str, error: urllib.error.HTTPError) -> str:
     return nxt
 
 
-def _read_following_redirects(url: str, token: str | None) -> bytes:
+def _read_following_redirects(
+    url: str, token: str | None, *, max_bytes: int | None = None
+) -> bytes:
     current = url
     home = _host(url)
     for _hop in range(_MAX_REDIRECTS + 1):
+        if max_bytes is not None and urllib.parse.urlsplit(current).scheme != "https":
+            raise SiteError("Authenticated log download requires HTTPS")
         try:
             with _open_once(current, token if _host(current) == home else None) as response:
-                return response.read()
+                body = response.read() if max_bytes is None else response.read(max_bytes + 1)
+                if max_bytes is not None and len(body) > max_bytes:
+                    raise SiteError("Authenticated download exceeds its size bound")
+                return body
         except urllib.error.HTTPError as error:
             try:
                 if error.code not in _REDIRECTS:
@@ -695,6 +702,7 @@ def restore(
     pages_artifact: str | None = None,
     pages_job: str | None = None,
     deploy_workflow: str | None = None,
+    publication_policy: dict | None = None,
 ) -> dict | None:
     """Restore earlier runs from the last deployed Pages artifact into `destination`."""
     destination.mkdir(parents=True, exist_ok=True)
@@ -773,9 +781,39 @@ def restore(
     )
     if dry_run:
         return artifact
-    count = _unpack_pages_archive(
-        _download_pages_archive(artifact["archive_download_url"], token), destination
-    )
+    archive = _download_pages_archive(artifact["archive_download_url"], token)
+    if publication_policy is not None:
+        import shutil
+        import tempfile
+
+        from publication_authority import verify
+        from trusted_viewer import discover_viewers, publication_approvals
+
+        # Extract only into a private staging directory. Never modify existing
+        # history before all authenticated archive and native panel checks pass.
+        with tempfile.TemporaryDirectory(prefix="vra-approved-history-") as directory:
+            staging = Path(directory)
+            # When GitHub provides the digest, reject changed ZIP bytes before
+            # extraction. Legacy undecorated archives without a digest remain
+            # compatible; decorated archives always require it in verify().
+            checksum = artifact.get("digest")
+            if checksum is not None:
+                import hashlib
+
+                if checksum != "sha256:" + hashlib.sha256(archive).hexdigest():
+                    raise SiteError("Unverified Pages publication: archive digest")
+            count = _unpack_pages_archive(archive, staging)
+            decorated = discover_viewers(staging)
+            approvals = []
+            if decorated:
+                verify(artifact, archive, repository, branch, token, api, publication_policy)
+                approvals = publication_approvals(staging, publication_policy["viewers"])
+            if any(destination.iterdir()):
+                raise SiteError("Authenticated restore requires an empty destination")
+            shutil.copytree(staging, destination, dirs_exist_ok=True)
+            artifact = dict(artifact, _viewer_approvals=approvals)
+    else:
+        count = _unpack_pages_archive(archive, destination)
     print(f"Restored {count} files into {destination}.")
     return artifact
 

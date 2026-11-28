@@ -102,7 +102,8 @@ def reporter_command(env_map: dict[str, str], executable_dir: Path | None = None
     )
 
 
-def run_site_command(command: list[str], env_map: dict[str, str]) -> None:
+def run_site_command(command: list[str], env_map: dict[str, str]) -> str:
+    """Run the reporter's site command and return what it printed."""
     result = subprocess.run(command, env=env_map, capture_output=True, text=True, check=False)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
@@ -110,6 +111,16 @@ def run_site_command(command: list[str], env_map: dict[str, str]) -> None:
         lines = [line for line in result.stderr.splitlines() if line.strip()]
         reason = lines[-1].removeprefix("Error: ") if lines else f"exit {result.returncode}"
         raise SiteError(f"{REPORTER} site command failed: {reason}")
+    return result.stdout
+
+
+def added_run_folders(output: str) -> list[Path]:
+    """The run folders the site command added, from its `Added <folder>` lines."""
+    return [
+        Path(line.removeprefix("Added "))
+        for line in output.splitlines()
+        if line.startswith("Added ")
+    ]
 
 
 def _has_control_character(value: str) -> bool:
@@ -193,6 +204,21 @@ def run_site_action(
 
     runs_dir = Path(runs_dir_raw)
 
+    import trusted_viewer
+
+    publication_policy = None
+    publication_file = env_map.get("INPUT_PUBLICATION_APPROVAL", "")
+    if publication_file:
+        publication_policy = json.loads(trusted_viewer.read_file(Path(publication_file)))
+        publication_policy["viewers"] = trusted_viewer.load_viewers(
+            publication_policy["viewer_registry"], publication=True
+        )
+    restore_dir = reports_dir
+    if env_map.get("INPUT_RESTORE_ROOT"):
+        _, restore_dir = _validate_output_dir(env_map["INPUT_RESTORE_ROOT"], workspace)
+        if not reports_dir.is_relative_to(restore_dir):
+            raise SiteError("restore-root must contain output-dir")
+    restored = None
     repository = (env_map.get("GITHUB_REPOSITORY") or "").strip()
     if not repository:
         raise SiteError("GITHUB_REPOSITORY is required")
@@ -208,8 +234,11 @@ def run_site_action(
         pages_job = (env_map.get("INPUT_PAGES_JOB") or "").strip() or None
         api_url = (env_map.get("GITHUB_API_URL") or "https://api.github.com").strip()
 
-        reports_restore.restore(
-            reports_dir,
+        restore_options = {}
+        if publication_policy is not None:
+            restore_options["publication_policy"] = publication_policy
+        restored = reports_restore.restore(
+            restore_dir,
             repository,
             branch=branch,
             current_run=current_run,
@@ -219,10 +248,34 @@ def run_site_action(
             reset_history=reset_history,
             pages_artifact=pages_artifact,
             pages_job=pages_job,
+            **restore_options,
         )
 
     allow_replace = (env_map.get("GITHUB_RUN_ID") or "").strip() or None
     git_dir = Path(workspace) if workspace and Path(workspace).is_dir() else None
+
+    from livingproof_capability_report.site import check_reports_tree
+
+    import trusted_viewer
+    from evaluators_run import resolve_caller_evaluators
+
+    declarations = resolve_caller_evaluators(
+        env_map.get("INPUT_EVALUATORS", ""), Path(workspace or ".")
+    )
+    viewers = trusted_viewer.load_viewers(
+        env_map.get("INPUT_TRUSTED_VIEWERS", ""), declarations["lines"]
+    )
+    history_viewers = trusted_viewer.load_history_viewers(
+        env_map.get("INPUT_HISTORICAL_VIEWERS", "")
+    )
+    if restored is not None and publication_policy is not None:
+        history_viewers = restored.get("_viewer_approvals", [])
+    trusted_viewer.validate_history(reports_dir, history_viewers)
+
+    pages = {
+        target.parent: (target.parent / "index.html").read_bytes()
+        for target in trusted_viewer.discover_viewers(reports_dir)
+    }
 
     command = [
         reporter_command(env_map, executable_dir),
@@ -241,7 +294,17 @@ def run_site_action(
         command += ["--git-dir", str(git_dir)]
     for entry in exclude_runs:
         command += ["--exclude-run", entry]
-    run_site_command(command, env_map)
+    output = run_site_command(command, env_map)
+    for folder in added_run_folders(output):
+        trusted_viewer.render_fresh(reports_dir / folder, viewers)
+    for folder, page in pages.items():
+        if (folder / "index.html").read_bytes() != page:
+            # Ordinary expiry republished this run's shell; compose its approved panel again.
+            trusted_viewer.render_fresh(folder, history_viewers, existing=True)
+
+    issues = check_reports_tree(reports_dir, repository=repository)
+    if issues:
+        raise SiteError("Generated reports/ check failed: " + "; ".join(issues))
 
     marker = json.loads((reports_dir / MARKER).read_text(encoding="utf-8"))
 

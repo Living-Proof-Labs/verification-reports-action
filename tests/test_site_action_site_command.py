@@ -187,5 +187,7 @@ def test_the_restore_command_runs_from_reports_restore():
     assert result.returncode == 0, result.stderr
     assert "--reset-history" in result.stdout and "--site-url" in result.stdout
     docs = (ROOT / ".github/workflows/docs.yml").read_text(encoding="utf-8")
-    assert "python3 src/reports_restore.py restore artifacts/site/reports" in docs
-    assert "reports_site.py" not in docs
+    # Since #74 the production job restores inside the site action (restore-root), so the
+    # workflow calls no restore command; the CLI stays for local use.
+    assert "restore-root: artifacts/site/reports" in docs
+    assert "reports_site.py" not in docs and "reports_restore.py restore" not in docs
