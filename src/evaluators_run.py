@@ -423,6 +423,7 @@ def executable_lines(lines: list[str], prepare=None) -> list[str]:
         item.declaration.line for item in prepared if item.document.get("kind") not in TRIAL_KINDS
     ]
 
+
 _SITE_PATH = re.compile(r"[A-Za-z0-9._~!$&'()*+,;=@%/-]{1,240}")
 _VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
 
