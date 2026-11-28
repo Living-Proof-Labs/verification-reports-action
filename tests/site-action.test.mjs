@@ -68,6 +68,7 @@ test('src/site_action.py executes end to end as a standalone process on fixture 
         INPUT_RESTORE_HISTORY: 'auto',
         INPUT_UPLOAD_ARTIFACT: 'auto',
         GITHUB_EVENT_NAME: 'pull_request',
+        GITHUB_REPOSITORY: 'Living-Proof-Labs/livingproof-unitree-g1',
         GITHUB_WORKSPACE: tempRoot,
         GITHUB_RUN_ID: '77',
         GITHUB_RUN_ATTEMPT: '1',
@@ -170,10 +171,20 @@ test('src/site_action.py consumes collectReports output from .github/workflows/r
     const passPos = indexHtml.indexOf('fixture-hallway-stock/latest/');
     assert.ok(failPos !== -1 && passPos !== -1 && failPos < passPos);
 
-    execFileSync('python3', ['tools/site_fixture.py', 'check', reportsDir], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-    });
+    execFileSync(
+      'python3',
+      [
+        'tools/site_fixture.py',
+        'check',
+        reportsDir,
+        '--repository',
+        'Living-Proof-Labs/verification-reports-action',
+      ],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+      }
+    );
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }

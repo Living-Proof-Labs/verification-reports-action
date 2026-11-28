@@ -91,14 +91,80 @@ ARTIFACT_LINK = re.compile(
     r"(.*?)</a>",
     re.S,
 )
-# The one Actions address a public page may carry is a CI run's own page. An artifact,
-# a job, an attempt, a workflow file or a query string on it is still refused.
-_RUN_PATH = r"[^/\s'\"<>]+/[^/\s'\"<>]+/actions/runs/[0-9]+(?![0-9A-Za-z_/?#-])"
-RUN_ADDRESS = re.compile(r"https://github\.com/" + _RUN_PATH)
-ACTIONS_ANCHOR = re.compile(
-    r"<a\s[^>]*?href=(['\"])([^'\"<>]*/actions/[^'\"<>]*)\1[^>]*>(.*?)</a>", re.S | re.I
-)
-ACTIONS_URL = re.compile(r"https://github\.com/(?!" + _RUN_PATH + r")\S*?/actions/\S*", re.I)
+# The one Actions address a public page may carry is a CI run page of this
+# repository: https://github.com/<this owner>/<this repo>/actions/runs/<id>.
+# The address must end after the id (not .zip, ;a=1, :80, a query, a fragment).
+# An artifact, job, attempt, workflow file or another repository is refused.
+_REPO_SEGMENT = r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?"
+_RUN_TAIL = r"/actions/runs/[0-9]+"
+# An address in HTML-escaped text (the reporter's embedded JSON) ends at the entity that
+# closes it. Any other entity, such as &amp; or &#47;, still continues the address.
+_ADDRESS_END = r"(?=$|[\s'\"<>)\],]|&(?:quot|#x27|#39|lt|gt);|\.(?![A-Za-z0-9]))"
+
+
+def _has_caller(repository: str | set[str] | None) -> bool:
+    if isinstance(repository, set):
+        return bool(repository)
+    return bool(repository)
+
+
+def _run_body(repository: str | set[str] | None = None) -> str:
+    if isinstance(repository, set):
+        repo = "(?:" + "|".join(re.escape(item) for item in sorted(repository)) + ")"
+    else:
+        repo = re.escape(repository or "")
+    return f"{repo}{_RUN_TAIL}"
+
+
+def run_address_re(repository: str | set[str] | None = None) -> re.Pattern[str]:
+    # Fail closed: with no caller, no run address is allowed.
+    if not _has_caller(repository):
+        return re.compile(r"(?!)")
+    return re.compile(r"https://github\.com/" + _run_body(repository) + _ADDRESS_END)
+
+
+def actions_url_re(repository: str | set[str] | None = None) -> re.Pattern[str]:
+    # The repository in the negative lookahead is matched exactly (case-sensitive).
+    # Host and "/actions/" stay case-insensitive, so a case variant of this
+    # repository is stripped like any other non-own run address.
+    if not _has_caller(repository):
+        return re.compile(r"https://github\.com/\S*?/actions/\S*", re.I)
+    return re.compile(
+        r"(?i:https://github\.com/)(?!"
+        + _run_body(repository)
+        + _ADDRESS_END
+        + r")(?i:\S*?/actions/\S*)"
+    )
+
+
+def is_run_address(url: str, repository: str | set[str] | None = None) -> bool:
+    if not _has_caller(repository) or not isinstance(url, str):
+        return False
+    return re.fullmatch(r"https://github\.com/" + _run_body(repository), url) is not None
+
+
+RUN_ADDRESS = run_address_re()
+ACTIONS_ANCHOR = re.compile(r"<a\s[^>]*?href=(['\"])([^'\"<>]*)\1[^>]*>(.*?)</a>", re.S | re.I)
+
+
+def _unfold(text: str) -> str:
+    """Decode HTML entities and percent-encoding so an encoded /actions/ is visible."""
+    previous = None
+    current = text
+    for _ in range(8):
+        if current == previous:
+            return current
+        previous = current
+        current = html.unescape(current)
+        current = urllib.parse.unquote(current)
+    return current
+
+
+def href_mentions_actions(href: str) -> bool:
+    return "/actions/" in _unfold(href).lower()
+
+
+ACTIONS_URL = actions_url_re()
 EVIDENCE_ANCHOR = re.compile(
     r"<a\s[^>]*?href=(['\"])(evidence/[^'\"<>]+)\1[^>]*>(.*?)</a>", re.S | re.I
 )
@@ -1108,40 +1174,75 @@ def display_label(label: str, trial: bool) -> str:
     return label
 
 
-def mentions_actions(text: str) -> bool:
-    """True for any /actions/ address other than a CI run's own page."""
-    return "/actions/" in RUN_ADDRESS.sub("", text).lower()
-
-
-def html_is_dirty(text: str) -> bool:
-    return ARTIFACT_WORD.search(text) is not None or mentions_actions(text)
-
-
-def _is_actions_url(value: object) -> bool:
-    return isinstance(value, str) and (
-        (mentions_actions(value) and RUN_ADDRESS.fullmatch(value) is None)
-        or ARTIFACT_WORD.search(value) is not None
+def caller_repository(record: dict) -> str | None:
+    """The repository named by a well-formed run.url, or None when it is missing."""
+    url = (record.get("run") or {}).get("url") if isinstance(record.get("run"), dict) else None
+    if not isinstance(url, str):
+        return None
+    match = re.fullmatch(
+        r"https://github\.com/(" + _REPO_SEGMENT + r"/" + _REPO_SEGMENT + r")/actions/runs/[0-9]+",
+        url,
     )
+    return match.group(1) if match else None
 
 
-def strip_actions_links(report: dict) -> bool:
+def run_url_problem(relative: str, record: object, repository: str | None) -> str | None:
+    """A run.json must carry a run.url that is this caller repository's own run."""
+    url = None
+    if isinstance(record, dict) and isinstance(record.get("run"), dict):
+        url = record["run"].get("url")
+    if isinstance(url, str) and is_run_address(url, repository):
+        return None
+    if url is None:
+        return f"{relative} run.url is missing"
+    return f"{relative} run.url is not this repository's run"
+
+
+def mentions_actions(text: str, repository: str | set[str] | None = None) -> bool:
+    """True for any /actions/ address other than an allowed CI run page."""
+    if "/actions/" in run_address_re(repository).sub("", text).lower():
+        return True
+    for match in ACTIONS_ANCHOR.finditer(text):
+        href = match.group(2)
+        if is_run_address(href, repository):
+            continue
+        if href_mentions_actions(href):
+            return True
+    return False
+
+
+def html_is_dirty(text: str, repository: str | set[str] | None = None) -> bool:
+    return ARTIFACT_WORD.search(text) is not None or mentions_actions(text, repository)
+
+
+def _is_actions_url(value: object, repository: str | set[str] | None = None) -> bool:
+    if not isinstance(value, str):
+        return False
+    if ARTIFACT_WORD.search(value):
+        return True
+    return mentions_actions(value, repository) and not is_run_address(value, repository)
+
+
+def strip_actions_links(report: dict, repository: str | set[str] | None = None) -> bool:
     links = report.get("evidence_links")
     if not isinstance(links, dict):
         return False
     changed = False
-    if _is_actions_url(links.get("run")):
+    if _is_actions_url(links.get("run"), repository):
         links.pop("run", None)
         changed = True
     entries = links.get("links")
     if isinstance(entries, list):
         for entry in entries:
-            if isinstance(entry, dict) and _is_actions_url(entry.get("url")):
+            if isinstance(entry, dict) and _is_actions_url(entry.get("url"), repository):
                 entry.pop("url", None)
                 changed = True
     return changed
 
 
-def publish_evidence_links(report: dict, links: dict) -> bool:
+def publish_evidence_links(
+    report: dict, links: dict, repository: str | set[str] | None = None
+) -> bool:
     stored = report.get("evidence_links")
     if not isinstance(stored, dict) and not links.get("links"):
         return False
@@ -1153,11 +1254,11 @@ def publish_evidence_links(report: dict, links: dict) -> bool:
             if isinstance(entry, dict)
             and isinstance(entry.get("url"), str)
             and entry["url"].startswith("https://")
-            and not _is_actions_url(entry["url"])
+            and not _is_actions_url(entry["url"], repository)
         ]
     public = {"links": [dict(entry) for entry in links.get("links", [])] + kept}
     run = stored.get("run") if isinstance(stored, dict) else None
-    if isinstance(run, str) and RUN_ADDRESS.fullmatch(run):
+    if isinstance(run, str) and is_run_address(run, repository):
         public = {"run": run, **public}
     if public == stored:
         return False
@@ -1165,13 +1266,17 @@ def publish_evidence_links(report: dict, links: dict) -> bool:
     return True
 
 
-def _unwrap_actions_anchor(match: re.Match) -> str:
-    return match.group(0) if RUN_ADDRESS.fullmatch(match.group(2)) else match.group(3)
+def strip_actions_text(text: str, repository: str | set[str] | None = None) -> str:
+    def unwrap(match: re.Match) -> str:
+        href = match.group(2)
+        if is_run_address(href, repository):
+            return match.group(0)
+        if href_mentions_actions(href) or "/actions/" in href.lower():
+            return match.group(3)
+        return match.group(0)
 
-
-def strip_actions_text(text: str) -> str:
-    text = ACTIONS_ANCHOR.sub(_unwrap_actions_anchor, text)
-    text = ACTIONS_URL.sub("", text)
+    text = ACTIONS_ANCHOR.sub(unwrap, text)
+    text = actions_url_re(repository).sub("", text)
     return ARTIFACT_WORD.sub("", text)
 
 
@@ -1212,6 +1317,7 @@ def publish_report_files(
     *,
     expired: bool = False,
     days: int = DEFAULT_RETENTION_DAYS,
+    repository: str | set[str] | None = None,
 ) -> None:
     parked = folder / ORIGINAL_HTML
     if parked.is_file():
@@ -1219,10 +1325,10 @@ def publish_report_files(
     report_path = folder / "report.json"
     if report_path.is_file():
         report = read_report(report_path)
-        if isinstance(report, dict) and strip_actions_links(report):
+        if isinstance(report, dict) and strip_actions_links(report, repository=repository):
             report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if html_text:
-        cleaned_html = strip_actions_text(html_text)
+        cleaned_html = strip_actions_text(html_text, repository=repository)
         if expired:
             cleaned_html = scrub_expired_evidence_html(cleaned_html, days)
         cleaned_html = unlink_unpublished_evidence(cleaned_html, folder)
@@ -1233,7 +1339,7 @@ def publish_report_files(
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
-        cleaned = strip_actions_text(text)
+        cleaned = strip_actions_text(text, repository=repository)
         if cleaned != text:
             path.write_text(cleaned, encoding="utf-8")
     write_published_checksums(folder)
@@ -1285,7 +1391,15 @@ def scrub_expired_evidence_html(text: str, days: int) -> str:
     return text
 
 
-def scrub_reporter_html(text: str, record: dict, *, trial: bool, expired: bool, days: int) -> str:
+def scrub_reporter_html(
+    text: str,
+    record: dict,
+    *,
+    trial: bool,
+    expired: bool,
+    days: int,
+    repository: str | None = None,
+) -> str:
     by_id = {
         str(entry["artifact"]["id"]): entry
         for entry in record.get("evidence") or []
@@ -1309,20 +1423,31 @@ def scrub_reporter_html(text: str, record: dict, *, trial: bool, expired: bool, 
         return html.escape(label)
 
     def unwrap(match: re.Match) -> str:
-        if RUN_ADDRESS.fullmatch(match.group(2)):
+        href = match.group(2)
+        if is_run_address(href, repository):
             return match.group(0)
-        return html.escape(shown(match.group(3)))
+        if href_mentions_actions(href) or "/actions/" in href.lower():
+            return html.escape(shown(match.group(3)))
+        return match.group(0)
 
     text = ARTIFACT_LINK.sub(replace, text)
     text = ACTIONS_ANCHOR.sub(unwrap, text)
-    text = ACTIONS_URL.sub("", text)
+    text = actions_url_re(repository).sub("", text)
     text = ARTIFACT_WORD.sub("", text)
     if expired:
         text = scrub_expired_evidence_html(text, days)
     return text
 
 
-def publish_run_page(folder: Path, record: dict, *, now: str, days: int, trial: bool) -> None:
+def publish_run_page(
+    folder: Path,
+    record: dict,
+    *,
+    now: str,
+    days: int,
+    trial: bool,
+    repository: str | None = None,
+) -> None:
     html_text = reporter_html(folder)
     created = (record.get("run") or {}).get("created", "")
     expired = bool(now) and bool(created) and evidence_expired(created, now, days)
@@ -1335,13 +1460,19 @@ def publish_run_page(folder: Path, record: dict, *, now: str, days: int, trial: 
     report_path = folder / "report.json"
     report = read_report(report_path)
     if isinstance(report, dict) and (
-        strip_actions_links(report) | publish_evidence_links(report, links)
+        strip_actions_links(report, repository=repository)
+        | publish_evidence_links(report, links, repository=repository)
     ):
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     # The page is the Reporter's HTML. This action adds no card.
     html_text_for_page = html_text
     public = scrub_reporter_html(
-        html_text_for_page, record, trial=trial, expired=expired, days=days
+        html_text_for_page,
+        record,
+        trial=trial,
+        expired=expired,
+        days=days,
+        repository=repository,
     )
     public = unlink_unpublished_evidence(public, folder)
     public = with_site_nav(
@@ -1352,12 +1483,12 @@ def publish_run_page(folder: Path, record: dict, *, now: str, days: int, trial: 
     public = with_spec_provenance(public, record, report)
     # Checked after every rewrite, so deleting a word cannot assemble new markup.
     public = checked_report_html(public, str(folder / "index.html"))
-    if html_is_dirty(public):
+    if html_is_dirty(public, repository=repository):
         raise SiteError(
             f"{folder / 'index.html'}: public page still names an artifact or links to /actions/"
         )
     (folder / "index.html").write_text(public, encoding="utf-8")
-    publish_report_files(folder, html_text, expired=expired, days=days)
+    publish_report_files(folder, html_text, expired=expired, days=days, repository=repository)
 
 
 _TEXT_SUFFIXES = {
@@ -1425,10 +1556,21 @@ def _wording_text(path: Path, text: str) -> str:
     return json.dumps(document)
 
 
-def public_page_problems(reports_dir: Path) -> list[str]:
+def public_page_problems(reports_dir: Path, repository: str | None = None) -> list[str]:
+    """Pages may link only this caller repository's run URLs; run.url must match it."""
     problems = []
     if not reports_dir.is_dir():
         return problems
+    for path in sorted(reports_dir.rglob("run.json")):
+        if not path.is_file() or path.name != "run.json":
+            continue
+        relative = path.relative_to(reports_dir).as_posix()
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if issue := run_url_problem(relative, record, repository):
+            problems.append(issue)
     for path in sorted(reports_dir.rglob("*")):
         if not published_text(path):
             continue
@@ -1436,7 +1578,7 @@ def public_page_problems(reports_dir: Path) -> list[str]:
         relative = path.relative_to(reports_dir).as_posix()
         if ARTIFACT_WORD.search(_wording_text(path, text)):
             problems.append(f"{relative} mentions an artifact")
-        if mentions_actions(text):
+        if mentions_actions(text, repository=repository):
             problems.append(f"{relative} links to /actions/")
     return problems
 
@@ -1512,6 +1654,7 @@ def render(
     now: str = "",
     days: int = DEFAULT_RETENTION_DAYS,
     publish_folders: set[Path] | None = None,
+    repository: str | None = None,
 ) -> dict[tuple[str, str], list[dict]]:
     validate_retention_days(days)
     _, pruned_folders = prune_expired_evidence(reports_dir, now, days)
@@ -1552,6 +1695,7 @@ def render(
                     now=now,
                     days=days,
                     trial=trials[record["folder"]],
+                    repository=repository,
                 )
             else:
                 recheck_restored_run(run_folder)
@@ -1572,6 +1716,7 @@ def build(
     allow_replace_run_id: str | None = None,
     git_dir: Path | None = None,
     exclude_runs: Iterable[str] = (),
+    repository: str | None = None,
 ) -> list[Path]:
     validate_retention_days(days)
     excluded = tuple(dict.fromkeys(validate_exclude_run_id(entry) for entry in exclude_runs))
@@ -1637,8 +1782,9 @@ def build(
         now=effective_now,
         days=days,
         publish_folders=set(added_folders),
+        repository=repository,
     )
-    if problems := public_page_problems(reports_dir):
+    if problems := public_page_problems(reports_dir, repository=repository):
         raise SiteError(
             "published pages contain Actions links or artifact wording: " + ", ".join(problems)
         )
@@ -1705,6 +1851,11 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="restored run folder name to exclude before rendering",
     )
+    b.add_argument(
+        "--repository",
+        default=os.environ.get("GITHUB_REPOSITORY"),
+        help="caller repository (owner/name) whose CI run pages may be linked",
+    )
 
     args = parser.parse_args(argv)
     try:
@@ -1731,6 +1882,7 @@ def main(argv: list[str] | None = None) -> int:
                 allow_replace_run_id=args.allow_replace_run_id or None,
                 git_dir=args.git_dir,
                 exclude_runs=args.exclude_run,
+                repository=args.repository or None,
             )
             marker = read_json_object(args.reports_dir / MARKER)
             for folder in added:
