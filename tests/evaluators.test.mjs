@@ -261,6 +261,18 @@ test('pins name capability-verifier v3.1.3 and the reporter v3.17.0', () => {
   assert.equal(lock.releases.verifier.tag, 'v3.1.3');
 });
 
+test('the documented capability-verifier pin is the pin the workflows use', () => {
+  const provenance = readFileSync(new URL('../docs/provenance.md', import.meta.url), 'utf8');
+  const decision = readFileSync(
+    new URL('../docs/decisions/0001-composite-vs-reusable-workflow.md', import.meta.url),
+    'utf8'
+  );
+  for (const [name, text] of [['docs/provenance.md', provenance], ['the ADR', decision]]) {
+    assert.ok(text.includes(VERIFIER_WORKFLOW_SHA), `${name} names ${VERIFIER_WORKFLOW_SHA}`);
+    assert.ok(text.includes(`\`${VERIFIER_WORKFLOW_TAG}\``), `${name} names ${VERIFIER_WORKFLOW_TAG}`);
+  }
+});
+
 test('a multiline plan output uses the github delimiter form', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'vra-output-'));
   try {

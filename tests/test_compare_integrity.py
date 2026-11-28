@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import json
 
-from compare_integrity import compare_scenario, different, scenario_view, view
+import pytest
+
+from compare_integrity import compare_scenario, different, main, scenario_view, view
 
 
 def _document(percentage, finding, started="2026-11-27T00:00:00Z", version="1.9.0"):
@@ -104,3 +106,23 @@ def test_a_report_with_no_scenario_result_is_a_difference(tmp_path):
     report = _report()
     report["source_bundle"]["results"][0]["evaluator_results"] = []
     assert _compare(tmp_path, report) == 1
+
+
+def test_other_evaluators_results_are_not_part_of_the_scenario_view():
+    report = _report()
+    integrity = _document(100, {"id": "finding", "summary": "ok"})
+    health = {
+        "format": "livingproof-evaluator-result/1.1.0",
+        "evaluator": {"id": "example-health", "kind": "advisory", "version": "1.2.0"},
+    }
+    report["source_bundle"]["results"][0]["evaluator_results"] += [integrity, health]
+    assert scenario_view(report) == scenario_view(_report())
+
+
+def test_verdicts_and_report_are_used_together(tmp_path):
+    path = tmp_path / "x.json"
+    path.write_text("{}", encoding="utf-8")
+    for argv in (["--verdicts", str(path)], ["--report", str(path)]):
+        with pytest.raises(SystemExit) as raised:
+            main(argv)
+        assert raised.value.code == 2

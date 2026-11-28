@@ -1377,6 +1377,13 @@ test('every lock evaluators entry is ignored, the Scenario one too', async () =>
   assert.match(plan, /if \(notice\) console\.error\(notice\)/);
 });
 
+test('a lock with no evaluators entry gets no ignored-entry notice', () => {
+  assert.equal(ignoredEvaluatorNotice({}), null);
+  assert.equal(ignoredEvaluatorNotice({ evaluators: {} }), null);
+  assert.equal(ignoredEvaluatorNotice({ evaluators: [] }), null);
+  assert.equal(ignoredEvaluatorNotice(null), null);
+});
+
 test('a world sha256 that differs from the released world file is refused', async () => {
   const lock = sampleLock();
   lock.world.sha256 = 'ff'.repeat(32);
