@@ -14,7 +14,6 @@
       "result_id": "stock-seed-01",
       "trial_id": "stock-seed-01",
       "evaluator": "livingproof-scenario",
-      "version": "1.5.3",
       "steps": [
         {
           "id": "hallway-exit-reached",

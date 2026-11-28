@@ -12,10 +12,7 @@ import { checkPin, collectPins, resolvedTrialInputs } from '../src/provenance.mj
 
 const OTHER = '1111111111111111111111111111111111111111';
 const RELEASE = JSON.parse(
-  readFileSync(new URL('./fixtures/releases/capability-verifier-v2.14.0.json', import.meta.url), 'utf8')
-);
-const EVALUATOR_RELEASE = JSON.parse(
-  readFileSync(new URL('./fixtures/releases/evaluator-scenario-v1.5.3.json', import.meta.url), 'utf8')
+  readFileSync(new URL('./fixtures/releases/capability-verifier-v3.1.3.json', import.meta.url), 'utf8')
 );
 
 function realLock(id = 'unitree-g1-stock-mujoco-corner-left') {
@@ -33,7 +30,6 @@ function dropPassedFields(lock) {
   delete copy.releases.verifier.digest;
   delete copy.releases.reporter.image;
   delete copy.releases.reporter.digest;
-  delete copy.evaluators['livingproof-evaluator-scenario'].commit;
   return copy;
 }
 
@@ -111,7 +107,6 @@ test('the pinned verifier release fixture is the commit and hallway digest the w
   assert.equal(RELEASE.tagCommit, VERIFIER_WORKFLOW_SHA);
   assert.equal(RELEASE.tag, VERIFIER_WORKFLOW_TAG);
   assert.equal(imageDigestFromBody(RELEASE.body, RELEASE.image), RELEASE.digest);
-  assert.equal(EVALUATOR_RELEASE.tagCommit, 'ca9d337a771269d07feec94c99f199bef7fca808');
 });
 
 test('each passed field on the real unitree lock is refused even when the value matches the release', () => {
@@ -122,25 +117,13 @@ test('each passed field on the real unitree lock is refused even when the value 
     ['releases.verifier.digest', () => published.releases.verifier.digest, /releases\.verifier\.digest is refused/],
     ['releases.reporter.image', () => published.releases.reporter.image, /releases\.reporter\.image is refused/],
     ['releases.reporter.digest', () => published.releases.reporter.digest, /releases\.reporter\.digest is refused/],
-    [
-      'evaluators.livingproof-evaluator-scenario.commit',
-      () => published.evaluators['livingproof-evaluator-scenario'].commit,
-      /evaluators\.livingproof-evaluator-scenario\.commit is refused/,
-    ],
   ];
   for (const [label, value, pattern] of cases) {
     const lock = dropPassedFields(published);
     lock.releases.verifier.tag = VERIFIER_WORKFLOW_TAG;
-    const [head, ...rest] = label.split('.');
-    let cursor = lock;
-    if (head === 'evaluators') {
-      cursor = lock.evaluators['livingproof-evaluator-scenario'];
-      cursor.commit = value();
-    } else {
-      const field = rest.at(-1);
-      cursor = lock.releases[rest[0]];
-      cursor[field] = value();
-    }
+    const [, ...rest] = label.split('.');
+    const field = rest.at(-1);
+    lock.releases[rest[0]][field] = value();
     assert.throws(() => collectPins(item(lock)), pattern, label);
   }
 });
@@ -158,22 +141,21 @@ test('a one-line verifier tag edit on the real lock passes the pinned commit and
     inputs.reporter_image,
     `ghcr.io/living-proof-labs/livingproof-capability-report:3.15.4@${reporter.digest}`
   );
-  assert.equal(inputs.evaluator_commit, EVALUATOR_RELEASE.tagCommit);
+  assert.deepEqual(Object.keys(inputs).sort(), ['reporter_image', 'verifier_commit', 'verifier_image']);
   assert.equal(lock.releases.runner.commit, realLock().releases.runner.commit);
 });
 
-test('a one-line scenario-evaluator tag edit resolves the real v1.5.3 commit', () => {
+test('the Scenario lock entry is not a pin: its tag and commit change nothing the plan passes', () => {
   const lock = dropPassedFields(realLock());
   lock.releases.verifier.tag = VERIFIER_WORKFLOW_TAG;
-  lock.evaluators['livingproof-evaluator-scenario'].tag = 'v1.5.2';
-  const before = passReal(lock, (pin, evidence) => {
-    if (pin.name !== 'livingproof-evaluator-scenario') return;
-    evidence.tagCommit = OTHER;
-  });
-  assert.equal(resolvedTrialInputs(before).evaluator_commit, OTHER);
-  lock.evaluators['livingproof-evaluator-scenario'].tag = EVALUATOR_RELEASE.tag;
-  const after = passReal(lock);
-  assert.equal(resolvedTrialInputs(after).evaluator_commit, EVALUATOR_RELEASE.tagCommit);
+  const baseline = resolvedTrialInputs(passReal(lock));
+  lock.evaluators['livingproof-evaluator-scenario'].tag = 'v0.0.1';
+  lock.evaluators['livingproof-evaluator-scenario'].commit = OTHER;
+  const records = passReal(lock);
+  assert.equal(records.some((record) => record.name === 'livingproof-evaluator-scenario'), false);
+  assert.deepEqual(resolvedTrialInputs(records), baseline);
+  delete lock.evaluators['livingproof-evaluator-scenario'];
+  assert.deepEqual(resolvedTrialInputs(passReal(lock)), baseline);
 });
 
 test('a runner, specs, or world tag edit that leaves the real commit and hashes is refused', () => {
@@ -274,11 +256,11 @@ test('a reporter commit that disagrees with the real tag is refused, and an extr
 
   const extra = dropPassedFields(realLock());
   extra.releases.verifier.tag = VERIFIER_WORKFLOW_TAG;
-  const key = Object.keys(extra.evaluators).find((name) => name !== 'livingproof-evaluator-scenario');
-  extra.evaluators[key].commit = OTHER;
+  for (const key of Object.keys(extra.evaluators)) extra.evaluators[key].commit = OTHER;
   const records = passReal(extra);
-  assert.equal(records.some((record) => record.name === key), false);
-  assert.equal(records.some((record) => record.name === 'livingproof-evaluator-scenario'), true);
+  for (const key of Object.keys(extra.evaluators)) {
+    assert.equal(records.some((record) => record.name === key), false, key);
+  }
 });
 
 test('resolved trial inputs reject a commit or image ref capability-verifier would not accept', () => {
@@ -287,10 +269,6 @@ test('resolved trial inputs reject a commit or image ref capability-verifier wou
     record.name === 'capability-verifier' ? { ...record, commit: 'abc' } : record
   );
   assert.throws(() => resolvedTrialInputs(brokenCommit), /verifier-commit is not a resolved commit/);
-  const brokenEvaluator = records.map((record) =>
-    record.name === 'livingproof-evaluator-scenario' ? { ...record, commit: 'abc' } : record
-  );
-  assert.throws(() => resolvedTrialInputs(brokenEvaluator), /evaluator-commit is not a resolved commit/);
   const brokenImage = records.map((record) =>
     record.name === 'capability-verifier' ? { ...record, digest: 'sha256:zzzz' } : record
   );
@@ -321,7 +299,10 @@ test('a one-line verifier tag edit is what the plan passes, and the lock file is
         GITHUB_REPOSITORY: 'Example/robot',
         GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567',
         INPUT_DEFINITIONS: 'verifications/*.toml',
-        INPUT_EVALUATORS: 'Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json',
+        INPUT_EVALUATORS: [
+          'Living-Proof-Labs/livingproof-evaluator-scenario@v1.6.0/livingproof-evaluator.json',
+          'Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json',
+        ].join('\n'),
         INPUT_PLAN_PATH: path.join(root, 'plan.json'),
       },
       root,
@@ -341,8 +322,10 @@ test('a one-line verifier tag edit is what the plan passes, and the lock file is
     assert.equal(scenario[0].verifier_image, `${RELEASE.image}:${RELEASE.tag.slice(1)}@${RELEASE.digest}`);
     assert.equal(planned.outputs.evaluators_run, 'true');
     assert.match(planned.outputs.evaluators, /@v1\.9\.0\//);
-    assert.equal(planned.plan.evaluators.lines.length, 1);
-    assert.equal(scenario[0].evaluator_commit, EVALUATOR_RELEASE.tagCommit);
+    assert.match(planned.outputs.evaluators, /livingproof-evaluator-scenario@v1\.6\.0\/livingproof-evaluator\.json/);
+    assert.equal(planned.plan.evaluators.lines.length, 2);
+    assert.equal('evaluator_commit' in scenario[0], false);
+    assert.equal(planned.plan.definitions[0].provenance.some((record) => /scenario/.test(record.name)), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -450,11 +433,6 @@ test('null is refused for each dropped lock field', () => {
     ['releases.verifier.digest', (lock) => { lock.releases.verifier.digest = null; }, /releases\.verifier\.digest is refused/],
     ['releases.reporter.image', (lock) => { lock.releases.reporter.image = null; }, /releases\.reporter\.image is refused/],
     ['releases.reporter.digest', (lock) => { lock.releases.reporter.digest = null; }, /releases\.reporter\.digest is refused/],
-    [
-      'evaluators.livingproof-evaluator-scenario.commit',
-      (lock) => { lock.evaluators['livingproof-evaluator-scenario'].commit = null; },
-      /evaluators\.livingproof-evaluator-scenario\.commit is refused/,
-    ],
   ];
   for (const [label, set, pattern] of fields) {
     const lock = dropPassedFields(realLock());
@@ -488,7 +466,6 @@ function trialRecords() {
   return [
     { name: 'capability-verifier', tag: 'v2.12.5', commit: 'a'.repeat(40), digest: `sha256:${'ab'.repeat(32)}` },
     { name: 'livingproof-capability-report', tag: 'v3.15.4', commit: 'b'.repeat(40), digest: `sha256:${'cd'.repeat(32)}` },
-    { name: 'livingproof-evaluator-scenario', tag: 'v1.5.3', commit: 'c'.repeat(40), digest: `sha256:${'ef'.repeat(32)}` },
   ];
 }
 
@@ -572,10 +549,20 @@ test('a malformed sha256 string is refused at every FIELD_FORM.sha256 check', ()
 });
 
 test('resolved trial inputs refuse each missing record on its own', () => {
-  for (const name of ['capability-verifier', 'livingproof-capability-report', 'livingproof-evaluator-scenario']) {
+  for (const name of ['capability-verifier', 'livingproof-capability-report']) {
     const records = trialRecords().filter((record) => record.name !== name);
     assert.throws(() => resolvedTrialInputs(records), new RegExp(`resolved pins are missing ${name}`));
   }
+});
+
+test('resolved trial inputs do not need, name, or read a Scenario record', () => {
+  const inputs = resolvedTrialInputs(trialRecords());
+  assert.deepEqual(Object.keys(inputs).sort(), ['reporter_image', 'verifier_commit', 'verifier_image']);
+  const withBroken = [
+    ...trialRecords(),
+    { name: 'livingproof-evaluator-scenario', tag: 'v1.5.3', commit: 'abc', digest: 'nope' },
+  ];
+  assert.deepEqual(resolvedTrialInputs(withBroken), inputs);
 });
 
 function respond(status, body) {

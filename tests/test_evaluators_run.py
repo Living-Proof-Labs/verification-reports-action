@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -31,11 +32,11 @@ from evaluators_run import (
     run_downloaded,
 )
 
-PIN = "78c15b635cb558e322be4004b9f6ed9d24e3dc5d"
+PIN = "8af49985a71953475e07102e093e9f7857acb17a"
 
 
 def verifier_src() -> Path:
-    dest = Path("/tmp/capability-verifier")
+    dest = Path(tempfile.gettempdir()) / "capability-verifier"
     marker = dest / "src" / "capability_verifier" / "evaluators.py"
     if not marker.is_file() or PIN not in subprocess.check_output(
         ["git", "-C", str(dest), "rev-parse", "HEAD"], text=True
@@ -200,7 +201,7 @@ def test_no_lines_does_not_call_the_loader_or_add_a_card(tmp_path):
     calls = []
     failed = run_downloaded(
         {
-            "evaluators": {"lines": [], "input": "#"},
+            "evaluators": {"lines": [], "input": ""},
             "definitions": [
                 {
                     "execution": "capability-verifier",
@@ -497,11 +498,12 @@ def test_missing_evaluators_path_returns_zero_and_records_failure(tmp_path, monk
     assert output.read_text(encoding="utf-8") == "failed=true\n"
 
 
-def test_inline_empty_list_is_the_sentinel(tmp_path):
-    declared = resolve_caller_evaluators("[]", tmp_path)
-    assert declared["lines"] == []
-    assert declared["run"] is False
-    assert declared["input"] == "#"
+def test_inline_empty_list_is_no_evaluators_and_an_empty_input(tmp_path):
+    for empty in ("[]", "", "# only a comment\n"):
+        declared = resolve_caller_evaluators(empty, tmp_path)
+        assert declared["lines"] == []
+        assert declared["run"] is False
+        assert declared["input"] == ""
 
 
 def test_empty_input_does_not_read_an_evaluators_file(tmp_path, monkeypatch):
@@ -512,8 +514,8 @@ def test_empty_input_does_not_read_an_evaluators_file(tmp_path, monkeypatch):
     )
     captured = []
 
-    def fake_run(plan, download, out_root, runner=None, render=None):
-        del download, out_root, runner, render
+    def fake_run(plan, download, out_root, runner=None, render=None, select=None):
+        del download, out_root, runner, render, select
         captured.append(plan["evaluators"]["lines"])
         return False
 
@@ -538,8 +540,8 @@ def test_a_path_or_a_list_is_passed_to_the_loader(tmp_path, monkeypatch):
     (caller / "mine.yml").write_text(f"- {line}\n", encoding="utf-8")
     captured = []
 
-    def fake_run(plan, download, out_root, runner=None, render=None):
-        del download, out_root, runner, render
+    def fake_run(plan, download, out_root, runner=None, render=None, select=None):
+        del download, out_root, runner, render, select
         captured.append(plan["evaluators"]["lines"])
         return False
 
@@ -682,6 +684,8 @@ def _render_failure_layout(tmp_path, monkeypatch):
 
     monkeypatch.setattr("evaluators_run.subprocess.run", loader)
     monkeypatch.setattr("evaluators_run.render_with_reporter", render)
+    # The kind filter validates the descriptors over the network; this layout has none.
+    monkeypatch.setattr("evaluators_run.executable_lines", lambda lines: lines)
     return report, bundle_path, output
 
 
@@ -816,15 +820,15 @@ def test_evaluator_timestamps_reach_the_bundle_unchanged(tmp_path):
     assert stamps == {"started_at": started_at, "completed_at": completed_at}
 
 
-API_SHA = "78c15b635cb558e322be4004b9f6ed9d24e3dc5d"
+API_SHA = "8af49985a71953475e07102e093e9f7857acb17a"
 
 
-def test_the_loader_checkout_is_capability_verifier_v3_1_0():
+def test_the_loader_checkout_is_capability_verifier_v3_1_3():
     assert PIN == API_SHA
     root = Path(__file__).resolve().parents[1]
     for relative in (".github/workflows/report.yml", ".github/workflows/verify.yml"):
         text = (root / relative).read_text(encoding="utf-8")
-        assert f"ref: {API_SHA} # v3.1.0" in text
+        assert f"ref: {API_SHA} # v3.1.3" in text
     checkout = verifier_src().parent
     head = subprocess.check_output(
         ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True

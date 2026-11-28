@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from compare_integrity import scenario_view
 from test_evaluators_run import verifier_src
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,62 +29,6 @@ PUBLISHED = (
 @pytest.fixture(scope="module", autouse=True)
 def _loader_import_path():
     verifier_src()
-
-
-def scenario_view(report: dict) -> dict:
-    bundle = report["source_bundle"]
-    assessment = bundle["assessment"]
-    runs = [item for item in assessment.get("runs") or [] if isinstance(item, dict)]
-    decisions = [item for item in assessment.get("decisions") or [] if isinstance(item, dict)]
-    scenarios = []
-    for result in bundle.get("results") or []:
-        if not isinstance(result, dict):
-            continue
-        for document in result.get("evaluator_results") or []:
-            if not isinstance(document, dict):
-                continue
-            scenario = (
-                document.get("scenario") if isinstance(document.get("scenario"), dict) else {}
-            )
-            steps = scenario.get("steps")
-            if not isinstance(steps, list):
-                continue
-            evaluator = (
-                document.get("evaluator") if isinstance(document.get("evaluator"), dict) else {}
-            )
-            scenarios.append(
-                {
-                    "result_id": result.get("id"),
-                    "trial_id": scenario.get("trial_id"),
-                    "evaluator": evaluator.get("id"),
-                    "version": evaluator.get("version"),
-                    "steps": [
-                        {
-                            "id": step.get("id"),
-                            "verdict": step.get("verdict"),
-                            "summary": step.get("summary"),
-                        }
-                        for step in steps
-                        if isinstance(step, dict)
-                    ],
-                }
-            )
-    return {
-        "grades": [
-            item.get("grade") for item in report.get("summaries") or [] if isinstance(item, dict)
-        ],
-        "run_grades": [item.get("grade") for item in runs],
-        "rationales": [item.get("rationale") for item in runs],
-        "decisions": [
-            {
-                "result_id": item.get("result_id"),
-                "status": item.get("status"),
-                "reason": item.get("reason"),
-            }
-            for item in decisions
-        ],
-        "scenarios": scenarios,
-    }
 
 
 def test_g1_grades_fail_and_scenario_verdicts_are_unchanged(tmp_path):
@@ -111,7 +56,7 @@ def test_g1_grades_fail_and_scenario_verdicts_are_unchanged(tmp_path):
             "id": scenario["evaluator"],
             "kind": "scenario",
             "display_name": "Scenario",
-            "version": scenario["version"],
+            "version": "1.6.0",
         },
         "scenario": {"trial_id": scenario["trial_id"], "steps": scenario["steps"]},
     }

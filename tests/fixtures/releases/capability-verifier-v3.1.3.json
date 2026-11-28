@@ -1,0 +1,11 @@
+{
+  "repository": "Living-Proof-Labs/capability-verifier",
+  "tag": "v3.1.3",
+  "target_commitish": "main",
+  "tagCommit": "8af49985a71953475e07102e093e9f7857acb17a",
+  "tagObjectType": "commit",
+  "changelogCommit": "4038796e1aaf93d3d9e068dc05d65bf3fe78d224",
+  "image": "ghcr.io/living-proof-labs/capability-verifier-hallway",
+  "digest": "sha256:5b13d40b72f58eb6f307df1a027d727897733c9f4ed1b837f1cb5365c007e941",
+  "body": "## [3.1.3](https://github.com/Living-Proof-Labs/capability-verifier/compare/v3.1.2...v3.1.3) (2026-11-28)\n\n### fix\n\n* pass the declared scenario branch the catalog fetched into the primary checkout ([4038796](https://github.com/Living-Proof-Labs/capability-verifier/commit/4038796e1aaf93d3d9e068dc05d65bf3fe78d224))\n* pass the declared scenario branch the catalog fetched into the primary checkout ([#274](https://github.com/Living-Proof-Labs/capability-verifier/issues/274)) ([8af4998](https://github.com/Living-Proof-Labs/capability-verifier/commit/8af49985a71953475e07102e093e9f7857acb17a))\n\n### docs\n\n* scenario jobs pass the fetched catalog as --specs-root ([ab8f273](https://github.com/Living-Proof-Labs/capability-verifier/commit/ab8f273047d80fc6ad8fbc32ccea396de3566407))\n\n### test\n\n* declared scenario branch finds the catalog fetched into the primary checkout ([15ab349](https://github.com/Living-Proof-Labs/capability-verifier/commit/15ab349cd7ba0a0a4d7bb9ae7233931ed7a9896b))\n* run the real walk-hallway manifest and the command line through --specs-root ([0741ae4](https://github.com/Living-Proof-Labs/capability-verifier/commit/0741ae49028e4f99b2ae81f1c1c639f84dea8680))\n\n\n## Hallway image (linux/amd64, linux/arm64 index)\n\n`ghcr.io/living-proof-labs/capability-verifier-hallway:3.1.3@sha256:5b13d40b72f58eb6f307df1a027d727897733c9f4ed1b837f1cb5365c007e941`\n"
+}

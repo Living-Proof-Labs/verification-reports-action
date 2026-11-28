@@ -6,23 +6,32 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { VERIFIER_API_SHA, VERIFIER_API_TAG, VERIFIER_WORKFLOW_SHA, VERIFIER_WORKFLOW_TAG } from '../src/definitions.mjs';
-import { EVALUATORS_SENTINEL, evaluatorsDeclaration, readEvaluatorsFile, resolveCallerEvaluators } from '../src/evaluators.mjs';
+import * as evaluators from '../src/evaluators.mjs';
+import { evaluatorsDeclaration, readEvaluatorsFile, resolveCallerEvaluators } from '../src/evaluators.mjs';
 import { writeGithubOutput } from '../src/github-output.mjs';
 import { writePlan } from '../src/plan.mjs';
 
 const ROOT = new URL('..', import.meta.url);
+const SCENARIO_LINE = 'Living-Proof-Labs/livingproof-evaluator-scenario@v1.6.0/livingproof-evaluator.json';
 const LINE = 'Living-Proof-Labs/livingproof-evaluator-run@v1.9.2/livingproof-evaluator.json';
 const HEALTH_LINE = 'Living-Proof-Labs/livingproof-evaluator-health@v1.2.0/livingproof-evaluator.json';
-const LINES = [LINE, HEALTH_LINE];
-const FORBIDDEN = ['livingproof-evaluator-run', 'livingproof_evaluator_run', 'livingproof-run-integrity'];
+const LINES = [SCENARIO_LINE, LINE, HEALTH_LINE];
+const FORBIDDEN = [
+  'livingproof-evaluator-run',
+  'livingproof_evaluator_run',
+  'livingproof-run-integrity',
+  'livingproof-evaluator-scenario',
+  'livingproof_evaluator_scenario',
+  'livingproof-scenario',
+];
 const HEALTH_NAMES = [
   'livingproof-health',
   'livingproof-evaluator-health',
   'livingproof_evaluator_health',
   'health.json',
 ];
-// Scenario names stay in this file for the next slice.
-const SCENARIO_ALLOWLIST = ['src/provenance.mjs'];
+// No action file may name an evaluator. The allowlist is empty.
+const NAME_ALLOWLIST = [];
 
 function walk(relative) {
   const absolute = new URL(relative, ROOT);
@@ -53,11 +62,19 @@ test('evaluators.yml is one line per evaluator and an empty list stays a comment
   const removed = evaluatorsDeclaration(emptied);
   assert.deepEqual(removed.lines, []);
   assert.equal(removed.run, false);
-  assert.equal(removed.input, EVALUATORS_SENTINEL);
-  assert.notEqual(removed.input, '');
-  assert.match(removed.input, /^#/);
-  assert.equal(evaluatorsDeclaration('').input, EVALUATORS_SENTINEL);
-  assert.equal(evaluatorsDeclaration('# only a comment\n').input, EVALUATORS_SENTINEL);
+  assert.equal(removed.input, '');
+  assert.equal(evaluatorsDeclaration('').input, '');
+  assert.equal(evaluatorsDeclaration('# only a comment\n').input, '');
+  assert.equal(evaluatorsDeclaration('# only a comment\n').run, false);
+});
+
+test('an empty declaration is the empty string: capability-verifier v3 reads that as no evaluators', () => {
+  // v3 runs no evaluators for an empty input and refuses a comment-only one.
+  assert.equal('EVALUATORS_SENTINEL' in evaluators, false);
+  const report = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
+  assert.doesNotMatch(report, /comment is passed/);
+  assert.doesNotMatch(readFileSync(new URL('../src/evaluators.mjs', import.meta.url), 'utf8'), /sentinel/i);
+  assert.equal(resolveCallerEvaluators('[]', fileURLToPath(new URL('..', import.meta.url))).input, '');
 });
 
 test('the report workflow passes the plan lines and still allows fifteen minutes', () => {
@@ -102,7 +119,7 @@ test('no evaluators input ignores this repository file', async () => {
   assert.doesNotMatch(planSource, /evaluators\.yml/);
   const absent = resolveCallerEvaluators('', root);
   assert.deepEqual(absent.lines, []);
-  assert.equal(absent.input, EVALUATORS_SENTINEL);
+  assert.equal(absent.input, '');
   assert.equal(absent.run, false);
   const dir = mkdtempSync(path.join(tmpdir(), 'vra-no-evaluators-'));
   try {
@@ -118,7 +135,7 @@ test('no evaluators input ignores this repository file', async () => {
       { async resolve() { throw new Error('pins are not resolved for a fixture plan'); } },
     );
     assert.deepEqual(planned.plan.evaluators.lines, []);
-    assert.equal(planned.outputs.evaluators, EVALUATORS_SENTINEL);
+    assert.equal(planned.outputs.evaluators, '');
     assert.equal(planned.outputs.evaluators_run, 'false');
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -158,6 +175,12 @@ test('advisory off re-runs collect on the same artifacts with non-advisory lines
   assert.match(check, /src\/evaluators_run\.py/);
   assert.match(check, /node src\/collect\.mjs/);
   assert.match(check, /python tools\/compare_integrity\.py/);
+  const verdicts = /python tools\/compare_integrity\.py \\\n\s+--verdicts tests\/fixtures\/g1\/scenario-verdicts\.json \\\n\s+--report (\S+)/g;
+  const compared = [...check.matchAll(verdicts)].map((match) => match[1]);
+  assert.deepEqual(compared, [
+    'artifacts/smoke-report/unitree-g1-stock-mujoco-hallway/stock/report.json',
+    'artifacts/advisory-off/unitree-g1-stock-mujoco-hallway/stock/report.json',
+  ]);
   assert.match(check, /pattern: vra-\*-capability-report-\*/);
   assert.match(check, /pattern: vra-\*-verified-\*/);
   assert.match(check, /pattern: vra-\*-evidence-\*/);
@@ -170,45 +193,84 @@ test('an inline empty list is no evaluators', () => {
   const emptyList = resolveCallerEvaluators('[]', root);
   assert.deepEqual(emptyList.lines, []);
   assert.equal(emptyList.run, false);
-  assert.equal(emptyList.input, EVALUATORS_SENTINEL);
+  assert.equal(emptyList.input, '');
 });
+
+function evaluatorNames(text) {
+  const hits = [...FORBIDDEN, ...HEALTH_NAMES].filter((name) => text.includes(name));
+  if (/\bhealth\b/i.test(text)) hits.push('health');
+  return hits;
+}
 
 test('action code does not name an evaluator', () => {
   const hits = [];
   for (const relative of ['src', 'action.yml', '.github/workflows']) {
     for (const file of walk(relative)) {
+      if (NAME_ALLOWLIST.includes(file)) continue;
       const text = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
-      const names = SCENARIO_ALLOWLIST.includes(file) ? FORBIDDEN : [...FORBIDDEN, ...HEALTH_NAMES];
-      for (const name of names) {
-        if (text.includes(name)) hits.push(`${file}: ${name}`);
-      }
-      if (/\bhealth\b/i.test(text)) hits.push(`${file}: health`);
+      for (const name of evaluatorNames(text)) hits.push(`${file}: ${name}`);
     }
   }
   assert.deepEqual(hits, []);
-  assert.deepEqual(SCENARIO_ALLOWLIST, ['src/provenance.mjs']);
-  const scenario = readFileSync(new URL('../src/provenance.mjs', import.meta.url), 'utf8');
-  assert.match(scenario, /livingproof-evaluator-scenario/);
-  for (const name of FORBIDDEN) assert.equal(scenario.includes(name), false);
-  assert.doesNotMatch(scenario, /\bhealth\b/i);
+  assert.deepEqual(NAME_ALLOWLIST, []);
 });
 
-test('pins name capability-verifier v2.14.0 and the reporter v3.17.0', () => {
+test('the names scan fails when action code names Scenario again', () => {
+  assert.deepEqual(evaluatorNames("const pin = 'livingproof-evaluator-scenario';"), [
+    'livingproof-evaluator-scenario',
+  ]);
+  assert.deepEqual(evaluatorNames('import livingproof_evaluator_scenario'), ['livingproof_evaluator_scenario']);
+  assert.deepEqual(evaluatorNames("id: 'livingproof-scenario'"), ['livingproof-scenario']);
+  assert.deepEqual(evaluatorNames('const pins = [];'), []);
+});
+
+test('removing the Scenario line removes it from what both trial workflows are given', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const raw = readFileSync(new URL('../evaluators.yml', import.meta.url), 'utf8');
+  const withLine = resolveCallerEvaluators(raw, root);
+  assert.equal(withLine.lines.includes(SCENARIO_LINE), true);
+  assert.equal(withLine.input.split('\n').includes(SCENARIO_LINE), true);
+  const without = resolveCallerEvaluators(raw.replace(`- ${SCENARIO_LINE}\n`, ''), root);
+  assert.equal(without.lines.includes(SCENARIO_LINE), false);
+  assert.equal(without.input.includes('livingproof-evaluator-scenario'), false);
+  assert.deepEqual(without.lines, [LINE, HEALTH_LINE]);
+  const report = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
+  const walkBlock = report.slice(report.indexOf('\n  walk-hallway:\n'), report.indexOf('\n  scenario:\n'));
+  const scenarioBlock = report.slice(report.indexOf('\n  scenario:\n'), report.indexOf('\n  collect:\n'));
+  for (const block of [walkBlock, scenarioBlock]) {
+    assert.match(block, /evaluators: \$\{\{ needs\.plan\.outputs\.evaluators \}\}/);
+    assert.doesNotMatch(block, /evaluator-commit/);
+  }
+});
+
+test('pins name capability-verifier v3.1.3 and the reporter v3.17.0', () => {
   const report = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
   const verify = readFileSync(new URL('../.github/workflows/verify.yml', import.meta.url), 'utf8');
   const lock = JSON.parse(readFileSync(new URL('./smoke/g1/unitree-g1-stock-mujoco-hallway.lock.json', import.meta.url), 'utf8'));
-  const sha = 'bd6be5217b52b1348b4dc23613ee06d44bed9519';
+  const sha = '8af49985a71953475e07102e093e9f7857acb17a';
   assert.equal(VERIFIER_WORKFLOW_SHA, sha);
-  assert.equal(VERIFIER_WORKFLOW_TAG, 'v2.14.0');
-  assert.equal(VERIFIER_API_SHA, '78c15b635cb558e322be4004b9f6ed9d24e3dc5d');
-  assert.equal(VERIFIER_API_TAG, 'v3.1.0');
-  assert.match(report, new RegExp(`walk-hallway\\.yml@${sha} # v2\\.14\\.0`));
-  assert.match(report, new RegExp(`scenario\\.yml@${sha} # v2\\.14\\.0`));
-  assert.match(report, new RegExp(`ref: ${VERIFIER_API_SHA} # v3\\.1\\.0`));
-  assert.match(verify, new RegExp(`ref: ${VERIFIER_API_SHA} # v3\\.1\\.0`));
+  assert.equal(VERIFIER_WORKFLOW_TAG, 'v3.1.3');
+  assert.equal(VERIFIER_API_SHA, sha);
+  assert.equal(VERIFIER_API_TAG, 'v3.1.3');
+  assert.match(report, new RegExp(`walk-hallway\\.yml@${sha} # v3\\.1\\.3`));
+  assert.match(report, new RegExp(`scenario\\.yml@${sha} # v3\\.1\\.3`));
+  assert.match(report, new RegExp(`ref: ${VERIFIER_API_SHA} # v3\\.1\\.3`));
+  assert.match(verify, new RegExp(`ref: ${VERIFIER_API_SHA} # v3\\.1\\.3`));
   assert.equal(lock.releases.reporter.tag, 'v3.17.0');
   assert.equal(lock.releases.reporter.commit, '5d6aed964c0eea1094caeec24e797808b2d0c3fb');
-  assert.equal(lock.releases.verifier.tag, 'v2.14.0');
+  assert.equal(lock.releases.verifier.tag, 'v3.1.3');
+});
+
+test('the documented capability-verifier pin is the pin the workflows use', () => {
+  const provenance = readFileSync(new URL('../docs/provenance.md', import.meta.url), 'utf8');
+  const decision = readFileSync(
+    new URL('../docs/decisions/0001-composite-vs-reusable-workflow.md', import.meta.url),
+    'utf8'
+  );
+  for (const [name, text] of [['docs/provenance.md', provenance], ['the ADR', decision]]) {
+    assert.ok(text.includes(VERIFIER_WORKFLOW_SHA), `${name} names ${VERIFIER_WORKFLOW_SHA}`);
+    assert.ok(text.includes(`\`${VERIFIER_WORKFLOW_TAG}\``), `${name} names ${VERIFIER_WORKFLOW_TAG}`);
+  }
 });
 
 test('a multiline plan output uses the github delimiter form', () => {

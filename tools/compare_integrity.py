@@ -9,6 +9,11 @@ the findings.
 
 ``--baseline`` prints a second diff and does not change the exit code. Use it
 for an older evaluator-run result. Differences there are a version change.
+
+``--verdicts SNAPSHOT --report REPORT`` compares the Scenario side of one collected
+``report.json`` with a committed view: the grades, the decisions, and each trial's
+steps with their verdicts and findings. Only the evaluator version stamp is ignored.
+A result placed twice, or not at all, is a difference.
 """
 
 from __future__ import annotations
@@ -116,6 +121,77 @@ def print_view(label: str, document: dict) -> None:
     print(f"percentage: {shown['percentage']}")
     print("findings:")
     print(json.dumps(shown["findings"], indent=2, sort_keys=True))
+
+
+def scenario_view(report: dict) -> dict:
+    """The grade, the decisions and the Scenario steps of one collected report.json."""
+    bundle = report["source_bundle"]
+    assessment = bundle["assessment"]
+    runs = [item for item in assessment.get("runs") or [] if isinstance(item, dict)]
+    decisions = [item for item in assessment.get("decisions") or [] if isinstance(item, dict)]
+    scenarios = []
+    for result in bundle.get("results") or []:
+        if not isinstance(result, dict):
+            continue
+        for document in result.get("evaluator_results") or []:
+            if not isinstance(document, dict):
+                continue
+            scenario = (
+                document.get("scenario") if isinstance(document.get("scenario"), dict) else {}
+            )
+            steps = scenario.get("steps")
+            if not isinstance(steps, list):
+                continue
+            evaluator = (
+                document.get("evaluator") if isinstance(document.get("evaluator"), dict) else {}
+            )
+            scenarios.append(
+                {
+                    "result_id": result.get("id"),
+                    "trial_id": scenario.get("trial_id"),
+                    "evaluator": evaluator.get("id"),
+                    "steps": [
+                        {
+                            "id": step.get("id"),
+                            "verdict": step.get("verdict"),
+                            "summary": step.get("summary"),
+                        }
+                        for step in steps
+                        if isinstance(step, dict)
+                    ],
+                }
+            )
+    return {
+        "grades": [
+            item.get("grade") for item in report.get("summaries") or [] if isinstance(item, dict)
+        ],
+        "run_grades": [item.get("grade") for item in runs],
+        "rationales": [item.get("rationale") for item in runs],
+        "decisions": [
+            {
+                "result_id": item.get("result_id"),
+                "status": item.get("status"),
+                "reason": item.get("reason"),
+            }
+            for item in decisions
+        ],
+        "scenarios": scenarios,
+    }
+
+
+def compare_scenario(report_path: Path, snapshot_path: Path) -> int:
+    """Exit 0 when the report's Scenario view equals the committed one."""
+    found = scenario_view(_load(report_path))
+    expected = _load(snapshot_path)
+    if found == expected:
+        print(f"no difference: {report_path} matches {snapshot_path}")
+        return 0
+    for key in sorted(set(found) | set(expected)):
+        if found.get(key) != expected.get(key):
+            print(f"{key} differs")
+            print(f"  expected: {json.dumps(expected.get(key), sort_keys=True)}")
+            print(f"  found:    {json.dumps(found.get(key), sort_keys=True)}")
+    return 1
 
 
 ADVISORY_CUE = re.compile(r"""eval-cue['"]>Advisory<""")
@@ -250,7 +326,13 @@ def main(argv: list[str] | None = None) -> int:
         "--advisory-lines", type=int, help="advisory cards expected on the on report"
     )
     parser.add_argument("--grades", help="JSON grade map from the on workflow")
+    parser.add_argument("--verdicts", type=Path, help="committed Scenario view to compare with")
+    parser.add_argument("--report", type=Path, help="collected report.json for --verdicts")
     args = parser.parse_args(argv)
+    if args.verdicts is not None or args.report is not None:
+        if args.verdicts is None or args.report is None:
+            parser.error("--verdicts and --report are used together")
+        return compare_scenario(args.report, args.verdicts)
     if args.on is not None or args.off is not None:
         if args.on is None or args.off is None:
             parser.error("--on and --off are used together")
