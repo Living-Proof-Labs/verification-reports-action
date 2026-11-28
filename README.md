@@ -80,7 +80,7 @@ Excerpt from `evaluators.yml`:
 
 ```yaml
 - Living-Proof-Labs/livingproof-evaluator-run@v1.9.2/livingproof-evaluator.json
-- Living-Proof-Labs/livingproof-evaluator-health@v1.2.0/livingproof-evaluator.json
+- Living-Proof-Labs/livingproof-evaluator-health@v1.3.0/livingproof-evaluator.json
 ```
 
 The hallway definition is [`tests/smoke/g1/unitree-g1-stock-mujoco-hallway.toml`](https://github.com/Living-Proof-Labs/verification-reports-action/blob/main/tests/smoke/g1/unitree-g1-stock-mujoco-hallway.toml), with its lock at [`unitree-g1-stock-mujoco-hallway.lock.json`](https://github.com/Living-Proof-Labs/verification-reports-action/blob/main/tests/smoke/g1/unitree-g1-stock-mujoco-hallway.lock.json).
