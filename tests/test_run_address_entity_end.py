@@ -51,3 +51,28 @@ def test_the_embedded_report_json_on_a_real_run_page_keeps_its_run_address(tmp_p
     run = next((tmp_path / "reports").glob("*/*/runs/46110994356"))
     for name in ("index.html", "report.html"):
         assert embedded in (run / name).read_text(encoding="utf-8"), name
+
+
+def test_the_embedded_lossless_report_json_survives_intact(tmp_path: Path):
+    # Vera's manual check of Verify runs 46115314157 and 46118968220: the details
+    # block that holds the HTML-escaped report JSON must be published uncut.
+    fixture = ROOT / "tests/fixtures/reporter/report-v3.17.0-g1-evidence-links.html"
+    text = fixture.read_text(encoding="utf-8")
+    start = text.find("<details class='lossless'>")
+    end = text.find("</details>", start)
+    assert start != -1 and end != -1
+    block = text[start : end + len("</details>")]
+    assert f"&quot;run&quot;: &quot;{RUN}&quot;" in block
+    media = {"video/trial-01-fail.mp4": b"mp4", "mcap/mcap/trial-01.mcap": b"mcap"}
+    _make_run_folder(
+        tmp_path / "in",
+        "hallway",
+        run_id="46110994356",
+        html_override=text,
+        evidence_files=media,
+        caller=OWNER_REPO,
+    )
+    site.build(tmp_path / "reports", tmp_path / "in")
+    run = next((tmp_path / "reports").glob("*/*/runs/46110994356"))
+    for name in ("index.html", "report.html"):
+        assert block in (run / name).read_text(encoding="utf-8"), name
