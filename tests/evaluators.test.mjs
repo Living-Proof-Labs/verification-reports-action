@@ -6,7 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { VERIFIER_API_SHA, VERIFIER_API_TAG, VERIFIER_WORKFLOW_SHA, VERIFIER_WORKFLOW_TAG } from '../src/definitions.mjs';
-import { EVALUATORS_SENTINEL, evaluatorsDeclaration, readEvaluatorsFile, resolveCallerEvaluators } from '../src/evaluators.mjs';
+import * as evaluators from '../src/evaluators.mjs';
+import { evaluatorsDeclaration, readEvaluatorsFile, resolveCallerEvaluators } from '../src/evaluators.mjs';
 import { writeGithubOutput } from '../src/github-output.mjs';
 import { writePlan } from '../src/plan.mjs';
 
@@ -61,11 +62,19 @@ test('evaluators.yml is one line per evaluator and an empty list stays a comment
   const removed = evaluatorsDeclaration(emptied);
   assert.deepEqual(removed.lines, []);
   assert.equal(removed.run, false);
-  assert.equal(removed.input, EVALUATORS_SENTINEL);
-  assert.notEqual(removed.input, '');
-  assert.match(removed.input, /^#/);
-  assert.equal(evaluatorsDeclaration('').input, EVALUATORS_SENTINEL);
-  assert.equal(evaluatorsDeclaration('# only a comment\n').input, EVALUATORS_SENTINEL);
+  assert.equal(removed.input, '');
+  assert.equal(evaluatorsDeclaration('').input, '');
+  assert.equal(evaluatorsDeclaration('# only a comment\n').input, '');
+  assert.equal(evaluatorsDeclaration('# only a comment\n').run, false);
+});
+
+test('an empty declaration is the empty string: capability-verifier v3 reads that as no evaluators', () => {
+  // v3 runs no evaluators for an empty input and refuses a comment-only one.
+  assert.equal('EVALUATORS_SENTINEL' in evaluators, false);
+  const report = readFileSync(new URL('../.github/workflows/report.yml', import.meta.url), 'utf8');
+  assert.doesNotMatch(report, /comment is passed/);
+  assert.doesNotMatch(readFileSync(new URL('../src/evaluators.mjs', import.meta.url), 'utf8'), /sentinel/i);
+  assert.equal(resolveCallerEvaluators('[]', fileURLToPath(new URL('..', import.meta.url))).input, '');
 });
 
 test('the report workflow passes the plan lines and still allows fifteen minutes', () => {
@@ -110,7 +119,7 @@ test('no evaluators input ignores this repository file', async () => {
   assert.doesNotMatch(planSource, /evaluators\.yml/);
   const absent = resolveCallerEvaluators('', root);
   assert.deepEqual(absent.lines, []);
-  assert.equal(absent.input, EVALUATORS_SENTINEL);
+  assert.equal(absent.input, '');
   assert.equal(absent.run, false);
   const dir = mkdtempSync(path.join(tmpdir(), 'vra-no-evaluators-'));
   try {
@@ -126,7 +135,7 @@ test('no evaluators input ignores this repository file', async () => {
       { async resolve() { throw new Error('pins are not resolved for a fixture plan'); } },
     );
     assert.deepEqual(planned.plan.evaluators.lines, []);
-    assert.equal(planned.outputs.evaluators, EVALUATORS_SENTINEL);
+    assert.equal(planned.outputs.evaluators, '');
     assert.equal(planned.outputs.evaluators_run, 'false');
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -184,7 +193,7 @@ test('an inline empty list is no evaluators', () => {
   const emptyList = resolveCallerEvaluators('[]', root);
   assert.deepEqual(emptyList.lines, []);
   assert.equal(emptyList.run, false);
-  assert.equal(emptyList.input, EVALUATORS_SENTINEL);
+  assert.equal(emptyList.input, '');
 });
 
 function evaluatorNames(text) {

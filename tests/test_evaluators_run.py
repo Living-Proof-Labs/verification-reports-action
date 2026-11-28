@@ -201,7 +201,7 @@ def test_no_lines_does_not_call_the_loader_or_add_a_card(tmp_path):
     calls = []
     failed = run_downloaded(
         {
-            "evaluators": {"lines": [], "input": "#"},
+            "evaluators": {"lines": [], "input": ""},
             "definitions": [
                 {
                     "execution": "capability-verifier",
@@ -498,11 +498,12 @@ def test_missing_evaluators_path_returns_zero_and_records_failure(tmp_path, monk
     assert output.read_text(encoding="utf-8") == "failed=true\n"
 
 
-def test_inline_empty_list_is_the_sentinel(tmp_path):
-    declared = resolve_caller_evaluators("[]", tmp_path)
-    assert declared["lines"] == []
-    assert declared["run"] is False
-    assert declared["input"] == "#"
+def test_inline_empty_list_is_no_evaluators_and_an_empty_input(tmp_path):
+    for empty in ("[]", "", "# only a comment\n"):
+        declared = resolve_caller_evaluators(empty, tmp_path)
+        assert declared["lines"] == []
+        assert declared["run"] is False
+        assert declared["input"] == ""
 
 
 def test_empty_input_does_not_read_an_evaluators_file(tmp_path, monkeypatch):
