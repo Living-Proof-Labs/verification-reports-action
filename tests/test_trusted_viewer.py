@@ -16,7 +16,22 @@ def sha(data):
 
 @pytest.fixture
 def case(tmp_path):
-    data = b'{"trials":[]}'
+    data = json.dumps(
+        {
+            "format": "example-recording/1",
+            "trials": [
+                {
+                    "format": "example-recording/1",
+                    "trial": {
+                        "run_id": "recorded-run",
+                        "configuration": "stock",
+                        "index": 1,
+                        "observation_sha256": "a" * 64,
+                    },
+                }
+            ],
+        }
+    ).encode()
     viewer = b"<!doctype html><script>/* reviewed caller code */</script>"
     advisory = {
         "evaluator": {"id": "generic-example"},
@@ -51,6 +66,7 @@ def case(tmp_path):
         "report_sha256": sha(raw),
         "viewer_commit": "b" * 40,
         "viewer_tag": "v1.0.0",
+        "recording_format": "example-recording/1",
         "result_id": "trial-one",
         "run": "recorded-run",
         "system": "robot/stock",
@@ -149,6 +165,9 @@ def test_production_restore_and_reapply(case, tmp_path):
         shutil.copyfile(folder / name, target / name)
     original = (target / "index.html").read_bytes()
     declarations = {relative: (pin, viewer)}
+    from reports_site import write_published_checksums
+
+    write_published_checksums(target)
     apply_declarations(root, declarations)
     published = (target / "index.html").read_bytes()
     sums = (target / "SHA256SUMS").read_bytes()
@@ -247,7 +266,7 @@ def test_dynamic_report_binding(case, mutation):
         (target / "recording.json").write_text("tampered")
     (target / "report.json").write_text(json.dumps(report))
     (folder / "viewer.html").write_bytes(viewer)
-    spec = {k: pin[k] for k in ("viewer_sha256", "viewer_tag", "viewer_commit")}
+    spec = {k: pin[k] for k in ("viewer_sha256", "viewer_tag", "viewer_commit", "recording_format")}
     spec.update(evaluator=identity, viewer_file="viewer.html")
     registry = folder / "viewers.json"
     registry.write_text(json.dumps([spec]))
@@ -260,9 +279,106 @@ def test_dynamic_report_binding(case, mutation):
     declarations = derive_declarations(root, viewers)
     assert bool(declarations) == (mutation == "valid")
     before = (target / "report.json").read_bytes()
+    from reports_site import write_published_checksums
+
+    write_published_checksums(target)
     apply_declarations(root, declarations)
     for _ in range(2):
         prepare_history(root, derive_declarations(root, viewers))
         apply_declarations(root, derive_declarations(root, viewers))
     assert (target / "report.json").read_bytes() == before
     assert ("iframe" in (target / "index.html").read_text()) == (mutation == "valid")
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["format", "empty", "duplicate", "run_id", "configuration", "index", "observation_sha256"],
+)
+@pytest.mark.parametrize("restored", [False, True])
+def test_hash_matching_recording_requires_exact_trial(case, change, restored):
+    folder, pin, viewer = case
+    if restored:
+        install(folder, pin, viewer)
+    data = json.loads((folder / "recording.json").read_bytes())
+    if change == "format":
+        data["format"] = "other/1"
+    elif change == "empty":
+        data["trials"] = []
+    elif change == "duplicate":
+        data["trials"] *= 2
+    else:
+        data["trials"][0]["trial"][change] = 2 if change == "index" else "different"
+    raw = json.dumps(data).encode()
+    (folder / "recording.json").write_bytes(raw)
+    report = json.loads((folder / "report.json").read_bytes())
+    report["advisories"][0]["advisory"]["details_file"]["sha256"] = sha(raw)
+    report_raw = json.dumps(report).encode()
+    (folder / "report.json").write_bytes(report_raw)
+    pin["report_sha256"] = sha(report_raw)
+    before = {p.relative_to(folder): p.read_bytes() for p in folder.rglob("*") if p.is_file()}
+    with pytest.raises(SiteError, match="Recording"):
+        if restored:
+            revalidate(folder, pin)
+        else:
+            install(folder, pin, viewer)
+    assert before == {
+        p.relative_to(folder): p.read_bytes() for p in folder.rglob("*") if p.is_file()
+    }
+
+
+def test_first_decoration_refuses_modified_unrelated_evidence(case):
+    import shutil
+
+    from reports_site import write_published_checksums
+    from trusted_viewer import apply_declarations
+
+    folder, pin, viewer = case
+    root = folder / "reports"
+    target = root / "robot/hallway/runs/old"
+    target.mkdir(parents=True)
+    for name in ("report.json", "index.html", "recording.json"):
+        shutil.copyfile(folder / name, target / name)
+    (target / "unrelated.json").write_text("original")
+    write_published_checksums(target)
+    (target / "unrelated.json").write_text("modified")
+    before = {p.relative_to(target): p.read_bytes() for p in target.rglob("*") if p.is_file()}
+    with pytest.raises(SiteError, match="digest mismatch"):
+        apply_declarations(root, {"robot/hallway/runs/old": (pin, viewer)})
+    assert before == {
+        p.relative_to(target): p.read_bytes() for p in target.rglob("*") if p.is_file()
+    }
+
+
+def test_site_decorates_only_produced_or_previously_decorated_runs(tmp_path, monkeypatch):
+    import site_action
+    import trusted_viewer
+
+    root = tmp_path / "output"
+    old = root / "robot/hallway/runs/old"
+    old.mkdir(parents=True)
+    produced = root / "robot/hallway/runs/new"
+    decorated = root / "robot/hallway/runs/decorated"
+    (decorated / "trusted-viewer").mkdir(parents=True)
+    seen = []
+    monkeypatch.setattr(trusted_viewer, "load_viewers", lambda _: [])
+
+    def derive(root, viewers, folders):
+        seen.append(set(folders))
+        return {}
+
+    monkeypatch.setattr(trusted_viewer, "derive_declarations", derive)
+    monkeypatch.setattr(trusted_viewer, "prepare_history", lambda *args: None)
+    monkeypatch.setattr(trusted_viewer, "apply_declarations", lambda *args: None)
+    monkeypatch.setattr(site_action.site_tool, "build", lambda *args, **kwargs: [produced])
+    monkeypatch.setattr(site_action.site_fixture, "check_reports_tree", lambda _: [])
+    monkeypatch.setattr(site_action.site_tool, "read_json_object", lambda _: {"runs": 3})
+    site_action.run_site_action(
+        {
+            "INPUT_RUNS_DIR": "inputs",
+            "INPUT_OUTPUT_DIR": "output",
+            "GITHUB_WORKSPACE": str(tmp_path),
+            "INPUT_RESTORE_HISTORY": "false",
+        }
+    )
+    assert seen == [{decorated}, {decorated, produced}]
+    assert all(old not in selected for selected in seen)

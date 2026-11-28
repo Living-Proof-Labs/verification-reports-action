@@ -2,7 +2,8 @@
 
 The optional `trusted-viewers` input to `./site` names a caller-owned JSON registry.
 Each entry pins local viewer HTML by SHA-256, released source tag and commit, and
-an exact advisory evaluator identity (id, version, publisher, kind). Evaluators
+an exact advisory evaluator identity (id, version, publisher, kind), plus the
+recording format accepted by that viewer. Evaluators
 provide JSON data; they cannot select or supply executable viewer code.
 
 For each newly produced report the site selects one unambiguous advisory trial
@@ -11,6 +12,9 @@ the run, configuration, trial and details checksum from those records. Missing
 contributions remain absent. Ambiguous selections, identity mismatches, modified
 JSON and invalid paths refuse the build. There is no sample run or evidence pin.
 The report's Recorded data link stays available and grading is unchanged.
+Before installation or restoration, recording bytes must declare that format
+and contain exactly one trial with the selected run, configuration, index and
+observation digest. A matching file hash alone is insufficient.
 
 The iframe is inserted into the existing card after ordinary HTML sanitation.
 Incoming arbitrary iframes remain rejected. The trusted viewer has scripts and
@@ -22,7 +26,9 @@ rejects redirects, verifies bytes before parsing, and validates trial identity.
 On restoration, every incoming run file and its complete checksum manifest are
 verified before any generated embed is stripped or any checksum is rewritten.
 The current caller pin must still validate the viewer. Normal site rendering then
-runs and reinstalls the embed. With no caller declaration, ordinary reports are
+runs and reinstalls the embed. Only newly produced runs and previously decorated
+runs are eligible; old unembedded history is never newly decorated. Each eligible
+run passes its complete current file manifest before installation as well. With no caller declaration, ordinary reports are
 unchanged; an existing embedded viewer without its declaration is refused.
 
 This repository's example caller opts into the Health viewer through

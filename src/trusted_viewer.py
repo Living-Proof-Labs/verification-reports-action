@@ -80,6 +80,25 @@ def binding(folder, pin):
     raw = read_file(folder / uri)
     if digest(raw) != details["sha256"]:
         raise SiteError("Details differ from report-published digest")
+    recording = json.loads(raw)
+    expected_format = pin["recording_format"]
+    if not isinstance(recording, dict) or recording.get("format") != expected_format:
+        raise SiteError("Recording format differs from caller declaration")
+    recorded_trials = recording.get("trials")
+    expected_trial = {
+        "run_id": pin["run"],
+        "configuration": pin["configuration"],
+        "index": pin["trial"],
+        "observation_sha256": trials[0]["observation_sha256"],
+    }
+    if (
+        not isinstance(recorded_trials, list)
+        or len(recorded_trials) != 1
+        or not isinstance(recorded_trials[0], dict)
+        or recorded_trials[0].get("format") != expected_format
+        or recorded_trials[0].get("trial") != expected_trial
+    ):
+        raise SiteError("Recording must contain exactly the selected evidence-bound trial")
     params = urlencode(
         {
             "file": "data/recording.json",
@@ -149,6 +168,8 @@ def load_viewers(filename):
     entries = json.loads(read_file(location))
     seen = set()
     for entry in entries:
+        if not isinstance(entry.get("recording_format"), str) or not entry["recording_format"]:
+            raise SiteError("Caller must declare recording format")
         identity = entry["evaluator"]
         if (
             set(identity) != {"id", "version", "publisher", "kind"}
@@ -167,10 +188,10 @@ def load_viewers(filename):
     return entries
 
 
-def derive_declarations(root, viewers):
+def derive_declarations(root, viewers, folders=None):
     """Select only one evidence-bound result/trial from each actual report."""
     declarations = {}
-    for folder in root.glob("*/*/runs/*"):
+    for folder in root.glob("*/*/runs/*") if folders is None else folders:
         raw = read_file(folder / "report.json")
         report = json.loads(raw)
         for viewer in viewers:
@@ -214,7 +235,10 @@ def derive_declarations(root, viewers):
                 raise SiteError("Viewer requires one evidence-bound report result")
             result = matches[0]
             system = result["system"]["id"]
-            pin = {k: viewer[k] for k in ("viewer_sha256", "viewer_tag", "viewer_commit")}
+            pin = {
+                k: viewer[k]
+                for k in ("viewer_sha256", "viewer_tag", "viewer_commit", "recording_format")
+            }
             pin.update(
                 report_sha256=digest(raw),
                 evaluator_id=identity["id"],
@@ -264,6 +288,7 @@ def apply_declarations(root, declarations):
             continue  # Optional contribution for a run not in retained history.
         if any(part.is_symlink() for part in [folder, *folder.parents]):
             raise SiteError("Declared viewer path cannot contain a symlink")
+        verify_manifest(folder)
         install(folder, pin, viewer)
         write_published_checksums(folder)
 

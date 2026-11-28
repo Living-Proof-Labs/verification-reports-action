@@ -156,11 +156,12 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
     import trusted_viewer
 
     viewers = trusted_viewer.load_viewers(env_map.get("INPUT_TRUSTED_VIEWERS", ""))
+    decorated = [p.parent for p in reports_dir.glob("*/*/runs/*/trusted-viewer")]
     trusted_viewer.prepare_history(
-        reports_dir, trusted_viewer.derive_declarations(reports_dir, viewers)
+        reports_dir, trusted_viewer.derive_declarations(reports_dir, viewers, decorated)
     )
 
-    site_tool.build(
+    produced = site_tool.build(
         reports_dir,
         runs_dir,
         days=retention_days,
@@ -170,7 +171,10 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
     )
 
     trusted_viewer.apply_declarations(
-        reports_dir, trusted_viewer.derive_declarations(reports_dir, viewers)
+        reports_dir,
+        trusted_viewer.derive_declarations(
+            reports_dir, viewers, set(produced) | {p for p in decorated if p.exists()}
+        ),
     )
 
     issues = site_fixture.check_reports_tree(reports_dir)
