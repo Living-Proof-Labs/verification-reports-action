@@ -45,16 +45,16 @@ export function githubApiUrl(api, parts, { query = null, label = 'GitHub API pat
 }
 
 /** capability-verifier release the report workflow calls. Plan refuses a tag that peels elsewhere. */
-export const VERIFIER_WORKFLOW_SHA = '5b702e5b2aa23338ba1d358692c6be96e97546cf';
-export const VERIFIER_WORKFLOW_TAG = 'v3.1.1';
+export const VERIFIER_WORKFLOW_SHA = '8af49985a71953475e07102e093e9f7857acb17a';
+export const VERIFIER_WORKFLOW_TAG = 'v3.1.3';
 /**
  * capability-verifier checkout the collect job runs. v3 is the loader API:
  * `_attach_not_run` requires `evaluator`, and `collect` no longer takes
  * `integrity_job`. v3.1 runs a declared Scenario line through the loader, so the
  * trial workflows (VERIFIER_WORKFLOW_SHA) and this checkout are the same release.
  */
-export const VERIFIER_API_SHA = '5b702e5b2aa23338ba1d358692c6be96e97546cf';
-export const VERIFIER_API_TAG = 'v3.1.1';
+export const VERIFIER_API_SHA = '8af49985a71953475e07102e093e9f7857acb17a';
+export const VERIFIER_API_TAG = 'v3.1.3';
 export const VERIFIER_OWNER = 'Living-Proof-Labs/capability-verifier';
 
 /** This repository. Fixture reports are produced only when it calls its own workflow. */

@@ -233,7 +233,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.hallway) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@5b702e5b2aa23338ba1d358692c6be96e97546cf # v3.1.1
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@8af49985a71953475e07102e093e9f7857acb17a # v3.1.3
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}
@@ -259,7 +259,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.scenario) }}
-    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@5b702e5b2aa23338ba1d358692c6be96e97546cf # v3.1.1
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/scenario.yml@8af49985a71953475e07102e093e9f7857acb17a # v3.1.3
     with:
       repository: ${{ matrix.repository }}
       ref: ${{ matrix.ref }}
@@ -374,7 +374,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: Living-Proof-Labs/capability-verifier
-          ref: 5b702e5b2aa23338ba1d358692c6be96e97546cf # v3.1.1
+          ref: 8af49985a71953475e07102e093e9f7857acb17a # v3.1.3
           path: capability-verifier
           persist-credentials: false
       - name: Install capability-verifier
