@@ -98,7 +98,7 @@ export function buildRunRecord({ item, configuration, summary, env, version }) {
     },
     commit: {
       sha: tested.ref,
-      url: `${server}/${caller}/commit/${tested.ref}`,
+      url: `${server}/${tested.repository}/commit/${tested.ref}`,
     },
     releases: withUrls,
     definition: item.path,
