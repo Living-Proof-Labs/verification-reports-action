@@ -97,7 +97,9 @@ ARTIFACT_LINK = re.compile(
 # An artifact, job, attempt, workflow file or another repository is refused.
 _REPO_SEGMENT = r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?"
 _RUN_TAIL = r"/actions/runs/[0-9]+"
-_ADDRESS_END = r"(?=$|[\s'\"<>)\],]|\.(?![A-Za-z0-9]))"
+# An address in HTML-escaped text (the reporter's embedded JSON) ends at the entity that
+# closes it. Any other entity, such as &amp; or &#47;, still continues the address.
+_ADDRESS_END = r"(?=$|[\s'\"<>)\],]|&(?:quot|#x27|#39|lt|gt);|\.(?![A-Za-z0-9]))"
 
 
 def _run_body(repository: str | set[str] | None = None) -> str:
