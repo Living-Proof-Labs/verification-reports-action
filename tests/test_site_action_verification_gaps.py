@@ -298,20 +298,15 @@ def test_a_failed_restore_exits_non_zero_and_says_why(tmp_path, monkeypatch, cap
     assert "error: no Pages artifact" in capsys.readouterr().err
 
 
-def test_docs_yml_passes_its_reset_choice_and_branch_to_the_restore_command():
-    lines = (ROOT / ".github/workflows/docs.yml").read_text(encoding="utf-8").splitlines()
-    start = next(
-        i for i, line in enumerate(lines) if "python3 src/reports_restore.py restore" in line
-    )
-    block = [lines[start]]
-    while block[-1].endswith("\\"):
-        block.append(lines[start + len(block)])
-    command = " ".join(part.rstrip("\\").strip() for part in block)
-    assert command.startswith("python3 src/reports_restore.py restore artifacts/site/reports ")
-    assert "--site-url https://docs.livingprooflabs.com/verification-reports-action/" in command
-    assert "--branch main" in command
-    assert '"${extra[@]}"' in command
-    assert "extra+=(--reset-history)" in "\n".join(lines)
+def test_docs_yml_passes_its_reset_choice_and_site_url_to_the_site_action():
+    # Since #74 the production job restores inside the site action (restore-root), not
+    # with a separate `reports_restore.py restore` step; branch defaults to main.
+    text = (ROOT / ".github/workflows/docs.yml").read_text(encoding="utf-8")
+    assert "reports_restore.py restore" not in text
+    assert "reset-history: ${{ inputs.reset_history && 'true' || 'false' }}" in text
+    assert "restore-root: artifacts/site/reports" in text
+    assert "restore-history: 'true'" in text
+    assert "site-url: https://docs.livingprooflabs.com/verification-reports-action/" in text
 
 
 # --- one reporter pin, in every file that names it ------------------------------------
