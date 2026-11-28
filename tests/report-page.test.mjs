@@ -21,7 +21,7 @@ function jobBlock(text, name, next) {
 test('the production pages job publishes the G1 report and not the fixture smoke', () => {
   const production = jobBlock(docsYml, 'production', 'deploy');
   const requireReports = readFileSync(new URL('../tools/require_reports.py', import.meta.url), 'utf8');
-  const restore = production.indexOf('src/reports_site.py restore artifacts/site/reports');
+  const restore = production.indexOf('src/reports_restore.py restore artifacts/site/reports');
   const drop = production.indexOf('require_reports.py drop-fixtures artifacts/site/reports');
   const g1Download = production.indexOf('name: g1-verification-report\n');
   const g1Site = production.indexOf('runs-dir: artifacts/g1-smoke-report');
