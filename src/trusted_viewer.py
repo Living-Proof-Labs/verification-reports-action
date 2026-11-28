@@ -34,6 +34,7 @@ def load_viewers(filename, declarations=(), *, historical=False):
     location = Path(filename)
     entries = json.loads(read_file(location))
     seen = set()
+    selected = []
     for entry in entries:
         if not isinstance(entry.get("recording_format"), str) or not entry["recording_format"]:
             raise SiteError("Caller must declare recording format")
@@ -70,7 +71,8 @@ def load_viewers(filename, declarations=(), *, historical=False):
             entry["declaration_line"] = line
         raw = fetch_release_viewer(entry)
         entry["bytes"] = raw
-    return entries
+        selected.append(entry)
+    return selected
 
 
 def load_history_viewers(filename):
