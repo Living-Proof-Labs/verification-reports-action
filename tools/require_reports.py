@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -175,20 +176,106 @@ def _has_trials_cell_link(page: str, relative: str) -> bool:
     return False
 
 
-_VIDEO_ELEMENT = re.compile(r"<video\b(?:(?!</video\b).)*</video\s*>", re.I | re.S)
+# Elements whose content a browser does not render as page markup: raw text (script,
+# style, xmp, …), escapable raw text (textarea, title), inert template content, and noscript
+# with scripting on. A <video> inside one of them is not a player.
+_INERT_ELEMENTS = frozenset(
+    {
+        "iframe",
+        "noembed",
+        "noframes",
+        "noscript",
+        "plaintext",
+        "script",
+        "style",
+        "template",
+        "textarea",
+        "title",
+        "xmp",
+    }
+)
+_VOID_ELEMENTS = frozenset(
+    {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+)
+
+
+class _VideoPlayers(HTMLParser):
+    """Find a <video> that plays `relative`: its own first src, or, when it has no src
+    attribute, the first src of a <source> that is its direct child. Paths compare exactly;
+    tag and attribute names are case-insensitive, as html.parser lowercases them."""
+
+    def __init__(self, relative: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.relative = relative
+        self.found = False
+        self._inert: list[str] = []
+        self._in_video = False
+        self._video_has_src = False
+        self._depth = 0
+
+    def _start(self, tag: str, attrs: list[tuple[str, str | None]], *, closed: bool) -> None:
+        if self._inert:
+            if tag == "template" and self._inert[-1] == "template" and not closed:
+                self._inert.append(tag)
+            return
+        if tag in _INERT_ELEMENTS:
+            if not closed:
+                self._inert.append(tag)
+            return
+        src = next((value for name, value in attrs if name == "src"), None)
+        if self._in_video:
+            if tag == "source" and self._depth == 0 and not self._video_has_src:
+                self.found |= src == self.relative
+            elif tag not in _VOID_ELEMENTS and not closed:
+                self._depth += 1
+            return
+        if tag == "video":
+            self.found |= src == self.relative
+            self._video_has_src = src is not None
+            self._in_video = not closed
+            self._depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        self._start(tag, attrs, closed=False)
+
+    def handle_startendtag(self, tag, attrs):
+        self._start(tag, attrs, closed=True)
+
+    def handle_endtag(self, tag):
+        if self._inert:
+            if tag == self._inert[-1]:
+                self._inert.pop()
+            return
+        if not self._in_video:
+            return
+        if tag == "video" and self._depth == 0:
+            self._in_video = False
+        elif self._depth and tag not in _VOID_ELEMENTS:
+            self._depth -= 1
 
 
 def _has_video_player(page: str, relative: str) -> bool:
-    """A <video> (or a <source> inside it) whose src is exactly the published path."""
-    value = re.escape(relative)
-    source = re.compile(
-        r"<(?:video|source)\b"
-        # whole attributes, so a src inside another attribute's value is not read
-        r"(?:\s+(?!src\b)[^\s=>/]+(?:\s*=\s*(?:'[^']*'|\"[^\"]*\"|[^\s'\">]+))?)*"
-        r"\s+src\s*=\s*(?:'" + value + r"'|\"" + value + r"\"|" + value + r"(?=[\s>]))",
-        re.I,
-    )
-    return any(source.search(element.group(0)) for element in _VIDEO_ELEMENT.finditer(page))
+    """A <video> a browser renders whose own src, or direct <source> child, is exactly the
+    published path (see `_VideoPlayers`)."""
+    parser = _VideoPlayers(relative)
+    parser.feed(page)
+    parser.close()
+    return parser.found
 
 
 def run_page_problems(reports: Path, repository: str | None = None) -> list[str]:
