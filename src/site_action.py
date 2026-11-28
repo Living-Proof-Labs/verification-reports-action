@@ -295,16 +295,19 @@ def run_site_action(
     for entry in exclude_runs:
         command += ["--exclude-run", entry]
     output = run_site_command(command, env_map)
+    composed = False
     for folder in added_run_folders(output):
-        trusted_viewer.render_fresh(reports_dir / folder, viewers)
+        composed |= trusted_viewer.render_fresh(reports_dir / folder, viewers)
     for folder, page in pages.items():
         if (folder / "index.html").read_bytes() != page:
             # Ordinary expiry republished this run's shell; compose its approved panel again.
-            trusted_viewer.render_fresh(folder, history_viewers, existing=True)
+            composed |= trusted_viewer.render_fresh(folder, history_viewers, existing=True)
 
-    issues = check_reports_tree(reports_dir, repository=repository)
-    if issues:
-        raise SiteError("Generated reports/ check failed: " + "; ".join(issues))
+    if composed:
+        # The site command checked the tree it wrote; check it again after the viewers.
+        issues = check_reports_tree(reports_dir, repository=repository)
+        if issues:
+            raise SiteError("Generated reports/ check failed: " + "; ".join(issues))
 
     marker = json.loads((reports_dir / MARKER).read_text(encoding="utf-8"))
 
