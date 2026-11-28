@@ -325,13 +325,17 @@ def test_authenticated_three_publications_one_pin_upgrade(authenticated_publicat
 
 
 @pytest.mark.parametrize(
-    "fault", ["archive", "workflow", "evidence", "unapproved-asset", "provenance"]
+    "fault",
+    ["archive", "workflow", "evidence", "unrelated-evidence", "unapproved-asset", "provenance"],
 )
 def test_authenticated_restore_refuses_without_publishing(authenticated_publication, fault):
     root, publish, retain, responses, download = authenticated_publication
     first = publish(1, "2026-11-28T06:00:00Z")
     if fault == "evidence":
         (first / "health.json").write_bytes(b"modified evidence")
+    if fault == "unrelated-evidence":
+        unrelated = next(p for p in (first / "evidence").rglob("*") if p.is_file())
+        unrelated.write_bytes(unrelated.read_bytes() + b"changed unrelated evidence")
     if fault == "unapproved-asset":
         (first / "trusted-viewer/viewer.html").write_bytes(b"unapproved code")
         write_published_checksums(first)
