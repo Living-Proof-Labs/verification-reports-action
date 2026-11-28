@@ -234,3 +234,49 @@ def test_missing_or_denied_api_cannot_authorize(authority_api, monkeypatch):
     monkeypatch.setattr(reports_restore, "_read_json", denied)
     with pytest.raises(SiteError, match="inaccessible evidence"):
         verify_fixture(authority_api)
+
+
+@pytest.mark.parametrize("state", ["old", "new", "mixed", "future"])
+def test_exact_reviewed_workflow_transition(authority_api, state):
+    _, _, policy, responses, _ = authority_api
+    old = policy.pop("source_sha256")
+    new_bytes = {path: ("reviewed transition " + path).encode() for path in old}
+    new = {path: hashlib.sha256(raw).hexdigest() for path, raw in new_bytes.items()}
+    policy["source_revisions"] = [old, new]
+    for index, (path, raw) in enumerate(new_bytes.items()):
+        if state == "new" or (state == "mixed" and index == 0):
+            responses["/contents/" + path]["content"] = base64.b64encode(raw).decode()
+        if state == "future":
+            responses["/contents/" + path]["content"] = base64.b64encode(
+                b"unreviewed future"
+            ).decode()
+    if state in {"old", "new"}:
+        verify_fixture(authority_api)
+    else:
+        with pytest.raises(SiteError, match="unapproved workflow source"):
+            verify_fixture(authority_api)
+
+
+def test_production_configuration_matches_only_reviewable_workflow_pairs():
+    from pathlib import Path
+
+    root = Path(__file__).parents[1]
+    policy = json.loads((root / "config/viewers/publication.json").read_text())
+    assert len(policy["source_revisions"]) == 2
+    assert policy["source_revisions"][0] == {
+        ".github/workflows/release.yml": (
+            "cbbff6e61ead6bd09701b50a573f3af2f60006fb7a9737f912c06c23030aa145"
+        ),
+        ".github/workflows/docs.yml": (
+            "03ab8c7ede263c71f169ae52055256ffca72155881666d06542ff2cbed7d5bae"
+        ),
+    }
+    assert policy["source_revisions"][1] == {
+        path: hashlib.sha256((root / path).read_bytes()).hexdigest()
+        for path in policy["source_revisions"][0]
+    }
+    workflow = (root / ".github/workflows/docs.yml").read_text()
+    assert "python3 src/reports_site.py restore" not in workflow
+    assert "restore-root: artifacts/site/reports" in workflow
+    assert "publication-approval: config/viewers/publication.json" in workflow
+    assert "restore-history: 'true'" in workflow

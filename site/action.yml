@@ -8,6 +8,10 @@ inputs:
     description: Existing caller evaluator declaration file or lines; fresh viewer versions derive from these pins.
     required: false
     default: ''
+  restore-root:
+    description: Optional archive restoration root containing output-dir; retains publication authority in this process.
+    required: false
+    default: ''
   publication-approval:
     description: Caller-approved production workflow fingerprints and independent viewer registry for authenticated Pages history.
     required: false
@@ -140,6 +144,7 @@ runs:
       shell: bash
       env:
         INPUT_EVALUATORS: ${{ inputs.evaluators }}
+        INPUT_RESTORE_ROOT: ${{ inputs.restore-root }}
         INPUT_PUBLICATION_APPROVAL: ${{ inputs.publication-approval }}
         INPUT_HISTORICAL_VIEWERS: ${{ inputs.historical-viewers }}
         INPUT_TRUSTED_VIEWERS: ${{ inputs.trusted-viewers }}

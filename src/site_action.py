@@ -136,6 +136,11 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         publication_policy["viewers"] = trusted_viewer.load_viewers(
             publication_policy["viewer_registry"], publication=True
         )
+    restore_dir = reports_dir
+    if env_map.get("INPUT_RESTORE_ROOT"):
+        _, restore_dir = _validate_output_dir(env_map["INPUT_RESTORE_ROOT"], workspace)
+        if not reports_dir.is_relative_to(restore_dir):
+            raise site_tool.SiteError("restore-root must contain output-dir")
     restored = None
     if should_restore:
         # History is only ever restored from the calling repository's own Pages deploys.
@@ -153,7 +158,7 @@ def run_site_action(env: dict[str, str] | None = None) -> dict[str, str]:
         if publication_policy is not None:
             restore_options["publication_policy"] = publication_policy
         restored = site_tool.restore(
-            reports_dir,
+            restore_dir,
             repository,
             branch=branch,
             current_run=current_run,

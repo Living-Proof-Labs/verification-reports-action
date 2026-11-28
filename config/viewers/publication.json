@@ -1,0 +1,20 @@
+{
+  "repository": "Living-Proof-Labs/verification-reports-action",
+  "branch": "main",
+  "event": "workflow_run",
+  "workflow": ".github/workflows/release.yml",
+  "reusable_workflow": ".github/workflows/docs.yml",
+  "job": "deploy-docs / deploy",
+  "artifact": "github-pages",
+  "viewer_registry": "config/viewers/evaluators.json",
+  "source_revisions": [
+    {
+      ".github/workflows/release.yml": "cbbff6e61ead6bd09701b50a573f3af2f60006fb7a9737f912c06c23030aa145",
+      ".github/workflows/docs.yml": "03ab8c7ede263c71f169ae52055256ffca72155881666d06542ff2cbed7d5bae"
+    },
+    {
+      ".github/workflows/release.yml": "cbbff6e61ead6bd09701b50a573f3af2f60006fb7a9737f912c06c23030aa145",
+      ".github/workflows/docs.yml": "ba7862d86af7813422975995a6e6d0acdb1bda87f8448242ccdaf4515ae71ed4"
+    }
+  ]
+}

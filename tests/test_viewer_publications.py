@@ -251,16 +251,19 @@ def authenticated_publication(publication, authority_api, monkeypatch):  # noqa:
 
     root, publish = publication
     publish.output = "published/g1"
-    # Production restores reports/ at its parent, then builds reports/g1/. Keep
-    # those actual archive/destination shapes and pass authority only in memory.
-    import reports_site
-
-    def restore_parent(destination, *args, **kwargs):
-        return reports_restore.restore(destination.parent, *args, **kwargs)
-
-    monkeypatch.setattr(reports_site, "restore", restore_parent)
     artifact, _, policy, responses, _ = authority_api
     policy["viewer_registry"] = str(Path(__file__).parents[1] / "config/viewers/evaluators.json")
+    # One reviewed transition policy exists before the first publication. The
+    # later archive changes publisher workflow bytes, not the approval file.
+    import base64
+
+    next_sources = {
+        path: ("reviewed next publisher " + path).encode() for path in policy["source_sha256"]
+    }
+    policy["source_revisions"] = [
+        policy.pop("source_sha256"),
+        {path: hashlib.sha256(raw).hexdigest() for path, raw in next_sources.items()},
+    ]
     policy_file = root / "production-approval.json"
     policy_file.write_text(json.dumps(policy))
     download = {}
@@ -279,6 +282,9 @@ def authenticated_publication(publication, authority_api, monkeypatch):  # noqa:
 
     def retain(number):
         # Each call models a new successful production archive, not a mutable receipt.
+        if number >= 3:
+            for path, raw in next_sources.items():
+                responses["/contents/" + path]["content"] = base64.b64encode(raw).decode()
         previous = root / f"previous-{number}"
         (root / "published").rename(previous)
         download["bytes"] = _pages_zip(previous)
@@ -305,6 +311,7 @@ def authenticated_publication(publication, authority_api, monkeypatch):  # noqa:
         }
         responses[f"/actions/jobs/{job['id']}"] = job
         publish.overrides.update(
+            INPUT_RESTORE_ROOT="published",
             INPUT_PUBLICATION_APPROVAL=str(policy_file),
             INPUT_RESTORE_HISTORY="true",
             INPUT_HISTORICAL_VIEWERS="",
@@ -320,6 +327,7 @@ def test_authenticated_three_publications_one_pin_upgrade(authenticated_publicat
     root, publish, retain, _, _ = authenticated_publication
     first = publish(1, "2026-11-28T06:00:00Z")
     original = snap(first)
+    policy_before = (root / "production-approval.json").read_bytes()
     retain(2)
     second = publish(2, "2026-11-29T06:00:00Z", version="1.2.1")
     upgraded = snap(second)
@@ -328,6 +336,7 @@ def test_authenticated_three_publications_one_pin_upgrade(authenticated_publicat
     third = publish(3, "2026-11-30T06:00:00Z", version="1.2.1")
     assert snap(first) == original
     assert snap(second) == upgraded
+    assert (root / "production-approval.json").read_bytes() == policy_before
     assert "<iframe " in (third / "index.html").read_text()
     assert "Compatible new sampled metric is visible." in (second / "index.html").read_text()
     assert json.loads((third / "report.json").read_bytes())["summaries"][0]["grade"] == "FAIL"
@@ -419,3 +428,11 @@ def test_undecorated_history_needs_no_publication_authority(authenticated_public
     second = publish(2, "2026-11-29T06:00:00Z", enabled=False)
     assert snap(first) == before
     assert "<iframe " not in (second / "index.html").read_text()
+
+
+def test_restore_root_must_contain_output(publication):
+    root, publish = publication
+    publish.overrides["INPUT_RESTORE_ROOT"] = "unrelated"
+    with pytest.raises(SiteError, match="restore-root must contain output-dir"):
+        publish(1, "2026-11-28T06:00:00Z")
+    assert not (root / "published").exists()

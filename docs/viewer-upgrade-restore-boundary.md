@@ -101,3 +101,30 @@ caller adapter restores `reports/` and then builds `reports/g1/` in one process.
 Production currently performs these in separate processes: activation must retain
 the authority in memory across that boundary, not serialize an approval receipt.
 This correction does not activate or change that workflow.
+
+### Proposed production transition (local; awaiting independent review)
+
+The production workflow now calls `./site` once with `restore-root` pointing to
+`artifacts/site/reports` and `output-dir` to its `g1` child. Restore, authenticated
+approval generation and G1 composition occur in the same Python process. The
+existing fixture cleanup follows that build; no authority is serialized to files
+or environment outputs. The former separate restore command is removed.
+
+`config/viewers/publication.json` contains `source_revisions`: complete, exact
+entry/reusable workflow fingerprint pairs. The first pair is the independently
+reviewed deployed v3.10.4 source above. The second pair identifies only the proposed
+workflow bytes in this local candidate and requires review before activation.
+The workflow refers to the policy file's stable path, not its contents or hash;
+there is no self-referential commit/hash or runtime self-approval. Fingerprints are
+literal values in caller-owned source outside the archive. Runtime only hashes
+GitHub-authenticated workflow bytes at the prior publication's exact commit and
+compares the whole pair. Tests reject mixed old/new pairs and any future unmatched
+change. No `latest`, ancestry wildcard or arbitrary future revision is approved.
+
+Once the second pair is independently approved with this candidate, the first new
+release can restore the old publisher and the next ordinary release can restore
+the new publisher without another policy edit. An evaluator-only pin bump leaves
+both workflow files unchanged. Future workflow edits still need an explicit exact
+pair review. The production-layout three-publication test now uses the actual
+`restore-root` input with no adapter and changes mocked authenticated publisher
+source between archives while the approval policy remains byte-identical.

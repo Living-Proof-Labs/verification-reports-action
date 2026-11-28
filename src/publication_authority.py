@@ -84,19 +84,29 @@ def _verify(artifact, archive, repository, branch, token, api, policy):
         arun.get("repository_id") == own["id"] and arun.get("head_repository_id") == own["id"],
         "artifact repository",
     )
-    files = policy["source_sha256"]
-    _require(
-        set(files) == {policy["workflow"], policy["reusable_workflow"]},
-        "required workflow fingerprints",
-    )
-    for path, expected in files.items():
-        _require(re.fullmatch(r"[0-9a-f]{64}", expected), "invalid source fingerprint")
+    revisions = policy.get("source_revisions")
+    if revisions is None:
+        revisions = [policy["source_sha256"]]  # Existing exact-policy callers.
+    required = {policy["workflow"], policy["reusable_workflow"]}
+    _require(isinstance(revisions, list) and revisions, "missing workflow revisions")
+    for files in revisions:
+        _require(
+            isinstance(files, dict) and set(files) == required, "required workflow fingerprints"
+        )
+        _require(
+            all(re.fullmatch(r"[0-9a-f]{64}", value) for value in files.values()),
+            "invalid source fingerprint",
+        )
+    observed = {}
+    for path in sorted(required):
         content = get("contents", path, query={"ref": sha})
         _require(
             content.get("type") == "file" and content.get("encoding") == "base64", "workflow source"
         )
-        raw = base64.b64decode(content["content"])
-        _require(hashlib.sha256(raw).hexdigest() == expected, "unapproved workflow source")
+        observed[path] = hashlib.sha256(base64.b64decode(content["content"])).hexdigest()
+    # Approve a complete reviewed workflow pair, not an arbitrary combination
+    # of individually allowed files. Never hash local workflow files at runtime.
+    _require(observed in revisions, "unapproved workflow source")
     jobs = get(
         "actions/runs", run_id, "attempts", run["run_attempt"], "jobs", query={"per_page": 100}
     )
