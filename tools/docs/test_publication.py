@@ -183,7 +183,11 @@ class PublicationTest(unittest.TestCase):
                     '<link rel="stylesheet" href="assets/brand.css">' + text
                 )
             (root / "reports/g1/unitree-g1/stock-mujoco-hallway/latest").mkdir(parents=True)
-            (root / "reports/index.html").write_text("verification-reports-action fixture")
+            g1_index = (
+                'unitree-g1 <span class="badge badge-fail">Fail</span>'
+                '<a href="g1/unitree-g1/stock-mujoco-hallway/latest/">hallway</a>'
+            )
+            (root / "reports/index.html").write_text(g1_index)
             (root / "reports/g1/index.html").write_text("unitree-g1")
             (root / "reports/g1/unitree-g1/stock-mujoco-hallway/latest/index.html").write_text(
                 "latest hallway"
@@ -227,7 +231,13 @@ class PublicationTest(unittest.TestCase):
                 (root / "reports/index.html").unlink()
                 with self.assertRaisesRegex(ValueError, "published reports section"):
                     check(url, SHA, "1.2.3")
-                (root / "reports/index.html").write_text("verification-reports-action fixture")
+                (root / "reports/index.html").write_text(g1_index + "fixture-scenario-stock")
+                with self.assertRaisesRegex(ValueError, "fixture-scenario-stock"):
+                    check(url, SHA, "1.2.3")
+                (root / "reports/index.html").write_text(g1_index + "this repository's fixture")
+                with self.assertRaisesRegex(ValueError, "fixture phrase"):
+                    check(url, SHA, "1.2.3")
+                (root / "reports/index.html").write_text(g1_index)
                 with self.assertRaisesRegex(ValueError, "version identity"):
                     check(url, SHA, "2.0.0")
                 with self.assertRaisesRegex(ValueError, "stale or dirty"):

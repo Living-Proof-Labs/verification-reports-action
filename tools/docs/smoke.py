@@ -64,8 +64,15 @@ def check(base, commit, version=None):
         reports = fetch("reports/index.html").decode()
     except OSError as exc:
         raise ValueError("Missing published reports section") from exc
-    if "verification-reports-action" not in reports:
-        raise ValueError("Missing published reports section")
+    if "unitree-g1" not in reports or not re.search(
+        r'class="badge badge-(?:pass|fail|warn|muted)"', reports
+    ):
+        raise ValueError("Missing published G1 reports section")
+    for name in ("fixture-scenario-stock", "fixture-hallway-stock"):
+        if name in reports:
+            raise ValueError(f"Published reports list {name}")
+    if "this repository's fixture" in reports:
+        raise ValueError("Published reports contain the fixture phrase")
     try:
         g1 = fetch("reports/g1/index.html").decode()
     except OSError as exc:

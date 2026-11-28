@@ -18,37 +18,41 @@ function jobBlock(text, name, next) {
   return text.slice(start, end);
 }
 
-test('the release manual publishes the Verify mock and G1 reports with ./site', () => {
+test('the production pages job publishes the G1 report and not the fixture smoke', () => {
   const production = jobBlock(docsYml, 'production', 'deploy');
-  const download = production.indexOf('name: verification-report\n');
-  const mockSite = production.indexOf('runs-dir: artifacts/smoke-report');
+  const requireReports = readFileSync(new URL('../tools/require_reports.py', import.meta.url), 'utf8');
+  const restore = production.indexOf('src/reports_site.py restore artifacts/site/reports');
+  const drop = production.indexOf('require_reports.py drop-fixtures artifacts/site/reports');
   const g1Download = production.indexOf('name: g1-verification-report\n');
   const g1Site = production.indexOf('runs-dir: artifacts/g1-smoke-report');
-  const link = production.indexOf('require_reports.py link artifacts/site/reports/index.html');
+  const publish = production.indexOf('require_reports.py publish-index artifacts/site/reports');
   const check = production.indexOf('require_reports.py check artifacts/site/reports');
   const upload = production.indexOf('actions/upload-pages-artifact@');
-  assert.ok(download !== -1 && mockSite !== -1 && g1Download !== -1 && g1Site !== -1);
-  assert.ok(link !== -1 && check !== -1 && upload !== -1);
-  assert.ok(download < mockSite && mockSite < link && link < g1Download && g1Download < g1Site);
-  assert.ok(g1Site < check && check < upload);
-  assert.equal(production.split('uses: ./site').length - 1, 2);
-  assert.match(production, /MOCK_STATUS: \$\{\{ steps\.mock-site\.outcome \}\}/);
+  assert.ok(restore !== -1 && drop !== -1 && g1Download !== -1 && g1Site !== -1);
+  assert.ok(publish !== -1 && check !== -1 && upload !== -1);
+  assert.ok(restore < drop && drop < g1Download && g1Download < g1Site);
+  assert.ok(g1Site < publish && publish < check && check < upload);
+  assert.equal(production.split('uses: ./site').length - 1, 1);
+  assert.doesNotMatch(production, /name: verification-report\n/);
+  assert.doesNotMatch(production, /artifacts\/smoke-report/);
+  assert.doesNotMatch(production, /require_reports\.py link/);
+  assert.doesNotMatch(production, /MOCK_STATUS/);
+  assert.doesNotMatch(production, /mock-site/);
+  assert.doesNotMatch(production, /output-dir: artifacts\/site\/reports\n/);
+  assert.doesNotMatch(requireReports, /missing the mock report/);
+  assert.match(requireReports, /fixture-scenario-stock/);
+  assert.match(requireReports, /fixture-hallway-stock/);
+  assert.match(requireReports, /this repository's fixture/);
   assert.match(production, /G1_STATUS: \$\{\{ steps\.g1-site\.outcome \}\}/);
   assert.doesNotMatch(production, /test -f artifacts\/site\/reports/);
   assert.match(production, /EVENT_RUN: \$\{\{ github\.event\.workflow_run\.id \}\}/);
-  assert.equal(production.split('run-id: ${{ steps.verify-run.outputs.id }}').length - 1, 2);
-  assert.match(production, /output-dir: artifacts\/site\/reports\n/);
+  assert.equal(production.split('run-id: ${{ steps.verify-run.outputs.id }}').length - 1, 1);
   assert.match(production, /output-dir: artifacts\/site\/reports\/g1/);
-  const resetExpr = "reset-history: ${{ inputs.reset_history && 'true' || 'false' }}";
+  const resetExpr = "${{ inputs.reset_history && 'true' || 'false' }}";
   assert.equal(production.split(resetExpr).length - 1, 2);
   assert.doesNotMatch(production, /reset-history: 'true'/);
   assert.doesNotMatch(production, /reset-history: 'false'/);
-  const mockInputs = production.slice(
-    production.indexOf('runs-dir: artifacts/smoke-report'),
-    production.indexOf('runs-dir: artifacts/g1-smoke-report'),
-  );
   const g1Inputs = production.slice(production.indexOf('runs-dir: artifacts/g1-smoke-report'));
-  assert.match(mockInputs, /restore-history: auto\n/);
   assert.match(g1Inputs, /restore-history: 'false'/);
   assert.doesNotMatch(g1Inputs, /restore-history: auto/);
   const pagesUpload = production.slice(production.indexOf('actions/upload-pages-artifact@'));
