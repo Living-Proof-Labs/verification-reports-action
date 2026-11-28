@@ -29,7 +29,7 @@ For each input the plan asks GitHub for the Release named by the tag, peels the 
 
 `contents: read` is the workflow permission. The plan does not ask for `attestations: read`, because every caller of this reusable workflow would have to grant that permission before the plan job could start.
 
-The capability-verifier `uses:` lines stay a full commit SHA. GitHub rejects an expression there, so the plan cannot swap the called workflow. After the tag peels, that commit must be `5b702e5b2aa23338ba1d358692c6be96e97546cf` (`v3.1.1`). Any other commit fails before a trial. Renovate's GitHub Actions manager bumps that one line, SHA and `# vX.Y.Z` comment together. The lock's verifier tag must peel to the same commit. No lock hash is rewritten.
+The capability-verifier `uses:` lines stay a full commit SHA. GitHub rejects an expression there, so the plan cannot swap the called workflow. After the tag peels, that commit must be `8af49985a71953475e07102e093e9f7857acb17a` (`v3.1.3`). Any other commit fails before a trial. Renovate's GitHub Actions manager bumps that one line, SHA and `# vX.Y.Z` comment together. The lock's verifier tag must peel to the same commit. No lock hash is rewritten.
 
 ## Tag bump
 
